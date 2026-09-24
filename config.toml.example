@@ -1,0 +1,117 @@
+# Configuración de la simulación de flujo vehicular (trafico).
+#
+#   uv run trafico                            # usa este archivo -> resultados/<ID>_corrida/
+#   uv run trafico regular_traffic            # usa este archivo -> resultados/<ID>_regular_traffic/
+#   uv run trafico resultados/<ID>_<nombre>   # usa el config.toml de esa carpeta (réplica)
+#
+# Cada corrida crea resultados/<ID>_<nombre>/ con las gráficas, el resumen, las series y una
+# copia de esta configuración (config.toml); esa copia basta para replicar la corrida.
+
+[road]
+length = 500.0          # m; el semáforo está al final del tramo
+max_line_speed = [20, 30, 50, 80]   # km/h, límite de cada carril (0 = derecho); ningún vehículo lo rebasa.
+                                # El número de carriles es el largo de esta lista y de
+                                # [behavior] congestion_factor, que deben coincidir.
+
+[traffic_light]
+red = 25.0              # s (múltiplo de 0.1)
+green = 35.0            # s (múltiplo de 0.1)
+start_phase = "red"     # "red" | "green"
+
+[demand]                # llegadas Poisson en veh/min; 0 = ese tipo no participa
+car_rate = 18.0
+bike_rate = 8.0
+bus_rate = 0.25
+motorbike_rate = 8.0
+slow_lane = "right"     # carril fijo de los tipos con lane_change = false: "right" | "random"
+
+[execution]
+run = 100.0              # s de proceso
+time_scale = 10.0       # s simulados por s de proceso (run 10 -> 100 s simulados)
+sample = 1.0            # s simulados entre muestras de las series
+replicas = 8            # réplicas Monte Carlo
+workers = 0             # procesos en paralelo; 0 = automático (min(réplicas, CPUs))
+seed = 42               # quítala para una semilla aleatoria (queda registrada en la copia)
+
+[output]
+dir = "resultados"      # relativo a la raíz del proyecto
+name = ""               # sufijo de la carpeta de resultados si no se da en el comando
+csv = false              # exporta las series (media y σ) a series.csv
+show = false            # abre además la ventana de matplotlib
+progress = true         # barra de progreso de réplicas
+animation = false       # genera también el diagrama espacio-tiempo y el video de movimiento
+                        # (o, sin volver a correr: uv run trafico-ver resultados/<ID>_<nombre>)
+
+[animation]             # visualización del movimiento de una réplica (no cambia los resultados)
+start = 100.0           # s simulados donde empieza la ventana
+duration = 320.0      # s simulados de la ventana; sin ella, 2 ciclos del semáforo (red + green)
+speed = 6.0             # s simulados por s de video (×4)
+fps = 20                # cuadros por segundo del video
+replica = 1             # réplica que se visualiza (1 = la primera)
+format = "webm"         # "webm" (VP9) | "mp4" (H.264) | "gif"
+
+# --- Modelo -------------------------------------------------------------------------------
+
+[vehicles.car]          # automóvil: puede cambiar de carril
+speed_kmh = 80.0        # velocidad máxima del vehículo
+length = 4.5            # m
+gap_run = 3.0           # m al líder en marcha
+gap_stop = 1.0          # m al líder detenido (compresión)
+pax_min = 1
+pax_max = 6
+pax_mean = 1.3          # normal truncada a [pax_min, pax_max]
+pax_std = 1.0
+
+[vehicles.bike]         # bicicleta: un solo carril
+speed_kmh = 20.0        # velocidad máxima del vehículo
+length = 1.8
+gap_run = 1.0
+gap_stop = 0.5
+pax_min = 1
+pax_max = 1
+pax_mean = 1.0
+pax_std = 0.0
+lane = 0              # carril fijo (0 = derecho); sin él se usa [demand] slow_lane
+exclusive = true        # reserva el carril: solo lo usan los tipos con este lane (autos y motos no)
+abreast = 2             # al detenerse, hasta 2 bicis lado a lado en el carril (1 = en fila)
+
+[vehicles.bus]          # autobús: un solo carril
+speed_kmh = 60.0        # velocidad máxima del vehículo
+length = 15.0
+gap_run = 4.0           # supuesto: el enunciado no lo especifica
+gap_stop = 1.5
+pax_min = 1
+pax_max = 120
+pax_mean = 80.0
+pax_std = 15.0
+lane = 3              # p. ej. separa autobuses (carril 1) de bicis (carril 0)
+exclusive = true        # carril exclusivo de autobuses
+stop_position = 400.0   # m desde el inicio del tramo donde se detiene (frente del autobús); quítala para no parar
+stop_time_mean = 25.0   # s de descenso y ascenso de pasajeros: media …
+stop_time_std = 5.0     # … y desviación estándar (normal truncada a ≥ 0)
+
+[vehicles.motorbike]
+speed_kmh = 70.0        # velocidad máxima del vehículo
+length = 2.0
+gap_run = 2.0
+gap_stop = 1
+pax_min = 1
+pax_max = 2
+pax_mean = 1.2
+pax_std = 0.2
+
+[behavior]
+reaction_min = 2.0              # s, reacción al poder avanzar (verde o arranque del líder)
+reaction_max = 5.0
+lane_change_min = 1.5           # s, duración de la maniobra de cambio de carril
+lane_change_max = 4.0
+lane_change_speed_factor = 0.5  # fracción de la velocidad durante la maniobra
+lane_change_cooldown = 3.0      # s sin volver a cambiar tras una maniobra
+lane_change_interval = 0.5      # s entre decisiones de cambio de carril
+lookahead = 30.0                # m a los que un líder lento motiva cambiar
+min_advantage = 3.0             # m de espacio libre extra para que valga la pena cambiar
+release_space = 0.5             # m de espacio que libera a un vehículo detenido
+congestion_factor = [0.05, 0.5, 0.4, 0.6]  # reducción máx. de velocidad con la cola ocupando todo el carril,
+                                # en [0, 1): un número para todos o una lista por carril (0 = derecho).
+                                # Si faltan valores, los carriles extra usan el último; si sobran, se ignoran.
+                                # velocidad × (1 − factor del carril × largo de la cola / length); 0 = sin efecto

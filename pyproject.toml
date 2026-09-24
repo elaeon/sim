@@ -1,0 +1,29 @@
+[project]
+name = "trafico"
+version = "0.2.0"
+description = "Simulación microscópica de flujo vehicular en un tramo con semáforo (CPU, en paralelo)"
+readme = "README.md"
+authors = [
+    { name = "elaeon", email = "1216884+elaeon@users.noreply.github.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.3",
+]
+
+[project.scripts]
+trafico = "trafico.cli:main"
+trafico-ver = "trafico.cli:view_main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
