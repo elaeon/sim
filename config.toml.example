@@ -16,6 +16,7 @@ max_line_speed = [20, 30, 50, 80]   # km/h, límite de cada carril (0 = derecho)
 [traffic_light]
 red = 25.0              # s (múltiplo de 0.1)
 green = 35.0            # s (múltiplo de 0.1)
+yellow = 3.0            # s (múltiplo de 0.1) entre el verde y el rojo: verde → amarillo → rojo; 0 = sin amarillo
 start_phase = "red"     # "red" | "green"
 
 [demand]                # llegadas Poisson en veh/min; 0 = ese tipo no participa
@@ -23,7 +24,20 @@ car_rate = 18.0
 bike_rate = 8.0
 bus_rate = 0.25
 motorbike_rate = 8.0
+carga_rate = 1.0        # vehículos de carga (ver [vehicles.carga])
 slow_lane = "right"     # carril fijo de los tipos con lane_change = false: "right" | "random"
+
+[initial]               # condición inicial: los carriles ya tienen vehículos al empezar (no espera el llenado)
+occupancy = 0.0         # fracción de cada carril ocupada: Σ(largo + gap_stop) / length; 1 = cola compacta.
+                        # Un número para todos o una lista por carril (0 = derecho) del largo de max_line_speed,
+                        # p. ej. [0.2, 0.6, 0.6, 0.05]; 0 = tramo vacío. Tipos según las tasas de [demand].
+
+[bottleneck]            # cuellos de botella: dónde ocurren las detenciones. Quién se detiene, con qué
+                        # probabilidad y cuánto tiempo va en cada [vehicles.<clave>] (bottleneck_prob,
+                        # bottleneck_time_mean, bottleneck_time_std); sin bottleneck_prob, ese tipo no se detiene.
+stop_lanes = [1, 2]     # carriles donde ocurre (0 = derecho); sin ella, todos
+# stop_zone = [0.0, 450.0]  # m del tramo donde puede ocurrir (frente del vehículo); sin ella, todo el tramo
+                        # Quien viene detrás lo trata como cualquier vehículo detenido: se cambia de carril o espera.
 
 [execution]
 run = 100.0              # s de proceso
@@ -61,6 +75,10 @@ pax_min = 1
 pax_max = 6
 pax_mean = 1.3          # normal truncada a [pax_min, pax_max]
 pax_std = 1.0
+cargo_prob = 0.1        # probabilidad de que lleve mercancía: ocupa la vía, pero no cuenta en los pasajeros
+# bottleneck_prob = 0.4     # [bottleneck]: probabilidad de detenerse una vez en el tramo …
+# bottleneck_time_mean = 50.0  # … y duración (s): media y desviación estándar
+# bottleneck_time_std = 10.0
 
 [vehicles.bike]         # bicicleta: un solo carril
 speed_kmh = 20.0        # velocidad máxima del vehículo
@@ -99,10 +117,30 @@ pax_min = 1
 pax_max = 2
 pax_mean = 1.2
 pax_std = 0.2
+cargo_prob = 0.3        # motos de reparto: probabilidad de que lleve mercancía en vez de pasajeros
+overtake = true         # rebasa a quien va más lento que ella (por su velocidad real) y baja incluso
+                        # a un carril de menor límite si ahí avanza más; luego sube a uno más rápido
+lookahead = 50.0        # m; sin estas tres claves se usan las de [behavior]
+min_advantage = 1.0     # m de espacio libre extra que le basta para cambiar
+lane_change_cooldown = 1.0  # s sin volver a cambiar tras una maniobra
+
+[vehicles.carga]        # vehículo de carga: solo mercancía, no cuenta en los pasajeros
+speed_kmh = 40.0        # velocidad máxima del vehículo
+length = 10.0           # m, largo medio de una normal …
+length_std = 2.0        # … con esta desviación estándar, sorteada para cada vehículo …
+length_min = 8.0        # … truncada a ≥ 8 m; sin length_max, a ≤ length + 3·length_std (16 m)
+gap_run = 4.0           # supuesto: como el autobús
+gap_stop = 1.5
+cargo_prob = 1.0        # siempre lleva mercancía (con 1, pax_min … pax_std son opcionales)
+# bottleneck_prob = 0.6     # [bottleneck]: se detiene más seguido …
+# bottleneck_time_mean = 120.0  # … y por más tiempo (s) que un auto
+# bottleneck_time_std = 30.0
 
 [behavior]
-reaction_min = 2.0              # s, reacción al poder avanzar (verde o arranque del líder)
-reaction_max = 5.0
+reaction_min = 2.0              # s, reacción al poder avanzar (verde o arranque del líder): mínimo …
+reaction_max = 5.0              # … y máximo
+reaction_mean = 3.0             # s, media y desviación estándar de una normal truncada a [min, max];
+reaction_std = 1.0              # sin reaction_std, la reacción es uniforme en [min, max]
 lane_change_min = 1.5           # s, duración de la maniobra de cambio de carril
 lane_change_max = 4.0
 lane_change_speed_factor = 0.5  # fracción de la velocidad durante la maniobra
@@ -110,7 +148,11 @@ lane_change_cooldown = 3.0      # s sin volver a cambiar tras una maniobra
 lane_change_interval = 0.5      # s entre decisiones de cambio de carril
 lookahead = 30.0                # m a los que un líder lento motiva cambiar
 min_advantage = 3.0             # m de espacio libre extra para que valga la pena cambiar
+leader_slowdown = 0.25          # solo cambia de carril si el vehículo de enfrente (a menos de lookahead)
+                                # va al menos 25 % por debajo del límite del carril
 release_space = 0.5             # m de espacio que libera a un vehículo detenido
+yellow_approach = 50.0          # m antes del semáforo en los que, en amarillo, se baja la velocidad
+yellow_speed_factor = 0.5       # fracción de la velocidad en esa zona durante el amarillo (la línea sigue abierta)
 congestion_factor = [0.05, 0.5, 0.4, 0.6]  # reducción máx. de velocidad con la cola ocupando todo el carril,
                                 # en [0, 1): un número para todos o una lista por carril (0 = derecho).
                                 # Si faltan valores, los carriles extra usan el último; si sobran, se ignoran.

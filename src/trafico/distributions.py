@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 
-from trafico.config import DT, VehicleSpec
+from trafico.config import DT, Behavior, VehicleSpec
 
 
 def sample_passengers(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np.ndarray:
@@ -29,14 +29,36 @@ def sample_passengers(rng: np.random.Generator, spec: VehicleSpec, size: int) ->
     return out
 
 
-def stop_ticks(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np.ndarray:
-    """Duración de la parada en pasos: normal(μ, σ) truncada a ≥ 0 por remuestreo, cuantizada a DT."""
-    if spec.stop_time_std <= 0:
-        return np.full(size, round(max(spec.stop_time_mean, 0.0) / DT), dtype=np.int32)
+def sample_lengths(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np.ndarray:
+    """Largo de cada vehículo (m): normal(length, length_std) truncada a [shortest, longest] por
+    remuestreo. Sin desviación, todos miden `length` y no se consume el generador."""
+    if spec.length_std <= 0:
+        return np.full(size, spec.length)
+    lo, hi = spec.shortest, spec.longest
     out = np.empty(size, dtype=np.float64)
     filled = 0
     while filled < size:
-        draw = rng.normal(spec.stop_time_mean, spec.stop_time_std, size=2 * (size - filled) + 8)
+        draw = rng.normal(spec.length, spec.length_std, size=2 * (size - filled) + 8)
+        draw = draw[(draw >= lo) & (draw <= hi)]
+        take = min(draw.size, size - filled)
+        out[filled : filled + take] = draw[:take]
+        filled += take
+    return out
+
+
+def stop_ticks(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np.ndarray:
+    """Duración de la parada en pasos: normal(μ, σ) truncada a ≥ 0 por remuestreo, cuantizada a DT."""
+    return normal_ticks(rng, spec.stop_time_mean, spec.stop_time_std, size)
+
+
+def normal_ticks(rng: np.random.Generator, mean: float, std: float, size: int) -> np.ndarray:
+    """Duración en pasos: normal(mean, std) truncada a ≥ 0 por remuestreo, cuantizada a DT."""
+    if std <= 0:
+        return np.full(size, round(max(mean, 0.0) / DT), dtype=np.int32)
+    out = np.empty(size, dtype=np.float64)
+    filled = 0
+    while filled < size:
+        draw = rng.normal(mean, std, size=2 * (size - filled) + 8)
         draw = draw[draw >= 0]
         take = min(draw.size, size - filled)
         out[filled : filled + take] = draw[:take]
@@ -59,6 +81,29 @@ def passenger_pmf(spec: VehicleSpec) -> tuple[np.ndarray, np.ndarray]:
 
     probs = np.array([cdf(v + 0.5) - cdf(v - 0.5) for v in values])
     return values, probs / probs.sum()
+
+
+def reaction_ticks(rng: np.random.Generator, b: Behavior, size: int) -> np.ndarray:
+    """Tiempo de reacción en pasos (al menos uno). Sin `reaction_std`, uniforme en
+    [reaction_min, reaction_max]; con ella, normal(reaction_mean, reaction_std) truncada a ese
+    rango por remuestreo (media por defecto: el punto medio), cuantizada a DT."""
+    if b.reaction_std is None:
+        ticks = uniform_ticks(rng, b.reaction_min, b.reaction_max, size)
+    else:
+        mean = b.reaction_mean if b.reaction_mean is not None else (b.reaction_min + b.reaction_max) / 2
+        if b.reaction_std <= 0:
+            out = np.full(size, mean)
+        else:
+            out = np.empty(size, dtype=np.float64)
+            filled = 0
+            while filled < size:
+                draw = rng.normal(mean, b.reaction_std, size=2 * (size - filled) + 8)
+                draw = draw[(draw >= b.reaction_min) & (draw <= b.reaction_max)]
+                take = min(draw.size, size - filled)
+                out[filled : filled + take] = draw[:take]
+                filled += take
+        ticks = np.rint(out / DT).astype(np.int64)
+    return np.maximum(ticks, 1)  # con 0 pasos nunca arrancaría
 
 
 def uniform_ticks(rng: np.random.Generator, low: float, high: float, size: int | None = None):

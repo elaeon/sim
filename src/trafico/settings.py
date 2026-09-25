@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from trafico import __version__
-from trafico.config import DEFAULT_RATES, DEFAULT_SPECS, DT, MAX_TYPES, Behavior, SimConfig, VehicleSpec
+from trafico.config import DEFAULT_RATES, DEFAULT_SPECS, DT, MAX_TYPES, Behavior, Bottleneck, SimConfig, VehicleSpec
 
 CONFIG_NAME = "config.toml"
 DEFAULT_RUN_NAME = "corrida"
@@ -19,11 +19,26 @@ _SPEC_FIELDS = {
     "speed_kmh": float, "length": float, "gap_run": float, "gap_stop": float,
     "pax_min": int, "pax_max": int, "pax_mean": float, "pax_std": float,
 }  # fmt: skip
+# Umbrales de cambio de carril que un tipo puede fijar para sí; sin ellos, los de [behavior].
+_LANE_CHANGE_FIELDS = ("lookahead", "min_advantage", "lane_change_cooldown")
+# Detenciones de [bottleneck] de cada tipo: probabilidad y duración.
+_BOTTLENECK_FIELDS = ("bottleneck_prob", "bottleneck_time_mean", "bottleneck_time_std")
+# Claves que [bottleneck] ya no admite y a dónde se movieron (para el mensaje de error).
+_MOVED_BOTTLENECK = {
+    "[bottleneck] stop_prob": "bottleneck_prob", "[bottleneck] stop_time_mean": "bottleneck_time_mean",
+    "[bottleneck] stop_time_std": "bottleneck_time_std", "[bottleneck] stop_types": "bottleneck_prob",
+}  # fmt: skip
+# Pasajeros de un tipo que solo lleva mercancía (cargo_prob = 1): sus claves son opcionales.
+_CARGO_PAX = {"pax_min": 1, "pax_max": 1, "pax_mean": 1.0, "pax_std": 0.0}
+# Valores por defecto de VehicleSpec (con slots, VehicleSpec.<campo> es un descriptor, no el valor).
+_SPEC_DEFAULTS = {f.name: f.default for f in fields(VehicleSpec)}
 _BUILTIN = {spec.key: (spec, rate) for spec, rate in zip(DEFAULT_SPECS, DEFAULT_RATES)}
 _REQUIRED = object()
 FLOATS = "float_o_lista"
 """Tipo de clave que acepta un número o una lista no vacía de números (se lee como tupla)."""
-_KIND_NAMES = {float: "un número", int: "un entero", str: "un texto", bool: "true o false", FLOATS: "un número o una lista de números"}
+INTS = "lista_de_enteros"
+_KIND_NAMES = {float: "un número", int: "un entero", str: "un texto", bool: "true o false",
+               FLOATS: "un número o una lista de números", INTS: "una lista de enteros"}  # fmt: skip
 
 
 VIDEO_FORMATS = ("webm", "mp4", "gif")
@@ -119,6 +134,10 @@ class _Reader:
                 raise ConfigError(f"{_label(keypath)} debe ser {_KIND_NAMES[kind]}; se leyó {value!r}")
             floats = tuple(float(v) for v in items)
             return floats if type(value) is list else floats[0]
+        if kind is INTS:
+            if type(value) is not list or any(type(v) is not int for v in value):
+                raise ConfigError(f"{_label(keypath)} debe ser {_KIND_NAMES[kind]}; se leyó {value!r}")
+            return tuple(value)
         if kind is float and type(value) is int:
             value = float(value)
         if type(value) is not kind:  # type() exacto: un bool no cuenta como entero
@@ -162,22 +181,32 @@ def parse_settings(text: str, path: Path) -> Settings:
         }
     )
 
+    bn = Bottleneck()
+    bottleneck = Bottleneck(
+        stop_lanes=r.get(("bottleneck", "stop_lanes"), INTS, bn.stop_lanes),
+        stop_zone=_zone(r.get(("bottleneck", "stop_zone"), FLOATS, bn.stop_zone)),
+    )
+
     d = SimConfig()
-    lanes, speed_limit, notices = _lanes(r, behavior, d.lanes)
+    occupancy = r.get(("initial", "occupancy"), FLOATS, d.initial_occupancy)
+    lanes, speed_limit, notices = _lanes(r, behavior, occupancy, d.lanes)
     sim = SimConfig(
         length=r.get(("road", "length"), float, d.length),
         lanes=lanes,
         lane_speed_limit=speed_limit,
         red=r.get(("traffic_light", "red"), float, d.red),
         green=r.get(("traffic_light", "green"), float, d.green),
+        yellow=r.get(("traffic_light", "yellow"), float, d.yellow),
         start_phase=r.get(("traffic_light", "start_phase"), str, d.start_phase),
         rates=rates,
         slow_lane=r.get(("demand", "slow_lane"), str, d.slow_lane),
+        initial_occupancy=occupancy,
         run=r.get(("execution", "run"), float, d.run),
         time_scale=r.get(("execution", "time_scale"), float, d.time_scale),
         sample=r.get(("execution", "sample"), float, d.sample),
         specs=specs,
         behavior=behavior,
+        bottleneck=bottleneck,
     )
 
     o = RunOptions()
@@ -205,14 +234,27 @@ def parse_settings(text: str, path: Path) -> Settings:
     unknown = r.unknown()
     if unknown:
         msg = "claves desconocidas: " + ", ".join(unknown)
+        moved = [u for u in unknown if u in _MOVED_BOTTLENECK]
+        if moved:
+            msg += ("; en [bottleneck] solo quedan stop_lanes y stop_zone: la probabilidad y la duración van en cada "
+                    "[vehicles.<clave>] como " + ", ".join(sorted({_MOVED_BOTTLENECK[u] for u in moved})))
         orphan_rates = [u for u in unknown if u.startswith("[demand] ") and u.endswith("_rate")]
         if orphan_rates:
             key = orphan_rates[0].removeprefix("[demand] ").removesuffix("_rate")
             msg += f" (para un vehículo nuevo define también su sección [vehicles.{key}])"
         raise ConfigError(msg)
-    _validate(sim, opts)
+    validate_config(sim, opts)
     validate_animation(anim, sim, opts.replicas)
     return Settings(sim=sim, run=opts, path=path, text=text, notices=notices, animation=anim)
+
+
+def _zone(value):
+    """[inicio, fin] de [bottleneck] stop_zone: una lista de dos números."""
+    if value is None:
+        return None
+    if not isinstance(value, tuple) or len(value) != 2:
+        raise ConfigError(f"[bottleneck] stop_zone debe ser una lista [inicio, fin] en m; se leyó {value!r}")
+    return value
 
 
 def validate_animation(anim: AnimationOptions, sim: SimConfig, replicas: int) -> None:
@@ -229,9 +271,9 @@ def validate_animation(anim: AnimationOptions, sim: SimConfig, replicas: int) ->
     check(1 <= anim.replica <= replicas, f"[animation] replica debe estar entre 1 y {replicas} ([execution] replicas)")
 
 
-def _lanes(r: _Reader, behavior: Behavior, default: int):
-    """Número de carriles: la longitud de las listas por carril ([behavior] congestion_factor y
-    [road] max_line_speed), que deben coincidir. Un número suelto aplica a todos los carriles;
+def _lanes(r: _Reader, behavior: Behavior, occupancy, default: int):
+    """Número de carriles: la longitud de las listas por carril ([behavior] congestion_factor,
+    [road] max_line_speed e [initial] occupancy), que deben coincidir. Un número suelto aplica a todos los carriles;
     sin ninguna lista se usan `default` carriles.
 
     `[road] lanes` está obsoleto: solo se acepta para replicar copias anteriores, y en ese caso
@@ -242,6 +284,7 @@ def _lanes(r: _Reader, behavior: Behavior, default: int):
     lists = {
         "[behavior] congestion_factor": behavior.congestion_factor,
         "[road] max_line_speed": speed,
+        "[initial] occupancy": occupancy,
     }
     lengths = {name: len(v) for name, v in lists.items() if isinstance(v, tuple)}
     notices: tuple[str, ...] = ()
@@ -268,7 +311,12 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[float, .
     no cambia de carril; por defecto, según [demand] slow_lane), `exclusive` (reserva ese carril
     para los tipos que lo tienen como fijo; por defecto, false), la parada antes del semáforo
     (`stop_position`, `stop_time_mean`, `stop_time_std`; por defecto, sin parada) y `abreast`
-    (cuántos se detienen lado a lado en un carril; por defecto, 1) son opcionales.
+    (cuántos se detienen lado a lado en un carril; por defecto, 1) son opcionales, igual que el
+    rebase agresivo (`overtake`; por defecto, false), los umbrales de cambio de carril propios
+    del tipo (`lookahead`, `min_advantage`, `lane_change_cooldown`; por defecto, los de [behavior]),
+    la probabilidad de llevar mercancía (`cargo_prob`; por defecto, 0; con 1, los parámetros de
+    pasajeros son opcionales) y el largo variable (`length_std`, `length_min`, `length_max`; por
+    defecto, fijo).
     """
     table = r.data.get("vehicles", {})
     if not isinstance(table, dict):
@@ -284,8 +332,10 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[float, .
         base, base_rate = _BUILTIN.get(key, (None, _REQUIRED))
         section = ("vehicles", key)
         try:
+            cargo_prob = r.get(section + ("cargo_prob",), float, base.cargo_prob if base else 0.0)
+            optional = _CARGO_PAX if cargo_prob == 1 else {}  # sin pasajeros, no hace falta describirlos
             values = {
-                f: r.get(section + (f,), kind, getattr(base, f) if base else _REQUIRED)
+                f: r.get(section + (f,), kind, getattr(base, f) if base else optional.get(f, _REQUIRED))
                 for f, kind in _SPEC_FIELDS.items()
             }
             rate = r.get(("demand", f"{key}_rate"), float, base_rate)
@@ -301,9 +351,16 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[float, .
                 lane=r.get(section + ("lane",), int, base.lane if base else None),
                 exclusive=r.get(section + ("exclusive",), bool, base.exclusive if base else False),
                 stop_position=r.get(section + ("stop_position",), float, base.stop_position if base else None),
-                stop_time_mean=r.get(section + ("stop_time_mean",), float, (base or VehicleSpec).stop_time_mean),
-                stop_time_std=r.get(section + ("stop_time_std",), float, (base or VehicleSpec).stop_time_std),
+                stop_time_mean=r.get(section + ("stop_time_mean",), float, base.stop_time_mean if base else _SPEC_DEFAULTS["stop_time_mean"]),
+                stop_time_std=r.get(section + ("stop_time_std",), float, base.stop_time_std if base else _SPEC_DEFAULTS["stop_time_std"]),
                 abreast=r.get(section + ("abreast",), int, base.abreast if base else 1),
+                overtake=r.get(section + ("overtake",), bool, base.overtake if base else False),
+                **{f: r.get(section + (f,), float, getattr(base, f) if base else None) for f in _LANE_CHANGE_FIELDS},
+                cargo_prob=cargo_prob,
+                length_std=r.get(section + ("length_std",), float, base.length_std if base else 0.0),
+                length_min=r.get(section + ("length_min",), float, base.length_min if base else None),
+                length_max=r.get(section + ("length_max",), float, base.length_max if base else None),
+                **{f: r.get(section + (f,), float, getattr(base, f) if base else _SPEC_DEFAULTS[f]) for f in _BOTTLENECK_FIELDS},
                 **values,
             )
         )
@@ -322,7 +379,8 @@ def load_settings(path: Path) -> Settings:
         raise ConfigError(f"{path}: {exc}") from None
 
 
-def _validate(sim: SimConfig, opts: RunOptions) -> None:
+def validate_config(sim: SimConfig, opts: RunOptions) -> None:
+    """Valida la configuración de una corrida; lanza ConfigError con la clave que falla."""
     def check(ok: bool, msg: str) -> None:
         if not ok:
             raise ConfigError(msg)
@@ -337,10 +395,15 @@ def _validate(sim: SimConfig, opts: RunOptions) -> None:
         check(not spec.exclusive or spec.lane is not None,
               f"[vehicles.{spec.key}] exclusive = true requiere un carril fijo (lane)")  # fmt: skip
         check(1 <= spec.abreast <= 4, f"[vehicles.{spec.key}] abreast debe estar entre 1 y 4")
+        overrides = {f: getattr(spec, f) for f in _LANE_CHANGE_FIELDS if getattr(spec, f) is not None}
+        for name in ([*overrides, "overtake"] if spec.overtake else overrides):
+            check(spec.can_change_lane, f"[vehicles.{spec.key}] {name} solo aplica a tipos con lane_change = true")
+        for name, value in overrides.items():
+            check(value >= 0, f"[vehicles.{spec.key}] {name} no puede ser negativo")
         if spec.stop_position is not None:
             label = f"[vehicles.{spec.key}]"
-            check(spec.length <= spec.stop_position <= sim.length,
-                  f"{label} stop_position debe estar entre {spec.length:g} (el largo del vehículo, que entra con "
+            check(spec.longest <= spec.stop_position <= sim.length,
+                  f"{label} stop_position debe estar entre {spec.longest:g} (el largo máximo del vehículo, que entra con "
                   f"la parte trasera en 0) y {sim.length:g} m (el semáforo)")  # fmt: skip
             check(spec.stop_time_mean >= 0 and spec.stop_time_std >= 0,
                   f"{label} stop_time_mean y stop_time_std no pueden ser negativos")  # fmt: skip
@@ -355,33 +418,45 @@ def _validate(sim: SimConfig, opts: RunOptions) -> None:
     check(not dupes, f"[vehicles] los nombres deben ser distintos; se repite {', '.join(dupes)}")
     b = sim.behavior
     check(0 < b.reaction_min <= b.reaction_max <= 600, "[behavior] requiere 0 < reaction_min ≤ reaction_max ≤ 600")
+    check(b.reaction_mean is None or b.reaction_std is not None,
+          "[behavior] reaction_mean requiere reaction_std (sin ella, la reacción es uniforme en [min, max])")  # fmt: skip
+    check(b.reaction_std is None or b.reaction_std >= 0, "[behavior] reaction_std no puede ser negativo")
+    check(b.reaction_mean is None or b.reaction_min <= b.reaction_mean <= b.reaction_max,
+          "[behavior] reaction_mean debe estar entre reaction_min y reaction_max")  # fmt: skip
     check(
         0 < b.lane_change_min <= b.lane_change_max <= 600,
         "[behavior] requiere 0 < lane_change_min ≤ lane_change_max ≤ 600",
     )
     check(0 < b.lane_change_speed_factor <= 1, "[behavior] lane_change_speed_factor debe estar en (0, 1]")
-    for name in ("lane_change_cooldown", "lookahead", "min_advantage", "release_space"):
+    check(0 <= b.leader_slowdown < 1, "[behavior] leader_slowdown debe estar en [0, 1)")
+    check(0 < b.yellow_speed_factor <= 1, "[behavior] yellow_speed_factor debe estar en (0, 1]")
+    for name in ("lane_change_cooldown", "lookahead", "min_advantage", "release_space", "yellow_approach"):
         check(getattr(b, name) >= 0, f"[behavior] {name} no puede ser negativo")
     check(b.lane_change_interval >= DT, f"[behavior] lane_change_interval debe ser ≥ {DT} s")
     cf = b.congestion_factor if isinstance(b.congestion_factor, tuple) else (b.congestion_factor,)
     check(all(0 <= v < 1 for v in cf), "[behavior] congestion_factor: cada valor debe estar en [0, 1)")
 
-    longest = max(s.length + s.gap_run for s in sim.specs)
+    _validate_bottleneck(sim, check)
+
+    longest = max(s.longest + s.gap_run for s in sim.specs)
     check(sim.length >= 2 * longest, f"[road] length debe ser al menos {2 * longest:g} m (dos veces el vehículo más largo con su gap)")
     check(1 <= sim.lanes <= 50, "se admiten entre 1 y 50 carriles (largo de las listas por carril)")
     check(all(v > 0 for v in sim.lane_max_kmh), "[road] max_line_speed: cada valor debe ser mayor que 0")
     check(sim.red >= 0, "[traffic_light] red no puede ser negativo")
     check(sim.green > 0, "[traffic_light] green debe ser mayor que 0")
+    check(sim.yellow >= 0, "[traffic_light] yellow no puede ser negativo")
     check(sim.start_phase in ("red", "green"), '[traffic_light] start_phase debe ser "red" o "green"')
     check(all(rate >= 0 for rate in sim.rates), "[demand] las tasas no pueden ser negativas")
     check(any(rate > 0 for rate in sim.rates), "[demand] al menos un tipo de vehículo debe tener tasa > 0")
     check(sim.slow_lane in ("right", "random"), '[demand] slow_lane debe ser "right" o "random"')
+    check(all(0 <= v <= 1 for v in sim.lane_initial_occupancy), "[initial] occupancy: cada valor debe estar en [0, 1]")
     check(sim.run > 0, "[execution] run debe ser mayor que 0")
     check(sim.time_scale > 0, "[execution] time_scale debe ser mayor que 0")
     check(sim.sample > 0, "[execution] sample debe ser mayor que 0")
     for label, value in (
         ("[traffic_light] red", sim.red),
         ("[traffic_light] green", sim.green),
+        ("[traffic_light] yellow", sim.yellow),
         ("[execution] sample", sim.sample),
     ):
         check(abs(value / DT - round(value / DT)) < 1e-9, f"{label} debe ser múltiplo de {DT} s")
@@ -392,6 +467,22 @@ def _validate(sim: SimConfig, opts: RunOptions) -> None:
     check(bool(opts.output_dir.strip()), "[output] dir no puede estar vacío")
 
 
+def _validate_bottleneck(sim: SimConfig, check) -> None:
+    for spec in sim.specs:
+        label = f"[vehicles.{spec.key}]"
+        check(0 <= spec.bottleneck_prob <= 1, f"{label} bottleneck_prob debe estar entre 0 y 1")
+        check(spec.bottleneck_prob == 0 or spec.stop_position is None,
+              f"{label} bottleneck_prob no aplica a un tipo con parada propia (stop_position); solo se admite una")  # fmt: skip
+        mean, std = spec.bottleneck_time_mean, spec.bottleneck_time_std
+        check(mean >= 0 and std >= 0, f"{label} bottleneck_time_mean y bottleneck_time_std no pueden ser negativos")
+        check(mean + 6 * std <= 3600,
+              f"{label} la detención no puede durar más de una hora (media + 6·σ ≤ 3600 s)")  # fmt: skip
+    for lane in sim.bottleneck.stop_lanes or ():
+        check(0 <= lane < sim.lanes, f"[bottleneck] stop_lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
+    lo, hi = sim.bottleneck_zone()
+    check(0 <= lo < hi <= sim.length, f"[bottleneck] stop_zone requiere 0 ≤ inicio < fin ≤ {sim.length:g} ([road] length)")
+
+
 def _validate_spec(s: VehicleSpec, label: str, check) -> None:
     check(bool(s.name.strip()), f"{label} name no puede estar vacío")
     check(s.speed_kmh > 0 and s.length > 0, f"{label} speed_kmh y length deben ser mayores que 0")
@@ -399,6 +490,12 @@ def _validate_spec(s: VehicleSpec, label: str, check) -> None:
     check(1 <= s.pax_min <= s.pax_max <= 255, f"{label} requiere 1 ≤ pax_min ≤ pax_max ≤ 255")
     check(s.pax_min <= s.pax_mean <= s.pax_max, f"{label} pax_mean debe estar entre pax_min y pax_max")
     check(s.pax_std >= 0, f"{label} pax_std no puede ser negativo")
+    check(0 <= s.cargo_prob <= 1, f"{label} cargo_prob debe estar entre 0 y 1")
+    check(s.length_std >= 0, f"{label} length_std no puede ser negativo")
+    if s.length_std > 0:
+        check(0 < s.shortest <= s.length <= s.longest,
+              f"{label} requiere 0 < length_min ≤ length ≤ length_max (sin ellos, length ∓ 3·length_std); "
+              f"quedan {s.shortest:g} ≤ {s.length:g} ≤ {s.longest:g}")  # fmt: skip
 
 
 # ------------------------------------------------------------ carpeta de corrida

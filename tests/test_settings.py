@@ -174,6 +174,155 @@ def test_fixed_lane_per_type():
             _parse(text)
 
 
+def test_overtake_and_lane_change_thresholds_per_type():
+    s = _parse(SCOOTER + "overtake = true\nlookahead = 50\nmin_advantage = 1\nlane_change_cooldown = 1.5\n")
+    scooter = s.sim.specs[-1]
+    assert scooter.overtake and scooter.lookahead == 50.0
+    assert scooter.min_advantage == 1.0 and scooter.lane_change_cooldown == 1.5
+    car = s.sim.specs[0]  # sin las claves, los de [behavior]
+    assert not car.overtake and car.lookahead is None and car.min_advantage is None
+    for text, message in [
+        (SCOOTER + "lane_change = false\novertake = true\n",
+         "[vehicles.scooter] overtake solo aplica a tipos con lane_change = true"),
+        ("[vehicles.bus]\nlookahead = 40\n", "[vehicles.bus] lookahead solo aplica a tipos con lane_change = true"),
+        ("[vehicles.car]\nmin_advantage = -1\n", "[vehicles.car] min_advantage no puede ser negativo"),
+    ]:  # fmt: skip
+        with pytest.raises(ConfigError, match=re.escape(message)):
+            _parse(text)
+
+
+def test_yellow_light_settings():
+    s = _parse("[traffic_light]\nred = 25\ngreen = 35\nyellow = 3\n"
+               "[behavior]\nyellow_approach = 40\nyellow_speed_factor = 0.6\n")  # fmt: skip
+    assert s.sim.yellow == 3.0 and s.sim.cycle == 63.0
+    assert s.sim.behavior.yellow_approach == 40.0 and s.sim.behavior.yellow_speed_factor == 0.6
+    assert s.sim.light_label == "rojo 25 s / verde 35 s / amarillo 3 s"
+    assert _parse("").sim.yellow == 0.0 and _parse("").sim.light_label == "rojo 30 s / verde 30 s"
+    for text, message in [
+        ("[traffic_light]\nyellow = -1\n", "[traffic_light] yellow no puede ser negativo"),
+        ("[traffic_light]\nyellow = 3.05\n", "[traffic_light] yellow debe ser múltiplo de 0.1 s"),
+        ("[behavior]\nyellow_speed_factor = 0\n", "[behavior] yellow_speed_factor debe estar en (0, 1]"),
+        ("[behavior]\nyellow_approach = -5\n", "[behavior] yellow_approach no puede ser negativo"),
+    ]:
+        with pytest.raises(ConfigError, match=re.escape(message)):
+            _parse(text)
+
+
+def test_leader_slowdown_setting():
+    assert _parse("").sim.behavior.leader_slowdown == 0.25
+    assert _parse("[behavior]\nleader_slowdown = 0.4\n").sim.behavior.leader_slowdown == 0.4
+    with pytest.raises(ConfigError, match=re.escape("[behavior] leader_slowdown debe estar en [0, 1)")):
+        _parse("[behavior]\nleader_slowdown = 1\n")
+
+
+CARGA_TOML = """
+[demand]
+carga_rate = 1
+[vehicles.carga]
+speed_kmh = 40
+length = 10
+length_std = 2
+length_min = 8
+gap_run = 4
+gap_stop = 1.5
+cargo_prob = 1
+"""
+
+
+def test_cargo_type_and_variable_length():
+    carga = _parse(CARGA_TOML).sim.specs[-1]  # sin pax_*: solo lleva mercancía
+    assert carga.cargo_prob == 1.0 and not carga.carries_passengers
+    assert (carga.shortest, carga.length, carga.longest) == (8.0, 10.0, 16.0)
+    assert _parse("[vehicles.car]\ncargo_prob = 0.2\n").sim.specs[0].cargo_prob == 0.2
+    assert DEFAULT_SPECS[0].cargo_prob == 0 and DEFAULT_SPECS[0].longest == DEFAULT_SPECS[0].length
+    for text, message in [
+        (CARGA_TOML.replace("cargo_prob = 1", "cargo_prob = 0.5"),
+         "falta la clave obligatoria [vehicles.carga] pax_min"),
+        ("[vehicles.car]\ncargo_prob = 1.5\n", "[vehicles.car] cargo_prob debe estar entre 0 y 1"),
+        ("[vehicles.car]\nlength_std = -1\n", "[vehicles.car] length_std no puede ser negativo"),
+        ("[vehicles.car]\nlength_std = 1\nlength_min = 5\n", "[vehicles.car] requiere 0 < length_min ≤ length ≤ length_max"),
+        ("[vehicles.car]\nlength_std = 2\n", "[vehicles.car] requiere 0 < length_min"),  # 4.5 − 3·2 < 0
+    ]:  # fmt: skip
+        with pytest.raises(ConfigError, match=re.escape(message)):
+            _parse(text)
+
+
+def test_summary_reports_cargo_share(root):
+    text = FAST + CARGA_TOML.replace("carga_rate = 1", "carga_rate = 30") + "[vehicles.car]\ncargo_prob = 0.3\n"
+    (root / CONFIG_NAME).write_text(text, encoding="utf-8")
+    summary = (run([]) / SUMMARY_NAME).read_text()
+    row = next(line for line in summary.splitlines() if line.startswith("Con mercancía (%)"))
+    assert row.split()[-1] == "100.0"  # carga: toda con mercancía
+    pax_row = next(line for line in summary.splitlines() if line.startswith("Pasajeros por vehículo"))
+    assert pax_row.split()[-1] == "—"  # sin pasajeros
+
+
+def test_initial_occupancy_setting():
+    assert _parse("").sim.lane_initial_occupancy == (0.0, 0.0)
+    s = _parse("[initial]\noccupancy = [0.2, 0.5, 0.5]\n").sim
+    assert s.lanes == 3 and s.lane_initial_occupancy == (0.2, 0.5, 0.5)
+    assert _parse("[road]\nmax_line_speed = [30, 50]\n[initial]\noccupancy = 0.4\n").sim.lane_initial_occupancy == (0.4, 0.4)
+    for text, message in [
+        ("[initial]\noccupancy = 1.2\n", "[initial] occupancy: cada valor debe estar en [0, 1]"),
+        ("[road]\nmax_line_speed = [30, 50]\n[initial]\noccupancy = [0.1, 0.2, 0.3]\n",
+         "[initial] occupancy tiene 3"),
+    ]:  # fmt: skip
+        with pytest.raises(ConfigError, match=re.escape(message)):
+            _parse(text)
+
+
+def test_reaction_time_settings():
+    b = _parse("[behavior]\nreaction_min = 0.7\nreaction_max = 3\nreaction_mean = 1.5\nreaction_std = 0.5\n").sim.behavior
+    assert (b.reaction_min, b.reaction_max, b.reaction_mean, b.reaction_std) == (0.7, 3.0, 1.5, 0.5)
+    assert _parse("").sim.behavior.reaction_std is None  # por defecto, uniforme
+    for text, message in [
+        ("[behavior]\nreaction_mean = 2\n", "[behavior] reaction_mean requiere reaction_std"),
+        ("[behavior]\nreaction_std = -1\n", "[behavior] reaction_std no puede ser negativo"),
+        ("[behavior]\nreaction_mean = 9\nreaction_std = 1\n",
+         "[behavior] reaction_mean debe estar entre reaction_min y reaction_max"),
+    ]:  # fmt: skip
+        with pytest.raises(ConfigError, match=re.escape(message)):
+            _parse(text)
+
+
+def test_bottleneck_settings():
+    sim = _parse('[road]\nmax_line_speed = [30, 50, 50]\n[bottleneck]\nstop_lanes = [1, 2]\nstop_zone = [50, 150]\n').sim
+    assert sim.bottleneck_lanes() == (1, 2) and sim.bottleneck_zone() == (50.0, 150.0)
+    default = _parse("").sim
+    assert default.bottleneck_lanes() == (0, 1) and default.bottleneck_zone() == (0.0, 200.0)
+    assert not default.bottleneck_active
+    for text, message in [
+        ("[bottleneck]\nstop_lanes = [5]\n", "[bottleneck] stop_lanes: cada carril debe estar entre 0 y 1"),
+        ("[bottleneck]\nstop_zone = [150, 250]\n", "[bottleneck] stop_zone requiere 0 ≤ inicio < fin ≤ 200"),
+        ("[bottleneck]\nstop_zone = 50\n", "[bottleneck] stop_zone debe ser una lista [inicio, fin]"),
+        ("[bottleneck]\nstop_lanes = 1\n", "[bottleneck] stop_lanes debe ser una lista de enteros"),
+        # La probabilidad y la duración ya no van en [bottleneck]: el error dice a dónde se movieron.
+        ("[bottleneck]\nstop_prob = 0.1\nstop_time_mean = 20\n",
+         "en [bottleneck] solo quedan stop_lanes y stop_zone: la probabilidad y la duración van en cada "
+         "[vehicles.<clave>] como bottleneck_prob, bottleneck_time_mean"),
+    ]:  # fmt: skip
+        with pytest.raises(ConfigError, match=re.escape(message)):
+            _parse(text)
+
+
+def test_bottleneck_per_type_settings():
+    sim = _parse(CARGA_TOML + "bottleneck_prob = 0.3\nbottleneck_time_mean = 90\nbottleneck_time_std = 30\n"
+                 "[vehicles.car]\nbottleneck_prob = 0.05\n").sim
+    carga = len(sim.specs) - 1
+    assert sim.bottleneck_prob(carga) == 0.3 and sim.bottleneck_time(carga) == (90.0, 30.0)
+    assert sim.bottleneck_prob(0) == 0.05 and sim.bottleneck_time(0) == (30.0, 0.0)  # duración por defecto
+    assert sim.bottleneck_prob(1) == 0.0 and sim.bottleneck_active
+    for text, message in [
+        ("[vehicles.car]\nbottleneck_prob = 1.5\n", "[vehicles.car] bottleneck_prob debe estar entre 0 y 1"),
+        ("[vehicles.car]\nbottleneck_time_std = -2\n",
+         "[vehicles.car] bottleneck_time_mean y bottleneck_time_std no pueden ser negativos"),
+        ("[vehicles.bus]\nstop_position = 100\nbottleneck_prob = 0.5\n",
+         "[vehicles.bus] bottleneck_prob no aplica a un tipo con parada propia"),
+    ]:  # fmt: skip
+        with pytest.raises(ConfigError, match=re.escape(message)):
+            _parse(text)
+
+
 def test_vehicle_type_limit():
     keys = [f"s{i}" for i in range(MAX_TYPES - len(DEFAULT_SPECS) + 1)]
     vehicle = SCOOTER[SCOOTER.index("[vehicles.scooter]") :]

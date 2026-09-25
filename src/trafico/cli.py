@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import DT
+from trafico.config import DT, MAX_TYPES
 from trafico.metrics import LANE_SATURATION, LANE_SPEED, SERIES
 from trafico.runner import Aggregate, run_parallel
 from trafico.settings import (
@@ -83,14 +83,26 @@ def format_summary(agg: Aggregate) -> str:
         ("Pasajeros por vehículo", s["pax_per_veh"], 2),
         ("Pax/m de carril en marcha", s["pax_per_veh"] / footprint, 2),
         ("T. recorrido medio (s)", s["travel_time"], 1),
+        ("T. medio en cola de entrada (s)", s["queue_wait"], 1),
         ("T. a flujo libre (s)", np.array([cfg.length / (cfg.free_flow_kmh(k) / 3.6) + sp.expected_stop_time
                                            for k, sp in enumerate(cfg.specs)]), 1),
         ("En el tramo al final", s["on_road"], 1),
         ("En cola de entrada al final", s["queued"], 1),
+        *([("En el tramo al inicio", s["initial_veh"], 1)] if any(cfg.lane_initial_occupancy) else []),
+        ("Cambios de carril/veh", np.divide(s["lane_changes_type"], s["entered_veh"], out=np.full(cfg.n_types, np.nan),
+                                            where=s["entered_veh"] > 0), 2),  # fmt: skip
     ]
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0]  # tipos que participan
     if any(cfg.specs[k].stop_position is not None for k in active):
-        rows.insert(8, ("T. medio en la parada (s)", s["stop_time"], 1))
+        rows.insert(9, ("T. medio en la parada (s)", s["stop_time"], 1))
+    if cfg.bottleneck_active:
+        rows.append(("Detenciones (bottleneck)", s["bottleneck_stops"], 1))
+        rows.append(("T. medio detenido (s)", s["bottleneck_time"], 1))
+    if any(cfg.specs[k].cargo_prob > 0 for k in active):
+        # Los de mercancía cuentan como vehículos, pero no en las filas de pasajeros.
+        cargo = np.divide(100.0 * s["arrived_cargo"], s["arrived_veh"], out=np.full(cfg.n_types, np.nan),
+                          where=s["arrived_veh"] > 0)  # fmt: skip
+        rows.insert(1, ("Con mercancía (%)", cargo, 1))
     w0 = max(len(r[0]) for r in rows) + 2
     widths = {k: max(10, len(cfg.specs[k].name) + 2) for k in active}
     speed = cfg.sim_seconds / agg.replica_wall.mean
@@ -143,6 +155,18 @@ def _lane_lines(cfg) -> list[str]:
     if reserved:
         owners = {ln: [s.name for s in cfg.specs if s.lane == ln] for ln in reserved}
         lines.append("Carriles exclusivos: " + " · ".join(f"{ln}: {', '.join(owners[ln])}" for ln in reserved))
+    if cfg.bottleneck_active:
+        lo, hi = cfg.bottleneck_zone()
+        per_type = " · ".join(
+            f"{sp.name} {100 * cfg.bottleneck_prob(k):g} % {'%g ± %g s' % cfg.bottleneck_time(k)}"
+            for k, sp in enumerate(cfg.specs) if cfg.rates[k] > 0 and cfg.bottleneck_prob(k) > 0
+        )  # fmt: skip
+        lines.append(f"Cuello de botella (se detienen en carril(es) {', '.join(map(str, cfg.bottleneck_lanes()))} "
+                     f"entre {lo:g} y {hi:g} m): {per_type}")  # fmt: skip
+    occupancy = cfg.lane_initial_occupancy
+    if any(occupancy):
+        lines.append("Condición inicial, ocupación por carril (0 = derecho): "
+                     + " · ".join(f"{i}: {100 * v:g} %" for i, v in enumerate(occupancy)))  # fmt: skip
     return lines + _congestion_lines(cfg)
 
 
@@ -191,7 +215,7 @@ def run(argv: list[str] | None = None) -> Path:
     header = "\n".join(
         [
             f"Corrida {run_dir.name} · configuración {target.config}",
-            f"Tramo {cfg.length:g} m · {cfg.lanes} carril(es) · semáforo rojo {cfg.red:g} s / verde {cfg.green:g} s",
+            f"Tramo {cfg.length:g} m · {cfg.lanes} carril(es) · semáforo {cfg.light_label}",
             f"run {cfg.run:g} s de proceso × {cfg.time_scale:g} = {cfg.sim_seconds:g} s simulados · "
             f"{opts.replicas} réplicas en {workers} proceso(s) · semilla {seed}",
             *_lane_lines(cfg),
@@ -210,7 +234,8 @@ def run(argv: list[str] | None = None) -> Path:
     from trafico.plotting import plot_mobility, plot_passenger_distribution
 
     footer = f"corrida {run_dir.name} · semilla {seed}"
-    plot_passenger_distribution(agg, run_dir / PAX_PLOT_NAME, footer=footer)
+    if any(rate > 0 and sp.carries_passengers for sp, rate in zip(cfg.specs, cfg.rates)):
+        plot_passenger_distribution(agg, run_dir / PAX_PLOT_NAME, footer=footer)
     plot_mobility(agg, run_dir / PLOT_NAME, show=opts.show, footer=footer)
     if opts.animation:
         from trafico.movement import visualize
@@ -299,3 +324,133 @@ def view(argv: list[str] | None = None) -> list[Path]:
 
 def view_main(argv: list[str] | None = None) -> None:
     view(argv)
+
+
+# ------------------------------------------------------------ trafico-variantes
+
+VARIANTS_NAME = "variantes_semaforo"
+
+
+def build_variants_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="trafico-variantes",
+        description=(
+            f"Compara variantes de un escenario: corre la configuración ({CONFIG_NAME}) con cada combinación de "
+            "largo de tramo y reparto del semáforo, y grafica la velocidad media de cada carril y los vehículos en "
+            "la cola de entrada a lo largo del tiempo. Guarda la gráfica, tablas CSV, un resumen, los datos crudos "
+            "y los parámetros en <output.dir>/<fecha-hora>_<nombre>/."
+        ),
+    )
+    p.add_argument(
+        "target", nargs="?", default=None, metavar="nombre | carpeta",
+        help=f"como en `trafico`: una carpeta de la que se lee su {CONFIG_NAME}, o el nombre de la comparación "
+             f"(por defecto, {VARIANTS_NAME}) con {default_config_path()}",
+    )  # fmt: skip
+    p.add_argument("--largos", type=float, nargs="+", metavar="M",
+                   help="largos del tramo en m (por defecto, [road] length)")  # fmt: skip
+    p.add_argument("--semaforos", nargs="+", metavar="ROJO/VERDE",
+                   help="repartos del semáforo en s, p. ej. 40/20 30/30 20/40 (por defecto, esos tres "
+                        "repartos del ciclo rojo + verde de la configuración)")  # fmt: skip
+    p.add_argument("--carriles", type=int, nargs="+", metavar="N",
+                   help="carriles de la configuración que se conservan, renumerados desde 0 en ese orden, con "
+                        "sus límites, congestión, ocupación inicial y cuellos de botella (por defecto, todos)")  # fmt: skip
+    p.add_argument("--sin", nargs="+", default=[], metavar="CLAVE",
+                   help="tipos de vehículo que no participan, p. ej. bike bus")  # fmt: skip
+    p.add_argument("--cola", nargs="+", metavar="CLAVE",
+                   help="tipos que se cuentan en la cola de entrada (por defecto, car; si no participa, todos)")  # fmt: skip
+    p.add_argument("--replicas", type=int, help="réplicas por escenario (por defecto, [execution] replicas)")
+    p.add_argument("--run", type=float, help="s de proceso de cada réplica (por defecto, [execution] run)")
+    p.add_argument("--redibujar", metavar="CARPETA",
+                   help="no simula: vuelve a dibujar la gráfica de una comparación ya corrida (sin sobrescribir)")  # fmt: skip
+    return p
+
+
+def _lights(values: list[str] | None, red: float, green: float) -> tuple[tuple[float, float], ...]:
+    if values is None:  # tres repartos del mismo ciclo: rojo 2/3, 1/2 y 1/3
+        cycle = red + green
+        return tuple((round(round(cycle * f / DT) * DT, 6), round(round(cycle * (1 - f) / DT) * DT, 6))
+                     for f in (2 / 3, 1 / 2, 1 / 3))  # fmt: skip
+    out = []
+    for text in values:
+        parts = text.split("/")
+        try:
+            red_s, green_s = (float(v) for v in parts)
+        except ValueError:
+            raise ConfigError(f"--semaforos: {text!r} debe ser ROJO/VERDE en s, p. ej. 40/20") from None
+        out.append((red_s, green_s))
+    return tuple(out)
+
+
+def variants(argv: list[str] | None = None) -> Path:
+    """Corre una comparación de variantes (o la redibuja) y devuelve su carpeta."""
+    from trafico.movement import _free_path
+    from trafico.plotting import plot_variants
+    from trafico.settings import _set_key
+    from trafico.variants import (
+        BASE_CONFIG_NAME, PLOT_NAME as VARIANTS_PLOT, SUMMARY_NAME as VARIANTS_SUMMARY, Variants, load, metadata,
+        run_variants, write_outputs,
+    )  # fmt: skip
+
+    argv = sys.argv[1:] if argv is None else argv
+    parser = build_variants_parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.redibujar:
+            folder = Path(args.redibujar).expanduser()
+            meta, data = load(folder)
+            path = _free_path(folder / VARIANTS_PLOT)
+            plot_variants(path, meta, data)
+            print(f"Gráfica en {path}")
+            return folder
+        target = resolve_target(args.target)
+        settings = load_settings(target.config)
+        base, opts = settings.sim, settings.run
+        keys = [s.key for s in base.specs]
+        without = tuple(args.sin)
+        playing = [k for k, rate in zip(keys, base.rates) if rate > 0 and k not in without]
+        queue_types = tuple(args.cola or (["car"] if "car" in playing else playing))
+        for key in queue_types:
+            if key not in keys:
+                raise ConfigError(f"--cola: no existe el tipo {key!r} (claves: {', '.join(keys)})")
+        v = Variants(
+            lengths=tuple(args.largos or (base.length,)),
+            lights=_lights(args.semaforos, base.red, base.green),
+            lanes=tuple(args.carriles) if args.carriles else None,
+            without=without, queue_types=queue_types,
+            replicas=args.replicas if args.replicas is not None else opts.replicas,
+            run=args.run if args.run is not None else base.run,
+        )  # fmt: skip
+        if v.replicas < 1:
+            raise ConfigError("--replicas debe ser al menos 1")
+        if len(v.lights) > MAX_TYPES:
+            raise ConfigError(f"--semaforos: se admiten hasta {MAX_TYPES} repartos (colores de la gráfica)")
+        seed = opts.seed if opts.seed is not None else secrets.randbelow(2**32)
+        meta = metadata(base, v, seed, argv)  # valida carriles y tipos antes de crear la carpeta
+    except ConfigError as exc:
+        parser.error(str(exc))
+
+    n_scen = len(v.lengths) * len(v.lights)
+    print(f"Comparación de variantes · configuración {target.config}")
+    print(f"{len(v.lengths)} largo(s) × {len(v.lights)} semáforo(s) = {n_scen} escenarios × {v.replicas} réplicas · "
+          f"run {v.run:g} s × {base.time_scale:g} = {v.run * base.time_scale:g} s simulados · semilla {seed}")  # fmt: skip
+    try:
+        data = run_variants(base, v, seed, opts.workers, progress=_progress if opts.progress else None)
+    except ConfigError as exc:
+        parser.error(str(exc))
+
+    now = datetime.now()
+    folder = make_run_dir(resolve_output_dir(opts.output_dir), safe_name(target.name or VARIANTS_NAME), now)
+    text = settings.text if opts.seed is not None else _set_key(settings.text, "execution", "seed", seed, "semilla usada")
+    (folder / BASE_CONFIG_NAME).write_text(
+        f"# Configuración base de la comparación {folder.name}\n# {meta['comando']}\n\n{text}", encoding="utf-8"
+    )
+    summary = write_outputs(folder, meta, data)
+    print("\n" + summary)
+    (folder / VARIANTS_SUMMARY).write_text(f"{meta['comando']}\n\n{summary}\n", encoding="utf-8")
+    plot_variants(folder / VARIANTS_PLOT, meta, data)
+    print(f"\nResultados en {folder}")
+    return folder
+
+
+def variants_main(argv: list[str] | None = None) -> None:
+    variants(argv)

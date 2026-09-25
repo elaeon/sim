@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parámetros de configuración</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --line: #e1e0d9;
+    --accent: #2a78d6;
+    --code-bg: #f0efec;
+    --note-bg: #eef4fc;
+    --warn-bg: #fdf3e1;
+    --warn-line: #eda100;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --line: #2c2c2a;
+      --accent: #3987e5;
+      --code-bg: #262624;
+      --note-bg: #16243a;
+      --warn-bg: #2e2412;
+      --warn-line: #c98500;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --line: #2c2c2a;
+    --accent: #3987e5;
+    --code-bg: #262624;
+    --note-bg: #16243a;
+    --warn-bg: #2e2412;
+    --warn-line: #c98500;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+  header h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 8px; }
+  header p { color: var(--ink-2); margin: 0; }
+  nav {
+    margin: 24px 0 8px; display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  nav a {
+    color: var(--ink-2); text-decoration: none; font-size: 0.9rem;
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+    background: var(--surface);
+  }
+  nav a:hover { color: var(--accent); border-color: var(--accent); }
+  section {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px 20px 8px; margin-top: 24px;
+  }
+  h2 { font-size: 1.3rem; margin: 0 0 4px; }
+  h2 code { font-size: 1.1rem; }
+  h3 { font-size: 1.05rem; margin: 20px 0 6px; }
+  .lead { color: var(--ink-2); margin: 0 0 12px; }
+  code {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 0.88em; background: var(--code-bg); border-radius: 4px; padding: 1px 5px;
+  }
+  pre {
+    background: var(--code-bg); border-radius: 8px; padding: 12px 14px; overflow-x: auto;
+    font-size: 0.85rem; line-height: 1.5; margin: 8px 0 16px;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .table-scroll { overflow-x: auto; margin: 8px 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  td:first-child { white-space: nowrap; }
+  td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .note, .warn {
+    border-left: 3px solid var(--accent); background: var(--note-bg);
+    border-radius: 0 8px 8px 0; padding: 10px 14px; margin: 12px 0 16px;
+  }
+  .warn { border-left-color: var(--warn-line); background: var(--warn-bg); }
+  .note p, .warn p { margin: 0 0 6px; }
+  .note p:last-child, .warn p:last-child { margin-bottom: 0; }
+  ul { padding-left: 1.2rem; }
+  li { margin: 4px 0; }
+  footer { color: var(--muted); font-size: 0.85rem; margin-top: 32px; }
+  @media (max-width: 600px) {
+    header h1 { font-size: 1.5rem; }
+    section { padding: 16px 12px 4px; }
+    th, td { padding: 6px 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Parámetros de configuración</h1>
+  <p>Referencia de <code>config.toml</code> para <strong>trafico</strong>, la simulación de flujo vehicular en un
+    tramo de vía con semáforo. Todos los parámetros de una corrida se leen de este archivo.</p>
+</header>
+
+<nav>
+  <a href="#uso">Uso</a>
+  <a href="#road">[road]</a>
+  <a href="#traffic_light">[traffic_light]</a>
+  <a href="#demand">[demand]</a>
+  <a href="#initial">[initial]</a>
+  <a href="#bottleneck">[bottleneck]</a>
+  <a href="#execution">[execution]</a>
+  <a href="#output">[output]</a>
+  <a href="#vehicles">[vehicles.*]</a>
+  <a href="#behavior">[behavior]</a>
+  <a href="#animation">[animation]</a>
+  <a href="#sample">Sobre sample</a>
+  <a href="#replicas">Sobre replicas</a>
+</nav>
+
+<section id="uso">
+  <h2>Uso y reglas generales</h2>
+  <pre><code>uv run trafico                              # config.toml de la raíz → resultados/&lt;ID&gt;_corrida/
+uv run trafico hora_pico                    # config.toml de la raíz → resultados/&lt;ID&gt;_hora_pico/
+uv run trafico resultados/&lt;ID&gt;_hora_pico    # config.toml de esa carpeta (réplica de la corrida)
+uv run trafico-ver                          # movimiento de la corrida más reciente (ver [animation])
+uv run trafico-ver resultados/&lt;ID&gt;_hora_pico --inicio 300 --duracion 60
+uv run trafico-variantes --largos 50 150 300 --semaforos 40/20 30/30 20/40 --carriles 1 2 --sin bike bus</code></pre>
+  <ul>
+    <li>El archivo siempre se llama <code>config.toml</code>. El único argumento del comando es opcional:
+      si es una carpeta existente, se lee su <code>config.toml</code>; si no, es el <strong>nombre</strong>
+      de la corrida y se usa el <code>config.toml</code> de la raíz del proyecto. Un texto con <code>/</code>
+      que no exista como carpeta es un error, no un nombre.</li>
+    <li>Las claves que falten toman el valor por defecto indicado en las tablas.</li>
+    <li>Una clave desconocida (por ejemplo, un error de escritura), un tipo incorrecto o un valor fuera de rango
+      detienen la corrida con un mensaje que indica la clave.</li>
+    <li>Cada corrida crea <code>resultados/&lt;AAAAMMDD-HHMMSS&gt;_&lt;nombre&gt;/</code> con la gráfica, el
+      resumen, las series y una copia de la configuración usada. Esa copia registra la semilla y el nombre,
+      así que basta para replicar la corrida con resultados idénticos.</li>
+    <li>La gráfica tiene seis paneles: cuatro por tipo de vehículo (pasajeros acumulados, flujo de pasajeros,
+      pax·km/h y pasajeros por metro de carril) y dos por carril (saturación y velocidad media).</li>
+    <li><code>distribucion_pasajeros.png</code> muestra, para cada tipo que participa, el porcentaje de vehículos
+      con cada número de pasajeros: todos los que llegaron durante la simulación, sumando las réplicas, con su media
+      observada. Una línea escalonada marca la distribución esperada según los <code>pax_*</code> configurados (la
+      normal redondeada y truncada al rango que usa el sorteo), para distinguir el ruido de una muestra pequeña de un
+      problema real. Si el rango tiene más de 30 valores, las barras se agrupan en intervalos (de 5 pasajeros para un
+      rango de 1 a 120).</li>
+  </ul>
+
+  <h3>Comparar variantes: <code>trafico-variantes</code></h3>
+  <p>Corre la misma configuración con cada combinación de largo de tramo y reparto del semáforo, y grafica, para cada
+    largo, la velocidad media de cada carril (barras por reparto) y los vehículos en la cola de entrada a lo largo del
+    tiempo (una línea por reparto). Todos los escenarios usan las mismas semillas, así que las diferencias vienen de la
+    variante y no del azar.</p>
+  <pre><code>uv run trafico-variantes [nombre | carpeta] [opciones]
+uv run trafico-variantes hora_pico --largos 50 150 300 --semaforos 40/20 30/30 20/40 --carriles 1 2 --sin bike bus
+uv run trafico-variantes --redibujar resultados/&lt;ID&gt;_variantes_semaforo</code></pre>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Opción</th><th>Descripción</th><th>Por defecto</th></tr></thead>
+    <tbody>
+      <tr><td><code>nombre | carpeta</code></td><td>Como en <code>trafico</code>: una carpeta de la que se lee su
+        <code>config.toml</code>, o el nombre de la comparación (sufijo de la carpeta de resultados). Va antes de las
+        opciones.</td><td><code>variantes_semaforo</code> con el <code>config.toml</code> de la raíz</td></tr>
+      <tr><td><code>--largos M …</code></td><td>Largos del tramo en m.</td><td><code>[road] length</code></td></tr>
+      <tr><td><code>--semaforos ROJO/VERDE …</code></td><td>Repartos del semáforo en s; el amarillo es el de la
+        configuración. Hasta 8.</td><td>Rojo 2/3, 1/2 y 1/3 del ciclo rojo + verde (con 30/30: 40/20, 30/30,
+        20/40)</td></tr>
+      <tr><td><code>--carriles N …</code></td><td>Carriles de la configuración que se conservan, renumerados desde 0 en
+        ese orden. Cada uno se lleva su límite de velocidad, su factor de congestión, su ocupación inicial y, si está en
+        <code>[bottleneck] stop_lanes</code>, sus detenciones.</td><td>Todos</td></tr>
+      <tr><td><code>--sin CLAVE …</code></td><td>Tipos de vehículo que no participan (tasa 0). Pierden su carril fijo,
+        su exclusividad, su parada y sus detenciones, así que no estorban al quitar carriles. Un tipo que sí participa
+        con carril fijo fuera de <code>--carriles</code> es un error.</td><td>Ninguno</td></tr>
+      <tr><td><code>--cola CLAVE …</code></td><td>Tipos que se cuentan en la cola de entrada.</td><td><code>car</code>;
+        si no participa, todos</td></tr>
+      <tr><td><code>--replicas N</code>, <code>--run S</code></td><td>Réplicas por escenario y s de proceso de cada
+        una (× <code>time_scale</code> = s simulados).</td><td><code>[execution] replicas</code> y
+        <code>run</code></td></tr>
+      <tr><td><code>--redibujar CARPETA</code></td><td>No simula: vuelve a dibujar la gráfica de una comparación ya
+        corrida a partir de sus datos, en un archivo nuevo (no sobrescribe).</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+  <p>La carpeta <code>resultados/&lt;AAAAMMDD-HHMMSS&gt;_&lt;nombre&gt;/</code> contiene
+    <code>variantes_semaforo.png</code>, <code>resumen.txt</code> (tabla de velocidades y colas),
+    <code>velocidad_por_carril.csv</code> (velocidad media y σ de cada carril, cola final y máxima, y vehículos que
+    cruzan, por escenario), <code>cola_entrada.csv</code> (cola media a lo largo del tiempo), <code>datos.npz</code>
+    (datos de cada réplica), <code>variantes.json</code> (parámetros, semilla y comando) y
+    <code>config_base.toml</code> (la configuración de partida). No tiene <code>config.toml</code>, así que no es una
+    corrida de <code>trafico</code> ni la toma <code>trafico-ver</code>.</p>
+</section>
+
+<section id="road">
+  <h2><code>[road]</code> Tramo de vía</h2>
+  <p class="lead">Geometría del tramo. El semáforo está al final, en <code>x = length</code>.</p>
+  <div class="note"><p><strong>Número de carriles.</strong> Es la longitud de las listas por carril:
+    <code>max_line_speed</code> y <code>[behavior] congestion_factor</code>. Si ambas son listas deben tener el mismo
+    largo; un número suelto aplica a todos los carriles, y sin ninguna lista se usan 2. Con 1 carril no hay cambios
+    de carril. La antigua clave <code>lanes</code> ya no se usa; solo se acepta, con un aviso, para replicar copias
+    anteriores.</p></div>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>length</code></td><td>número</td><td class="num">200.0</td>
+        <td>Longitud del tramo en metros.</td>
+        <td>Al menos el doble del vehículo más largo con su gap en marcha (32 m con los tipos incorporados).</td></tr>
+      <tr><td><code>max_line_speed</code></td><td>número o lista</td><td class="num">(sin límite)</td>
+        <td>Límite de velocidad en km/h de cada carril, empezando por el derecho (carril 0), como
+          <code>[40, 50, 40]</code>; un número aplica a todos. Ningún vehículo lo rebasa, y quien cambia de carril
+          respeta el menor de sus dos límites. Un vehículo atrapado detrás de otro más lento o detenido solo pasa a
+          un carril de menor límite si eso mejora su velocidad; si no puede rebasar, sube a uno adyacente de mayor
+          límite cuando hay lugar (<code>gap_run</code> adelante y atrás) y ahí no lo frena un líder cercano. Todo
+          cambio de carril requiere un líder que vaya lento (ver <code>leader_slowdown</code> en
+          <a href="#behavior">[behavior]</a>).</td>
+        <td>Cada valor &gt; 0.</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Ejemplo: tres carriles</h3>
+  <pre><code>[road]
+length = 500.0
+max_line_speed = [40, 50, 40]         # carril 0 (derecho), 1 y 2 (izquierdo)
+
+[behavior]
+congestion_factor = [0.2, 0.3, 0.5]   # mismo largo que max_line_speed → 3 carriles
+
+[vehicles.bike]
+lane = 0                              # bicis en el carril derecho
+exclusive = true                      # … y solo bicis
+[vehicles.bus]
+lane = 1                              # autobuses en el siguiente
+exclusive = true                      # autos y motos usan solo el carril 2
+stop_position = 400.0                 # parada a 100 m del semáforo …
+stop_time_mean = 20.0                 # … de 20 ± 5 s
+stop_time_std = 5.0</code></pre>
+  <p>La cabecera de cada corrida y <code>resumen.txt</code> muestran el límite, los carriles exclusivos y el factor de
+    congestión de cada carril.</p>
+</section>
+
+<section id="traffic_light">
+  <h2><code>[traffic_light]</code> Semáforo</h2>
+  <p class="lead">Ciclo fijo verde → amarillo → rojo. En amarillo la línea sigue abierta, pero quien se aproxima al
+    semáforo baja la velocidad (ver <code>yellow_approach</code> y <code>yellow_speed_factor</code> en
+    <a href="#behavior">[behavior]</a>). En rojo, ningún vehículo cuyo frente no haya cruzado puede pasar la línea.
+    Las gráficas sombrean el rojo y el amarillo, y el video pinta el semáforo del color de la fase.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>red</code></td><td>número</td><td class="num">30.0</td>
+        <td>Duración de la luz roja en segundos simulados. Con 0, el semáforo siempre está en verde.</td>
+        <td>≥ 0, múltiplo de 0.1.</td></tr>
+      <tr><td><code>green</code></td><td>número</td><td class="num">30.0</td>
+        <td>Duración de la luz verde en segundos simulados.</td><td>&gt; 0, múltiplo de 0.1.</td></tr>
+      <tr><td><code>yellow</code></td><td>número</td><td class="num">0.0</td>
+        <td>Duración de la luz amarilla en segundos simulados, entre el verde y el rojo. El ciclo dura
+          <code>red + green + yellow</code>. Con 0 no hay amarillo: el verde pasa directo al rojo.</td>
+        <td>≥ 0, múltiplo de 0.1.</td></tr>
+      <tr><td><code>start_phase</code></td><td>texto</td><td class="num">"red"</td>
+        <td>Fase con la que empieza la corrida. Empezando en verde, le siguen el amarillo y el rojo.</td>
+        <td><code>"red"</code> o <code>"green"</code>.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="demand">
+  <h2><code>[demand]</code> Demanda</h2>
+  <p class="lead">Llegadas al inicio del tramo según un proceso de Poisson, de forma continua durante toda la corrida.
+    Si no hay espacio en la entrada, los vehículos esperan en una cola por carril.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>&lt;clave&gt;_rate</code></td><td>número</td>
+        <td class="num">car 15<br>bike 4<br>bus 1</td>
+        <td>Tasa de llegada en vehículos por minuto de cada tipo definido en <code>[vehicles.&lt;clave&gt;]</code>.
+          Con 0, ese tipo no participa. Es obligatoria para los tipos nuevos.</td>
+        <td>≥ 0; al menos un tipo &gt; 0.</td></tr>
+      <tr><td><code>slow_lane</code></td><td>texto</td><td class="num">"right"</td>
+        <td>Carril fijo de los tipos que no cambian de carril (<code>lane_change = false</code>) y no definen
+          <code>lane</code>: el derecho, o uno aleatorio asignado al entrar, sin contar los carriles exclusivos.</td>
+        <td><code>"right"</code> o <code>"random"</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><p>Si la demanda total supera la capacidad del semáforo, la cola de entrada crece durante toda la
+    corrida. El resumen lo muestra en «En cola de entrada al final» (vehículos esperando al terminar) y en
+    «T. medio en cola de entrada (s)»: la espera media, desde que el vehículo llega hasta que entra al tramo, de los que
+    ya entraron. No cuenta a los que siguen esperando al final, así que con una cola que crece sin parar subestima la
+    espera. El tiempo de recorrido empieza al entrar al tramo y no incluye esta espera.</p></div>
+</section>
+
+<section id="initial">
+  <h2><code>[initial]</code> Condición inicial</h2>
+  <p class="lead">Por defecto el tramo empieza vacío y se va llenando con la demanda. Con <code>occupancy</code> los
+    carriles ya tienen vehículos en t = 0, así que se observa desde el principio el comportamiento con la vía
+    cargada, sin esperar el llenado.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>occupancy</code></td><td>número o lista</td><td class="num">0.0</td>
+        <td>Fracción de cada carril ocupada al empezar: la suma de largo + <code>gap_stop</code> de sus vehículos entre
+          <code>[road] length</code>. Con 1, el carril queda como una cola compacta, con cada vehículo a su
+          <code>gap_stop</code> del de adelante (la distancia mínima del modelo); con 0, vacío. Un número aplica a todos los carriles; una lista da un valor por carril, empezando por el derecho, y su
+          longitud debe coincidir con las demás listas por carril (ver <a href="#road">[road]</a>).</td>
+        <td>Cada valor en [0, 1].</td></tr>
+    </tbody>
+  </table></div>
+  <p>Cómo se llena cada carril:</p>
+  <ul>
+    <li>Se colocan vehículos hasta alcanzar la ocupación. Si uno no cabe, se sortea otro (p. ej. uno más corto), así
+      que el carril queda tan lleno como se pidió.</li>
+    <li>El espacio libre se reparte primero para que cada vehículo tenga su <code>gap_run</code> y empiece
+      <strong>en marcha</strong>; lo que sobra se reparte al azar. Si no alcanza (ocupación alta), todos se comprimen
+      por igual y empiezan <strong>detenidos</strong>, como un embotellamiento: arrancan con su tiempo de reacción
+      cuando se abre espacio adelante, y la cola se estira. Como referencia, un carril de autos
+      (4.5 m, <code>gap_stop</code> 1, <code>gap_run</code> 4) empieza en marcha hasta una ocupación de ~0.65.</li>
+    <li>Si el semáforo empieza en rojo, los primeros forman la cola en la línea de alto.</li>
+    <li>El tipo de cada vehículo se sortea en proporción a su tasa de <a href="#demand">[demand]</a>, entre los tipos
+      que pueden circular por ese carril. Se respetan los carriles exclusivos y los fijos, así que un carril exclusivo
+      de autobuses se llena solo de autobuses. Conviene darle una ocupación baja con una lista, p. ej.
+      <code>[0.2, 0.6, 0.6, 0.05]</code>.</li>
+    <li>Pasajeros, mercancía (<code>cargo_prob</code>) y largo se sortean como en las llegadas. Los autobuses que
+      empiezan más allá de su parada no se detienen en ella.</li>
+    <li>Usan su propio generador aleatorio: las llegadas de la demanda son las mismas con o sin condición inicial, y
+      con 0 la corrida es idéntica a la de un tramo vacío.</li>
+  </ul>
+  <div class="note"><p>Los vehículos iniciales cuentan en el tráfico, en los cruces y en los pasajeros que cruzan, pero no
+    como llegadas de la demanda («Llegadas (veh/min)»). Tampoco cuentan en el tiempo de recorrido medio, porque no
+    recorrieron el tramo completo. <code>resumen.txt</code> los muestra en la fila «En el tramo al inicio», y la
+    cabecera indica la ocupación de cada carril.</p></div>
+</section>
+
+<section id="bottleneck">
+  <h2><code>[bottleneck]</code> Cuellos de botella</h2>
+  <p class="lead">Situaciones que reducen la capacidad de la vía. La primera opción son las <strong>detenciones</strong>:
+    algunos vehículos se detienen un tiempo en su carril (una descompostura, alguien que sube o baja, una entrega). Los
+    que vienen detrás los tratan como a cualquier vehículo detenido: se comprimen detrás de él o, si el carril de al
+    lado lo permite, se cambian de carril para rebasarlo (ver <code>leader_slowdown</code> en
+    <a href="#behavior">[behavior]</a>). No hace falta configurar nada más para ese efecto.</p>
+  <p>Esta sección define <strong>dónde</strong> ocurren las detenciones. <strong>Quién</strong> se detiene, con qué
+    probabilidad y cuánto tiempo se define en cada tipo de vehículo, con <code>bottleneck_prob</code>,
+    <code>bottleneck_time_mean</code> y <code>bottleneck_time_std</code> en
+    <a href="#vehicles">[vehicles.&lt;clave&gt;]</a>. Un tipo sin <code>bottleneck_prob</code> no se detiene. Sin
+    ningún tipo con probabilidad &gt; 0 no hay detenciones y la corrida es idéntica a una sin esta sección.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>stop_lanes</code></td><td>lista de enteros</td><td class="num">(todos)</td>
+        <td>Carriles donde ocurren las detenciones (0 = derecho). Un vehículo solo se detiene si, al llegar a su punto,
+          va por uno de estos carriles y no está cambiando de carril; si no, sigue sin detenerse.</td>
+        <td>Entre 0 y el número de carriles − 1.</td></tr>
+      <tr><td><code>stop_zone</code></td><td>lista</td><td class="num">(todo el tramo)</td>
+        <td>[inicio, fin] en m desde el inicio del tramo: zona donde puede estar el frente del vehículo al detenerse. El
+          punto de cada detención se sortea uniforme en ella al entrar el vehículo. Sin ella, todo el tramo.</td>
+        <td>0 ≤ inicio &lt; fin ≤ <code>[road] length</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <pre><code>[bottleneck]
+stop_lanes = [1, 2]               # las detenciones ocurren en los carriles 1 y 2 …
+stop_zone = [100.0, 400.0]        # … entre los 100 y 400 m del tramo
+
+[vehicles.car]
+bottleneck_prob = 0.05            # 5 % de los autos se detiene una vez …
+bottleneck_time_mean = 30.0       # … unos 30 ± 10 s
+bottleneck_time_std = 10.0
+
+[vehicles.carga]                  # la carga se detiene más seguido …
+bottleneck_prob = 0.6
+bottleneck_time_mean = 120.0      # … y por más tiempo
+bottleneck_time_std = 30.0</code></pre>
+  <p>Los vehículos de la condición inicial (<a href="#initial">[initial]</a>) también pueden detenerse. El
+    <code>resumen.txt</code> agrega las filas «Detenciones (bottleneck)», con las detenciones por réplica de cada tipo, y
+    «T. medio detenido (s)», y la cabecera describe la configuración de cada tipo. En el video, un vehículo detenido por
+    un cuello de botella se pinta de negro mientras dura la detención y luego recupera su color. El efecto en los demás
+    se ve en «Cambios de carril/veh» y en el tiempo de recorrido.</p>
+  <div class="note"><p>En versiones anteriores, <code>stop_prob</code>, <code>stop_time_mean</code>,
+    <code>stop_time_std</code> y <code>stop_types</code> iban en esta sección. Ya no se aceptan: la corrida se detiene
+    indicando que van en cada <code>[vehicles.&lt;clave&gt;]</code> como <code>bottleneck_prob</code>,
+    <code>bottleneck_time_mean</code> y <code>bottleneck_time_std</code>.</p></div>
+</section>
+
+<section id="execution">
+  <h2><code>[execution]</code> Ejecución</h2>
+  <p class="lead">Duración, resolución de las series y paralelismo. El motor siempre avanza en pasos de 0.1 s simulados.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>run</code></td><td>número</td><td class="num">10.0</td>
+        <td>Tiempo de proceso en segundos. La duración simulada es <code>run × time_scale</code>.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>time_scale</code></td><td>número</td><td class="num">10.0</td>
+        <td>Segundos simulados por cada segundo de proceso. Con 10, <code>run = 10</code> son 100 s simulados
+          (1000 pasos). El programa corre tan rápido como puede; no se sincroniza con el reloj.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>sample</code></td><td>número</td><td class="num">1.0</td>
+        <td>Segundos simulados entre muestras de las series de la gráfica y del CSV.
+          <a href="#sample">Ver detalles</a>.</td>
+        <td>&gt; 0, múltiplo de 0.1; la corrida debe cubrir al menos 2 muestras.</td></tr>
+      <tr><td><code>replicas</code></td><td>entero</td><td class="num">8</td>
+        <td>Número de réplicas Monte Carlo independientes. <a href="#replicas">Ver detalles</a>.</td><td>≥ 1.</td></tr>
+      <tr><td><code>workers</code></td><td>entero</td><td class="num">0</td>
+        <td>Procesos en paralelo. Con 0 es automático: el menor entre réplicas y CPUs disponibles.
+          No cambia los resultados, solo la velocidad.</td><td>≥ 0.</td></tr>
+      <tr><td><code>seed</code></td><td>entero</td><td class="num">(aleatoria)</td>
+        <td>Semilla base. Si falta, se genera una, se imprime y se escribe en la copia de la configuración. De ella
+          salen las semillas de las réplicas y, en cada réplica, un generador aleatorio por proceso y por tipo
+          (llegadas, pasajeros, reacciones, carril de entrada, parada) más uno para los cambios de carril: con la
+          misma semilla, cambiar un tipo no altera los sorteos de los demás. Las copias hechas antes de la versión
+          0.2.0 dan otros números al replicarlas.</td>
+        <td>≥ 0.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="output">
+  <h2><code>[output]</code> Salida</h2>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th></tr></thead>
+    <tbody>
+      <tr><td><code>dir</code></td><td>texto</td><td class="num">"resultados"</td>
+        <td>Carpeta donde se crean las carpetas de cada corrida. Una ruta relativa se toma desde la raíz del
+          proyecto.</td></tr>
+      <tr><td><code>name</code></td><td>texto</td><td class="num">""</td>
+        <td>Sufijo de la carpeta de la corrida. Prioridad: el nombre dado en el comando, luego esta clave, luego el
+          nombre de la carpeta leída (o <code>corrida</code>). Solo se conservan letras, dígitos,
+          <code>.</code>, <code>_</code> y <code>-</code>.</td></tr>
+      <tr><td><code>csv</code></td><td>booleano</td><td class="num">true</td>
+        <td>Exporta las series (media y σ) a <code>series.csv</code>: las de cada tipo de vehículo y las de cada carril
+          (saturación y velocidad media).</td></tr>
+      <tr><td><code>show</code></td><td>booleano</td><td class="num">false</td>
+        <td>Además de guardar la gráfica, abre la ventana de matplotlib.</td></tr>
+      <tr><td><code>progress</code></td><td>booleano</td><td class="num">true</td>
+        <td>Muestra la barra de progreso de réplicas.</td></tr>
+      <tr><td><code>animation</code></td><td>booleano</td><td class="num">false</td>
+        <td>Al terminar la corrida, genera también el diagrama espacio-tiempo y el video de movimiento con la ventana
+          de <a href="#animation">[animation]</a>. Sin volver a correr, lo mismo se obtiene con
+          <code>uv run trafico-ver &lt;carpeta&gt;</code>.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="vehicles">
+  <h2><code>[vehicles.&lt;clave&gt;]</code> Tipos de vehículo</h2>
+  <p class="lead">Cada sección define un tipo. <code>car</code>, <code>bike</code> y <code>bus</code> siempre existen y
+    toman valores por defecto para lo que no se indique. Cualquier otra clave crea un tipo nuevo sin tocar el código.
+    Se admiten hasta 8 tipos en total.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>speed_kmh</code></td><td>número</td><td>Velocidad máxima que puede alcanzar el vehículo, en km/h.
+          Avanza a ella salvo que la limiten el carril (<code>max_line_speed</code>), la congestión, un cambio de
+          carril o el vehículo de adelante.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>length</code></td><td>número</td><td>Largo del vehículo en metros; con <code>length_std</code>, el largo
+          medio.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>length_std</code></td><td>número</td><td>Desviación estándar del largo (m). Con un valor mayor que 0,
+          cada vehículo sortea su largo de una normal(<code>length</code>, <code>length_std</code>) truncada a
+          [<code>length_min</code>, <code>length_max</code>]. El corte mueve la media observada: con media 10, σ 2 y
+          mínimo 8, el largo medio es ~10.6 m. Opcional; por defecto 0 (todos miden <code>length</code>).</td>
+        <td>≥ 0.</td></tr>
+      <tr><td><code>length_min</code>, <code>length_max</code></td><td>número</td><td>Largo mínimo y máximo (m) cuando
+          <code>length_std</code> &gt; 0. Opcionales; por defecto <code>length</code> ∓ 3·<code>length_std</code>. El
+          máximo es el que cuenta para validar <code>[road] length</code> y <code>stop_position</code>.</td>
+        <td>0 &lt; mín ≤ <code>length</code> ≤ máx.</td></tr>
+      <tr><td><code>gap_run</code></td><td>número</td><td>Distancia al vehículo de adelante cuando éste va en marcha (m).</td>
+        <td>≥ <code>gap_stop</code>.</td></tr>
+      <tr><td><code>gap_stop</code></td><td>número</td><td>Distancia al vehículo de adelante cuando éste está detenido (m).
+          Que sea menor que <code>gap_run</code> produce la <strong>compresión</strong> de la cola.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>pax_min</code>, <code>pax_max</code></td><td>entero</td><td>Rango de pasajeros por vehículo. Con
+          <code>cargo_prob = 1</code>, estas cuatro claves son opcionales: el tipo nunca lleva pasajeros.</td>
+        <td>1 ≤ min ≤ max ≤ 255.</td></tr>
+      <tr><td><code>pax_mean</code>, <code>pax_std</code></td><td>número</td><td>Media y desviación de una normal que se
+          trunca al rango y se redondea. La truncadura puede mover la media observada: en autos, μ = 1.5 con mínimo 1
+          da ~1.8.</td><td>min ≤ media ≤ max; σ ≥ 0.</td></tr>
+      <tr><td><code>name</code></td><td>texto</td><td>Etiqueta en la gráfica, el resumen y el CSV. Opcional; por defecto,
+          la clave.</td><td>No vacía y distinta entre tipos.</td></tr>
+      <tr><td><code>lane_change</code></td><td>booleano</td><td>Si el tipo puede cambiar de carril. Opcional; por defecto
+          <code>true</code> para los tipos nuevos.</td><td>—</td></tr>
+      <tr><td><code>lane</code></td><td>entero</td><td>Carril fijo de un tipo que no cambia de carril: 0 = derecho, 1 = el
+          siguiente hacia la izquierda, … Opcional; sin él se aplica <code>[demand] slow_lane</code>. Sirve, por
+          ejemplo, para separar bicis (<code>lane = 0</code>) y autobuses (<code>lane = 1</code>).</td>
+        <td>Solo con <code>lane_change = false</code>; entre 0 y el número de carriles − 1.</td></tr>
+      <tr><td><code>exclusive</code></td><td>booleano</td><td>Reserva el carril <code>lane</code> para los tipos que lo
+          tienen como fijo: los demás (autos, motos, tipos sin <code>lane</code>) no entran por él ni se cambian a él.
+          Sin <code>exclusive</code>, el carril fijo se comparte con los que cambian de carril. Opcional; por defecto
+          <code>false</code>. La gráfica marca estos carriles como "solo &lt;tipo&gt;".</td>
+        <td>Requiere <code>lane</code>; a cada tipo que participa sin carril fijo le debe quedar al menos un carril
+          libre.</td></tr>
+      <tr><td><code>abreast</code></td><td>entero</td><td>Al detenerse, cuántos vehículos de este tipo caben lado a
+          lado en un carril (p. ej. <code>2</code> para bicis). Quien llega en marcha detrás de uno detenido de su mismo
+          tipo se detiene a su lado, con los frentes alineados, mientras la fila tenga lugar; el siguiente hace fila
+          detrás. Al arrancar salen uno tras otro, con su reacción y su gap en marcha. Una fila cuenta como un solo
+          lugar en la saturación del carril y en los pasajeros por metro; en el video se dibujan uno junto al otro.
+          Opcional; por defecto <code>1</code> (en fila).</td>
+        <td>Entre 1 y 4.</td></tr>
+      <tr><td><code>stop_position</code></td><td>número</td><td>Parada antes del semáforo para el descenso y ascenso
+          de pasajeros: posición, en m desde el inicio del tramo, donde el vehículo se detiene con el frente. Opcional;
+          sin ella no hay parada. Quien viene detrás en el mismo carril espera y se comprime; otro vehículo del mismo
+          tipo hace fila y luego hace su propia parada. Al terminar arranca sin tiempo de reacción adicional.</td>
+        <td>Entre el largo del vehículo y <code>[road] length</code>.</td></tr>
+      <tr><td><code>stop_time_mean</code>, <code>stop_time_std</code></td><td>número</td><td>Media y desviación estándar
+          (s) del tiempo detenido en la parada: normal truncada a ≥ 0 (con σ grande respecto a la media, la media
+          real sube; el tiempo a flujo libre del resumen usa la media truncada). Por defecto 20 y 5. Solo aplican
+          con <code>stop_position</code>.</td>
+        <td>≥ 0; media + 6σ ≤ 3600 s.</td></tr>
+      <tr><td><code>overtake</code></td><td>true/false</td><td>Rebase agresivo (p. ej. motos): el líder cuenta
+          como lento por su velocidad real en el último paso (un auto en maniobra, frenado por su cola o por la
+          congestión), no solo por la nominal, y el vehículo baja incluso a un carril de menor límite si ahí avanza
+          más que detrás de él. Como todos, solo cambia de carril detrás de un líder que va al menos
+          <code>leader_slowdown</code> por debajo del límite del carril. Opcional; por defecto <code>false</code>.</td>
+        <td>Solo con <code>lane_change = true</code>.</td></tr>
+      <tr><td><code>cargo_prob</code></td><td>número</td><td>Probabilidad de que un vehículo del tipo lleve mercancía en vez
+          de pasajeros (p. ej. motos de reparto). Se sortea para cada vehículo que llega. El vehículo ocupa la vía igual
+          que los demás: cuenta en llegadas, cruces, tiempo de recorrido, colas, saturación y cambios de carril. En
+          cambio, no cuenta en ninguna métrica de pasajeros: pasajeros que cruzan, flujo, pax·km/h, pasajeros por
+          vehículo, pax/m y la distribución de pasajeros. Con 1, el tipo solo lleva mercancía y no aparece en las
+          gráficas de pasajeros, salvo en el recuadro de vehículos que cruzaron. Opcional; por defecto 0.</td>
+        <td>Entre 0 y 1.</td></tr>
+      <tr><td><code>bottleneck_prob</code>, <code>bottleneck_time_mean</code>, <code>bottleneck_time_std</code></td>
+        <td>número</td><td>Detenciones de <a href="#bottleneck">[bottleneck]</a> del tipo: probabilidad de que cada
+          vehículo se detenga una vez en el tramo y duración de la detención (media y σ, en s; normal truncada a ≥ 0 y
+          redondeada a 0.1 s). Permiten, p. ej., que un vehículo de carga se detenga más seguido y por más tiempo que un
+          auto. Los carriles y la zona donde ocurren son los de <code>[bottleneck]</code>. Se llaman distinto de
+          <code>stop_time_mean</code>/<code>stop_time_std</code> de esta tabla, que son la duración de la parada propia
+          (p. ej. la del autobús). Opcionales; por defecto 0 (no se detiene), 30 s y 0 s.</td>
+        <td>Probabilidad entre 0 y 1; media y σ ≥ 0, media + 6σ ≤ 3600 s; probabilidad &gt; 0 no se admite con
+          <code>stop_position</code>.</td></tr>
+      <tr><td><code>lookahead</code>, <code>min_advantage</code>, <code>lane_change_cooldown</code></td><td>número</td>
+        <td>Umbrales de cambio de carril propios del tipo: distancia (m) a la que un líder lento motiva cambiar,
+          espacio libre extra (m) que hace que valga la pena y tiempo (s) sin volver a cambiar. Con valores más
+          favorables que los de <code>[behavior]</code> el tipo cambia de carril en mayor proporción. Opcionales; por
+          defecto, los de <code>[behavior]</code>.</td>
+        <td>≥ 0; solo con <code>lane_change = true</code>.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Ejemplo: motos que rebasan</h3>
+  <pre><code>[vehicles.motorbike]
+overtake = true             # rebasa por velocidad real; baja incluso a un carril más lento y luego sube
+lookahead = 50.0            # m (en [behavior], 30)
+min_advantage = 1.0         # m
+lane_change_cooldown = 1.0  # s</code></pre>
+  <p>Quien puede cambiar de carril solo lo hace si tiene enfrente, a menos de <code>lookahead</code>, un vehículo que
+    va al menos <code>leader_slowdown</code> (25 %) por debajo del límite del carril; sin nadie enfrente no cambia.
+    Entonces rebasa por el carril de al lado si le da <code>min_advantage</code> m más de espacio libre o, si no,
+    sube a un carril adyacente de mayor límite cuando hay lugar. Con estos valores las motos cambian de carril en mayor proporción que los autos.
+    <code>resumen.txt</code> lo muestra en la fila «Cambios de carril/veh», por tipo.</p>
+
+  <h3>Ejemplo: mercancía y vehículos de carga</h3>
+  <pre><code>[demand]
+carga_rate = 1.0
+
+[vehicles.motorbike]
+cargo_prob = 0.3        # 30 % de las motos son de reparto
+
+[vehicles.carga]        # solo mercancía: no hacen falta pax_min … pax_std
+speed_kmh = 40.0
+length = 10.0           # largo medio (m) …
+length_std = 2.0        # … con desviación estándar 2 …
+length_min = 8.0        # … y mínimo 8 m (máximo por defecto: 10 + 3·2 = 16 m)
+gap_run = 4.0
+gap_stop = 1.5
+cargo_prob = 1.0</code></pre>
+  <p>Los vehículos con mercancía saturan la vía sin sumar pasajeros. <code>resumen.txt</code> muestra la fila
+    «Con mercancía (%)» con la parte de las llegadas de cada tipo que lleva mercancía. «Pasajeros por vehículo» es el
+    promedio de los que llevan pasajeros; para un tipo que solo lleva mercancía aparece «—». En la leyenda de la gráfica
+    cada tipo indica su porcentaje de mercancía. En el video, los vehículos con mercancía se dibujan más claros.</p>
+
+  <h3>Valores de los tipos incorporados</h3>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>name</th><th>speed_kmh</th><th>length</th><th>gap_run</th><th>gap_stop</th>
+      <th>pasajeros</th><th>lane_change</th><th>tasa</th></tr></thead>
+    <tbody>
+      <tr><td><code>car</code></td><td>auto</td><td class="num">50</td><td class="num">4.5</td><td class="num">3.0</td>
+        <td class="num">1.0</td><td class="num">[1, 6], μ 1.5, σ 1</td><td>true</td><td class="num">15/min</td></tr>
+      <tr><td><code>bike</code></td><td>bici</td><td class="num">15</td><td class="num">1.8</td><td class="num">1.0</td>
+        <td class="num">0.5</td><td class="num">1</td><td>false</td><td class="num">4/min</td></tr>
+      <tr><td><code>bus</code></td><td>autobús</td><td class="num">40</td><td class="num">12.0</td><td class="num">4.0*</td>
+        <td class="num">1.5</td><td class="num">[1, 80], μ 40, σ 10</td><td>false</td><td class="num">1/min</td></tr>
+    </tbody>
+  </table></div>
+  <p class="lead">* Supuesto: el enunciado original no especifica el gap en marcha del autobús.
+    <code>speed_kmh</code> es la velocidad máxima; con <code>max_line_speed</code>, la velocidad a flujo libre de cada tipo
+    es la menor entre ella y el límite del mejor carril que puede usar.</p>
+
+  <h3>Agregar un tipo nuevo</h3>
+  <p>Un tipo nuevo debe definir los ocho parámetros numéricos y su tasa en <code>[demand]</code>. Si falta alguno,
+    la corrida se detiene indicando cuál.</p>
+  <pre><code>[demand]
+motorbike_rate = 5.0
+
+[vehicles.motorbike]
+name = "moto"          # opcional
+lane_change = true     # opcional
+speed_kmh = 40.0
+length = 2.0
+gap_run = 2.0
+gap_stop = 1.0
+pax_min = 1
+pax_max = 2
+pax_mean = 1.2
+pax_std = 0.2</code></pre>
+  <p>El color de cada tipo en la gráfica depende de su posición: primero los incorporados y después los nuevos, en el
+    orden del archivo.</p>
+</section>
+
+<section id="behavior">
+  <h2><code>[behavior]</code> Conducta</h2>
+  <p class="lead">Parámetros comunes a todos los vehículos: reacción al arrancar, cambios de carril y congestión.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>reaction_min</code>, <code>reaction_max</code></td><td class="num">1.0, 5.0</td>
+        <td>Rango (s) del tiempo de reacción de un vehículo detenido que queda libre: se puso verde o arrancó el de
+          adelante. Encadenado vehículo tras vehículo, produce el <strong>estiramiento</strong> del pelotón. Sin
+          <code>reaction_std</code>, la reacción es uniforme en este rango.</td>
+        <td>0 &lt; min ≤ max ≤ 600.</td></tr>
+      <tr><td><code>reaction_mean</code>, <code>reaction_std</code></td><td class="num">—</td>
+        <td>Media y desviación estándar (s) del tiempo de reacción. Con <code>reaction_std</code>, se sortea de una
+          normal(media, σ) truncada a [<code>reaction_min</code>, <code>reaction_max</code>] y redondeada a 0.1 s. El
+          corte puede mover la media observada: con 1.5 ± 0.5 en [0.7, 3.0], la media real es ~1.56 s. Sin
+          <code>reaction_mean</code>, la media es el punto medio del rango. Con σ = 0, todos reaccionan en la media.
+          Opcionales; sin ellas, la reacción es uniforme.</td>
+        <td>min ≤ media ≤ max; σ ≥ 0; <code>reaction_mean</code> requiere <code>reaction_std</code>.</td></tr>
+      <tr><td><code>lane_change_min</code>, <code>lane_change_max</code></td><td class="num">1.0, 4.0</td>
+        <td>Rango (s) de la duración uniforme de la maniobra de cambio de carril. Mientras dura, el vehículo ocupa
+          ambos carriles y comprime a los de atrás en los dos.</td><td>0 &lt; min ≤ max ≤ 600.</td></tr>
+      <tr><td><code>lane_change_speed_factor</code></td><td class="num">0.5</td>
+        <td>Fracción de la velocidad durante la maniobra: el costo del cambio de carril.</td><td>(0, 1].</td></tr>
+      <tr><td><code>lane_change_cooldown</code></td><td class="num">3.0</td>
+        <td>Segundos sin volver a cambiar de carril después de una maniobra.</td><td>≥ 0.</td></tr>
+      <tr><td><code>lane_change_interval</code></td><td class="num">0.5</td>
+        <td>Cada cuántos segundos se evalúan los cambios de carril.</td><td>≥ 0.1.</td></tr>
+      <tr><td><code>lookahead</code></td><td class="num">30.0</td>
+        <td>Distancia (m) a la que un vehículo más lento o detenido adelante motiva cambiar de carril.</td><td>≥ 0.</td></tr>
+      <tr><td><code>min_advantage</code></td><td class="num">5.0</td>
+        <td>Metros de espacio libre extra que debe ofrecer el carril vecino para que valga la pena cambiar.</td><td>≥ 0.</td></tr>
+      <tr><td><code>leader_slowdown</code></td><td class="num">0.25</td>
+        <td>Condición para todo cambio de carril: el vehículo de enfrente, a menos de <code>lookahead</code>, debe ir
+          al menos esta fracción por debajo del límite del carril (con 0.25, a menos del 75 % del límite; en un carril
+          sin límite, de la velocidad máxima del propio vehículo). Se usa su velocidad real en el último paso; uno
+          detenido cuenta como 0. Sin vehículo enfrente no se cambia de carril.</td><td>En [0, 1).</td></tr>
+      <tr><td><code>release_space</code></td><td class="num">0.5</td>
+        <td>Espacio (m) que, al abrirse delante de un vehículo detenido, lo libera para iniciar su reacción.</td><td>≥ 0.</td></tr>
+      <tr><td><code>yellow_approach</code></td><td class="num">50.0</td>
+        <td>Distancia (m) antes de la línea de alto dentro de la cual, con el semáforo en amarillo, los vehículos que aún
+          no la cruzan bajan la velocidad. Solo aplica con <code>[traffic_light] yellow</code> &gt; 0.</td><td>≥ 0.</td></tr>
+      <tr><td><code>yellow_speed_factor</code></td><td class="num">0.5</td>
+        <td>Fracción de la velocidad a la que avanzan en esa zona durante el amarillo; se combina con la congestión y
+          con la reducción por cambio de carril. Quien llega a la línea en amarillo cruza; quien no, se detiene al
+          ponerse el rojo.</td><td>En (0, 1].</td></tr>
+      <tr><td><code>congestion_factor</code></td><td class="num">0.0</td>
+        <td>Reducción máxima de velocidad por congestión: un número para todos los carriles, o una lista con un
+          valor por carril empezando por el derecho, como <code>[0.2, 0.3, 0.5]</code>; su longitud define el número
+          de carriles (ver <a href="#road">[road]</a>). En un
+          carril con vehículos detenidos esperando avanzar, quienes avanzan van a
+          <code>velocidad × (1 − factor del carril × saturación)</code>, donde la saturación es
+          el largo de la cola de detenidos (largo + <code>gap_stop</code>) entre <code>length</code>. Con 0.5 y una
+          cola que ocupa la mitad del carril, se avanza un 25 % más lento. Quien cambia de carril toma la mayor
+          reducción de sus dos carriles; quien ya cruzó el semáforo no se ve afectado. Con 0 no tiene efecto.</td>
+        <td>Cada valor en [0, 1); lista no vacía.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="animation">
+  <h2><code>[animation]</code> Movimiento de los vehículos</h2>
+  <p class="lead">Sirve para ajustar el modelo viendo cómo se mueven los vehículos. No cambia los resultados: se vuelve
+    a simular una réplica con la semilla de la corrida (es idéntica a la de la corrida) y se graba su estado en una
+    ventana de tiempo. Se genera con <code>[output] animation = true</code> al correr, o después con
+    <code>uv run trafico-ver [carpeta]</code> (por defecto, la corrida más reciente). Las opciones
+    <code>--inicio</code>, <code>--duracion</code>, <code>--velocidad</code>, <code>--replica</code> y
+    <code>--formato</code> del comando
+    reemplazan a estas claves.</p>
+  <p>En el video, el semáforo se pinta del color de su fase y la leyenda muestra, junto a cada tipo de vehículo, los
+    pasajeros que han cruzado el semáforo desde el inicio del video, actualizados en cada cuadro. Para un tipo que
+    solo lleva mercancía cuenta vehículos. Los vehículos con mercancía no suman pasajeros. A la izquierda de cada carril,
+    la columna «en cola» muestra cuántos vehículos esperan en su cola de entrada: ya llegaron, pero aún no caben en el
+    tramo y por eso no se dibujan.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>start</code></td><td>número</td><td class="num">0.0</td>
+        <td>Segundo simulado donde empieza la ventana.</td><td>Entre 0 y la duración de la corrida.</td></tr>
+      <tr><td><code>duration</code></td><td>número</td><td class="num">2 ciclos</td>
+        <td>Segundos simulados de la ventana. Sin ella, dos ciclos del semáforo (2 × (red + green)). Si pasa del
+          final de la corrida, se recorta.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>speed</code></td><td>número</td><td class="num">4.0</td>
+        <td>Segundos simulados por segundo de video: 120 s a ×4 dan un video de 30 s.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>fps</code></td><td>entero</td><td class="num">20</td>
+        <td>Cuadros por segundo del video.</td><td>Entre 1 y 60.</td></tr>
+      <tr><td><code>replica</code></td><td>entero</td><td class="num">1</td>
+        <td>Réplica que se visualiza (1 = la primera).</td><td>Entre 1 y <code>[execution] replicas</code>.</td></tr>
+      <tr><td><code>format</code></td><td>texto</td><td class="num">"webm"</td>
+        <td>Formato del video. <code>"webm"</code> (VP9) es libre de patentes y se abre en Fedora sin códecs
+          adicionales: VLC del repositorio de Fedora, Showtime/GNOME Videos y los navegadores. <code>"mp4"</code>
+          (H.264) es el más común en Windows y macOS, pero en Fedora solo lo abren los reproductores con OpenH264 o
+          códecs de RPM Fusion (el VLC flatpak de Fedora no puede). <code>"gif"</code> no necesita ffmpeg, pero es
+          lento y pesado.</td>
+        <td><code>"webm"</code>, <code>"mp4"</code> o <code>"gif"</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Se guardan en la carpeta de la corrida, con la ventana en el nombre; si el archivo ya existe se agrega un
+    sufijo, nunca se sobrescribe:</p>
+  <ul>
+    <li><code>espacio_tiempo_&lt;inicio&gt;-&lt;fin&gt;s.png</code>: una línea por vehículo (posición contra tiempo),
+      un panel por carril. La pendiente es la velocidad; un tramo horizontal, un vehículo detenido; el abanico al
+      ponerse verde muestra la reacción (<code>reaction_min</code>/<code>reaction_max</code>) y el estiramiento; las
+      líneas juntas en la cola, la compresión (<code>gap_stop</code>). Quien cambia de carril aparece en los dos
+      durante la maniobra.</li>
+    <li><code>movimiento_&lt;inicio&gt;-&lt;fin&gt;s.webm</code> (o <code>.mp4</code>/<code>.gif</code> según
+      <code>format</code>): vista desde arriba con los vehículos a escala en el color de su tipo (borde oscuro =
+      detenido), el semáforo, la parada y un reloj con el tiempo simulado en horas, minutos y segundos
+      (<code>hh:mm:ss</code>). WebM y MP4 requieren <code>ffmpeg</code>; sin él se escribe un
+      GIF.</li>
+  </ul>
+</section>
+
+<section id="sample">
+  <h2>Sobre <code>sample</code></h2>
+  <p><code>sample</code> solo decide cada cuánto se registran las series de la gráfica y del CSV. <strong>No cambia la
+    simulación</strong>: con la misma semilla circulan exactamente los mismos vehículos y el resumen sale igual con
+    cualquier valor.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Valor</th><th>Ventaja</th><th>Costo</th></tr></thead>
+    <tbody>
+      <tr><td>Pequeño (0.1–0.5 s)</td><td>Más detalle: cada arranque tras el verde, el estiramiento de la cola, cada cruce.</td>
+        <td>CSV y memoria de las series de 2 a 10 veces mayores; algo más lento.</td></tr>
+      <tr><td>1 s (defecto)</td><td>Buen equilibrio para fases de semáforo de decenas de segundos.</td><td>—</td></tr>
+      <tr><td>Grande (5–10 s)</td><td>CSV pequeño y poca memoria en corridas de muchas horas.</td>
+        <td>Menos detalle y riesgo de aliasing.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="warn">
+    <p><strong>Aliasing con el semáforo.</strong> Los pasajeros por metro de carril y la saturación de cada carril son
+      fotos instantáneas en cada muestra. Si <code>sample</code> se acerca a la duración del ciclo, las fotos caen siempre en la misma fase y la curva
+      engaña. Conviene que no pase de ~1/10 de la fase más corta (≤ 3 s con fases de 30 s).</p>
+    <p>Los pasajeros acumulados, el flujo en pax/min, los pax·km/h y la velocidad media de cada carril no pierden
+      información: se acumulan en cada paso de 0.1 s y el muestreo solo los agrupa.</p>
+  </div>
+  <ul>
+    <li>Las ventanas de suavizado (un ciclo para el flujo, 10 s para los pax·km/h y la velocidad por carril) se miden en muestras y se
+      redondean si <code>sample</code> no divide esas duraciones. Si <code>sample</code> pasa de 10 s, la media móvil
+      deja de suavizar.</li>
+    <li>Si la duración simulada no es múltiplo de <code>sample</code>, el último tramo no entra en las series; el
+      resumen sí lo incluye.</li>
+  </ul>
+</section>
+
+<section id="replicas">
+  <h2>Sobre <code>replicas</code></h2>
+  <p>Una réplica es una corrida completa e independiente, con la misma configuración pero otra secuencia de números
+    aleatorios: llegadas, pasajeros por vehículo, tiempos de reacción, duración de los cambios de carril y desempates al
+    elegir carril. Repetirla N veces (Monte Carlo) estima el comportamiento típico y cuánto varía. La gráfica muestra la
+    media ± 1σ entre réplicas.</p>
+  <ul>
+    <li><strong>Semillas:</strong> se derivan de la semilla base, una por réplica. El resultado no depende de
+      <code>workers</code>, y al pasar de 8 a 16 réplicas las primeras 8 siguen siendo las mismas.</li>
+    <li><strong>Más réplicas, media más precisa:</strong> el error de la media es σ/√N; con 4 veces más réplicas se
+      reduce a la mitad.</li>
+    <li><strong>La banda sombreada no se angosta:</strong> ±1σ mide cuánto varía una corrida respecto a otra, y esa
+      variación es propia del sistema. Con más réplicas solo se estima mejor.</li>
+    <li><strong>Los tipos poco frecuentes necesitan más réplicas.</strong> Con 16 réplicas, los autos (268 ± 11 pasajeros)
+      quedan en ±2 % al 95 %, y los autobuses (277 ± 132) en ±24 %. Para ±10 % en autobuses harían falta unas 85
+      réplicas; alargar <code>run</code> también ayuda.</li>
+    <li><strong>Costo:</strong> el tiempo crece de forma lineal con N y se divide entre los procesos; la memoria
+      prácticamente no crece, porque la agregación se hace en línea. Conviene que N sea múltiplo de
+      <code>workers</code>.</li>
+    <li><strong>Pocas réplicas:</strong> con 1 no hay σ (banda de ancho 0) y con 2–3 el σ es poco confiable.</li>
+  </ul>
+  <div class="note">
+    <p><strong>Recomendación:</strong> 8–16 réplicas para explorar; 30 o más para reportar. Para elegir N con datos,
+      usa el «± σ entre réplicas» del resumen: N ≈ (1.96 · σ / margen deseado)².</p>
+  </div>
+</section>
+
+<footer>trafico 0.1.0 · documentación de <code>config.toml</code></footer>
+</div>
+</body>
+</html>
