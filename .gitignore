@@ -6,6 +6,10 @@ dist/
 wheels/
 *.egg-info
 
+# Project files
+uv.lock
+config.toml
+resultados/
+
 # Virtual environments
 .venv
-resultados/

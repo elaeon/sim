@@ -1,7 +1,9 @@
 import numpy as np
 
 from trafico.config import BIKE, BUS, CAR, DEFAULT_SPECS, DT
-from trafico.distributions import passenger_pmf, sample_passengers, uniform_ticks
+from trafico.config import VehicleSpec
+from trafico.config import Behavior
+from trafico.distributions import passenger_pmf, reaction_ticks, sample_lengths, sample_passengers, uniform_ticks
 
 
 def test_passengers_within_bounds_and_means():
@@ -42,3 +44,38 @@ def test_passenger_pmf_matches_sampler():
     # Autos: μ = 1.5 con mínimo 1 → la media esperada sube a ~1.8 por la truncadura.
     values, probs = passenger_pmf(DEFAULT_SPECS[CAR])
     assert 1.75 < (values * probs).sum() < 1.85
+
+
+def test_lengths_truncated_normal():
+    """Carga: normal(10, 2) truncada a [8, 16]; la media teórica sube a ≈ 10.57 m por el corte en 8."""
+    spec = VehicleSpec("carga", "carga", 40.0, 10.0, 4.0, 1.5, 1, 1, 1.0, 0.0, True,
+                       cargo_prob=1.0, length_std=2.0, length_min=8.0)  # fmt: skip
+    assert (spec.shortest, spec.longest) == (8.0, 16.0)
+    lengths = sample_lengths(np.random.default_rng(0), spec, 200_000)
+    assert lengths.min() >= 8.0 and lengths.max() <= 16.0
+    assert abs(lengths.mean() - 10.57) < 0.02
+    fixed = sample_lengths(np.random.default_rng(0), DEFAULT_SPECS[CAR], 10)
+    np.testing.assert_array_equal(fixed, 4.5)
+
+
+def test_reaction_uniform_without_std():
+    """Sin reaction_std, la reacción es la uniforme de antes (mismos sorteos)."""
+    b = Behavior(reaction_min=0.7, reaction_max=3.0)
+    np.testing.assert_array_equal(
+        reaction_ticks(np.random.default_rng(1), b, 1000), uniform_ticks(np.random.default_rng(1), 0.7, 3.0, 1000)
+    )
+
+
+def test_reaction_truncated_normal():
+    b = Behavior(reaction_min=0.7, reaction_max=3.0, reaction_mean=1.5, reaction_std=0.5)
+    ticks = reaction_ticks(np.random.default_rng(0), b, 200_000)
+    assert ticks.min() >= round(0.7 / DT) and ticks.max() <= round(3.0 / DT)
+    # La truncadura en [0.7, 3.0] alrededor de 1.5 ± 0.5 sube un poco la media (≈ 1.56 s).
+    assert abs(ticks.mean() * DT - 1.56) < 0.01
+    assert abs(ticks.std() * DT - 0.45) < 0.02
+    mid = reaction_ticks(np.random.default_rng(0), Behavior(reaction_min=1, reaction_max=3, reaction_std=0.2), 10_000)
+    assert abs(mid.mean() * DT - 2.0) < 0.01  # sin media: el punto medio
+    fixed = reaction_ticks(np.random.default_rng(0), Behavior(reaction_mean=2.0, reaction_std=0.0), 5)
+    np.testing.assert_array_equal(fixed, round(2.0 / DT))
+    tiny = reaction_ticks(np.random.default_rng(0), Behavior(reaction_min=0.01, reaction_max=0.02), 5)
+    assert tiny.min() >= 1  # nunca 0 pasos

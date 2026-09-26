@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from trafico.cli import CONFIG_NAME, run, view
-from trafico.config import SimConfig
+from trafico.config import GREEN, SimConfig
 from trafico.engine import Simulation
 from trafico.movement import record
 from trafico.settings import AnimationOptions, ConfigError, parse_settings
@@ -44,7 +44,7 @@ def test_trajectories_follow_each_vehicle():
         assert np.unique(traj.vtype[rows]).size == 1  # un identificador, un vehículo
         assert np.all(np.diff(frame[rows]) == 1)  # aparece en instantes consecutivos
         assert np.all(np.diff(traj.x[rows]) >= -1e-4)  # nunca retrocede
-    assert traj.green.any() and not traj.green.all()
+    assert (traj.phase == GREEN).any() and not (traj.phase == GREEN).all()
 
 
 def test_animation_settings():
@@ -128,3 +128,56 @@ def test_video_clock_shows_simulated_time_as_hms():
     assert _clock_text(360.0) == "simulado 00:06:00"
     assert _clock_text(3725.9) == "simulado 01:02:05"  # los décimos no se muestran
     assert _clock_text(0.0) == "simulado 00:00:00"
+
+
+def test_crossing_counters_start_with_the_window():
+    """Los contadores del video cuentan lo cruzado desde el inicio de la ventana y nunca bajan."""
+    cfg = SimConfig(length=150, lanes=2, rates=(30, 8, 2), red=10, green=10, run=3)
+    full = record(cfg, seed=3, replica=1, start=0, end=25)
+    win = record(cfg, seed=3, replica=1, start=5, end=25)
+    assert np.all(np.diff(win.crossed_pax, axis=0) >= 0) and np.all(win.crossed_pax[0] >= 0)
+    before = np.flatnonzero(np.isclose(full.t, 4.9))[0]  # último instante antes de la ventana
+    np.testing.assert_allclose(win.crossed_pax[-1], full.crossed_pax[-1] - full.crossed_pax[before])
+    np.testing.assert_allclose(win.crossed_veh[-1], full.crossed_veh[-1] - full.crossed_veh[before])
+    assert full.crossed_veh[-1].sum() > 0
+
+
+def test_bottleneck_stops_are_recorded_while_they_last():
+    """La marca de detención por [bottleneck] (negro en el video) dura exactamente la detención."""
+    from trafico.config import Bottleneck
+
+    from dataclasses import replace
+
+    from trafico.config import DEFAULT_SPECS
+
+    car, bike, bus = DEFAULT_SPECS
+    cfg = SimConfig(length=200, lanes=2, rates=(30, 0, 0), red=0, green=30, run=6,
+                    specs=(replace(car, bottleneck_prob=0.5, bottleneck_time_mean=4.0), bike, bus),
+                    bottleneck=Bottleneck(stop_zone=(50.0, 150.0)))  # fmt: skip
+    traj = record(cfg, seed=2, replica=1, start=0, end=60)
+    marked = traj.bottleneck
+    assert marked.any()
+    assert np.all(traj.stopped[marked])  # solo mientras está detenido
+    frame = np.repeat(np.arange(traj.n_frames), np.diff(traj.offsets))
+    complete = 0
+    for vid in np.unique(traj.vid[marked]):
+        rows = np.flatnonzero((traj.vid == vid) & marked)
+        if frame[rows[-1]] == traj.n_frames - 1:
+            continue  # la detención sigue al terminar la grabación
+        complete += 1
+        assert rows.size == round(4.0 / 0.1)  # los 4 s de la detención, en instantes consecutivos
+        assert np.all(np.diff(frame[rows]) == 1)
+        after = np.flatnonzero(traj.vid == vid)
+        assert not traj.bottleneck[after[after > rows[-1]]].any()  # después, su color original
+    assert complete > 0
+
+
+def test_entry_queue_is_recorded_per_lane():
+    """La cola de entrada de cada carril en cada instante es la de la simulación (demanda alta: crece)."""
+    cfg = SimConfig(length=150, lanes=2, rates=(120, 20, 2), red=20, green=10, run=3)
+    traj = record(cfg, seed=4, replica=1, start=0, end=30)
+    sim = Simulation(cfg, np.random.default_rng(np.random.SeedSequence(4).spawn(1)[0]))
+    sim.run()
+    assert traj.queued.shape == (traj.n_frames, cfg.lanes)
+    np.testing.assert_array_equal(traj.queued[-1], [len(q) for q in sim.queues])
+    assert traj.queued[-1].sum() > 0
