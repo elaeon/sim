@@ -12,7 +12,7 @@ import numpy as np
 
 from trafico.config import DT, SimConfig
 from trafico.engine import Simulation
-from trafico.metrics import LANE_SERIES, SERIES, RunningStats, derive_series, lane_speed_histogram
+from trafico.metrics import LANE_STATS, SERIES, RunningStats, derive_series, lane_speed_histogram
 
 
 @dataclass(slots=True)
@@ -58,7 +58,7 @@ class Aggregate:
     @classmethod
     def empty(cls, cfg: SimConfig) -> Aggregate:
         series = {name: RunningStats((cfg.n_samples, cfg.n_types)) for name in SERIES}
-        for name in LANE_SERIES:
+        for name in LANE_STATS:
             series[name] = RunningStats((cfg.n_samples, cfg.lanes))
         return cls(cfg=cfg, series=series)
 

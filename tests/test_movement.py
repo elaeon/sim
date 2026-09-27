@@ -181,3 +181,17 @@ def test_entry_queue_is_recorded_per_lane():
     assert traj.queued.shape == (traj.n_frames, cfg.lanes)
     np.testing.assert_array_equal(traj.queued[-1], [len(q) for q in sim.queues])
     assert traj.queued[-1].sum() > 0
+
+
+def test_exit_queue_is_recorded_per_lane():
+    """La cola de salida de cada carril en cada instante es la de la simulación; sin [exit], siempre vacía."""
+    cfg = SimConfig(length=150, lanes=2, rates=(40, 0, 0), red=2, green=60, run=6, exit_capacity=(0, 6),
+                    exit_storage=16.5)  # fmt: skip
+    traj = record(cfg, seed=4, replica=1, start=0, end=60)
+    sim = Simulation(cfg, np.random.default_rng(np.random.SeedSequence(4).spawn(1)[0]))
+    sim.run()
+    assert traj.exit_queued.shape == (traj.n_frames, cfg.lanes)
+    np.testing.assert_allclose(traj.exit_queued[-1], sim.exit_q, rtol=1e-6)  # m ocupados
+    np.testing.assert_array_equal(traj.exit_closed[-1], sim.exit_closed)
+    assert not traj.exit_queued[:, 0].any() and traj.exit_queued[:, 1].max() >= 16.5 - 1e-4  # 3 autos de 5.5 m
+    assert not traj.exit_closed[:, 0].any() and traj.exit_closed[:, 1].any()

@@ -37,6 +37,15 @@ def sample_lengths(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np
     return truncated_normal(rng, spec.length, spec.length_std, spec.shortest, spec.longest, size)
 
 
+def sample_speeds(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np.ndarray:
+    """Velocidad máxima de cada vehículo (km/h): normal(speed_kmh, speed_std) truncada a
+    [slowest_kmh, fastest_kmh] por remuestreo. Sin desviación, todos van a `speed_kmh` y no se
+    consume el generador."""
+    if spec.speed_std <= 0:
+        return np.full(size, spec.speed_kmh)
+    return truncated_normal(rng, spec.speed_kmh, spec.speed_std, spec.slowest_kmh, spec.fastest_kmh, size)
+
+
 def sample_rates(rng: np.random.Generator, rate: Rate, size: int) -> np.ndarray:
     """Tasa de llegada (veh/min) de cada intervalo: normal(mean, std) truncada a [min, max]."""
     if not rate.variable:

@@ -56,6 +56,8 @@ class Trajectories:
     crossed_pax: np.ndarray  # (F, tipos) pasajeros que cruzaron el semáforo desde el inicio de la ventana
     crossed_veh: np.ndarray  # (F, tipos) vehículos que lo cruzaron desde el inicio de la ventana
     queued: np.ndarray  # (F, carriles) vehículos en la cola de entrada de cada carril (aún fuera del tramo)
+    exit_queued: np.ndarray  # (F, carriles) m ocupados en la cola de salida de cada carril (ya cruzaron el semáforo)
+    exit_closed: np.ndarray  # (F, carriles) el siguiente del carril no cabe en la cola de salida: línea cerrada
 
     @property
     def n_frames(self) -> int:
@@ -71,7 +73,7 @@ def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) ->
     seq = np.random.SeedSequence(seed).spawn(replica)[replica - 1]
     sim = Simulation(cfg, np.random.default_rng(seq))
     first, last = round(start / DT), round(end / DT)
-    ts, phases, counts, parts, pax, veh, queued = [], [], [], [], [], [], []
+    ts, phases, counts, parts, pax, veh, queued, exit_queued, exit_closed = [], [], [], [], [], [], [], [], []
     base_pax, base_veh = sim.cum_pax.copy(), sim.cum_veh.copy()
     while sim.tick < last:
         if sim.tick < first:  # lo cruzado antes de la ventana no cuenta en el video
@@ -83,6 +85,8 @@ def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) ->
         ts.append(sim.tick * DT)
         pax.append(sim.cum_pax - base_pax)
         queued.append([len(q) for q in sim.queues])
+        exit_queued.append(sim.exit_q.copy())
+        exit_closed.append(sim.exit_closed.copy())
         veh.append(sim.cum_veh - base_veh)
         phases.append(cfg.phase(sim.tick))
         counts.append(n)
@@ -100,6 +104,8 @@ def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) ->
         bottleneck=cols[10].astype(np.bool_),
         crossed_pax=np.array(pax).reshape(-1, cfg.n_types), crossed_veh=np.array(veh).reshape(-1, cfg.n_types),
         queued=np.array(queued, np.int64).reshape(-1, cfg.lanes),
+        exit_queued=np.array(exit_queued, np.float32).reshape(-1, cfg.lanes),
+        exit_closed=np.array(exit_closed, np.bool_).reshape(-1, cfg.lanes),
     )  # fmt: skip
 
 
@@ -158,7 +164,8 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
     for lane in range(lanes):
         ax = axes[lanes - 1 - lane]  # carril izquierdo arriba, como en una vista desde arriba
         _style_axis(ax, "{:,.0f}")
-        shade_phases(ax, spans)
+        if lane not in cfg.free_lanes:  # sin semáforo, las fases no lo afectan
+            shade_phases(ax, spans)
         ax.axhline(cfg.length, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
         for k, pos in _stops(cfg, lane):
             ax.axhline(pos, color=TYPE_COLORS[k], linewidth=1, linestyle=(0, (1, 2)), zorder=1)
@@ -248,10 +255,15 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     ax = fig.add_axes((left, 0.75 / fh, 0.975 - left, lane_in * lanes / fh))
     ax.set_facecolor(SURFACE)
     margin = max(sp.longest for sp in cfg.specs) + 5
-    # A la izquierda del tramo, lugar para el contador de la cola de entrada (~0.45 in).
+    # A la izquierda del tramo, lugar para el contador de la cola de entrada (~0.45 in); a la derecha, si algún
+    # carril tiene cola de salida ([exit]), para su contador "m ocupados/mide" (~0.75 in).
+    exit_lanes = [lane for lane, c in enumerate(cfg.lane_exit_capacity) if c > 0]
     axes_in = (0.975 - left) * width_in
-    queue_pad = 0.45 * (cfg.length + margin) / (axes_in - 0.45)
-    ax.set_xlim(-queue_pad, cfg.length + margin)
+    side_in = 0.45 + (0.75 if exit_lanes else 0.0)
+    m_per_in = (cfg.length + margin) / (axes_in - side_in)
+    queue_pad = 0.45 * m_per_in
+    exit_pad = 0.75 * m_per_in if exit_lanes else 0.0
+    ax.set_xlim(-queue_pad, cfg.length + margin + exit_pad)
     ax.set_ylim(-0.5, lanes - 0.5)
     ax.add_patch(Rectangle((0, -0.5), cfg.length, lanes, facecolor=ROAD, edgecolor="none", zorder=0))
     for k in range(1, lanes):
@@ -275,8 +287,25 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
         ax.text(queue_x, lane, "", ha="right", va="center", fontsize=9, color=INK, family="monospace", animated=True)
         for lane in range(lanes)
     ]  # fmt: skip
-    light = Rectangle((cfg.length, -0.5), max(1.5, cfg.length * 0.006), lanes, zorder=3, animated=True)
-    ax.add_patch(light)
+    # Cola de salida: m ocupados por los que cruzaron y aún no salen, contra lo que mide; en rojo si el siguiente
+    # no cabe (la línea de ese carril se cierra aunque el semáforo esté en verde).
+    exit_x = cfg.length + margin + exit_pad
+    exit_texts = []
+    if exit_lanes:
+        ax.text(exit_x, lanes - 0.5, "salida", ha="right", va="bottom", fontsize=7, color=INK_2)
+        exit_texts = [
+            (lane, ax.text(exit_x, lane, "", ha="right", va="center", fontsize=9, color=INK, family="monospace",
+                           animated=True))
+            for lane in exit_lanes
+        ]  # fmt: skip
+        ax.annotate("salida: m ocupados/mide\nen rojo, no cabe el siguiente: línea cerrada", (exit_x, -0.5), xytext=(0, -20),
+                    textcoords="offset points", ha="right", va="top", fontsize=7, color=INK_2)  # fmt: skip
+    storage = cfg.lane_exit_storage
+    # Semáforo: un tramo por carril; los carriles sin semáforo siempre en verde.
+    light_w = max(1.5, cfg.length * 0.006)
+    lights = [Rectangle((cfg.length, lane - 0.5), light_w, 1, zorder=3, animated=True) for lane in range(lanes)]
+    for light in lights:
+        ax.add_patch(light)
     cars = PolyCollection([], linewidths=0.9, zorder=2, animated=True)
     ax.add_collection(cars)
     # Reloj: tiempo simulado y tiempo real (de proceso) = simulado / time_scale, como en --run.
@@ -306,10 +335,14 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
         edges = np.zeros((vt.size, 4))
         edges[traj.stopped[traj.frame(f)]] = edge_stop
         cars.set_edgecolor(edges)
-        light.set_facecolor(LIGHT_COLORS[traj.phase[f]])
+        for lane, light in enumerate(lights):
+            light.set_facecolor(GREEN_LIGHT if lane in cfg.free_lanes else LIGHT_COLORS[traj.phase[f]])
         clock.set_text(_clock_text(float(traj.t[f])))
         for lane, text in enumerate(queue_texts):
             text.set_text(f"{traj.queued[f, lane]:,}")
+        for lane, text in exit_texts:
+            text.set_text(f"{traj.exit_queued[f, lane]:.0f}/{storage[lane]:g} m")
+            text.set_color(RED_PHASE if traj.exit_closed[f, lane] else INK)
         for k, text in counters:
             text.set_text(_crossing_text(traj, f, k))
 
@@ -329,7 +362,7 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     if fmt == "gif":
         from matplotlib import animation
 
-        for artist in (light, cars, clock, *queue_texts, *(text for _, text in counters)):
+        for artist in (*lights, cars, clock, *queue_texts, *(t for _, t in exit_texts), *(text for _, text in counters)):
             artist.set_animated(False)
         writer = animation.PillowWriter(fps=anim.fps)
         with writer.saving(fig, str(path), dpi=dpi):
@@ -360,7 +393,7 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
         for i, f in enumerate(frames):
             update(f)
             canvas.restore_region(background)
-            for artist in (cars, light, clock, *queue_texts, *(text for _, text in counters)):
+            for artist in (cars, *lights, clock, *queue_texts, *(t for _, t in exit_texts), *(text for _, text in counters)):
                 fig.draw_artist(artist)
             proc.stdin.write(canvas.buffer_rgba())
             progress(i)

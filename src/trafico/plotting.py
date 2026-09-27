@@ -9,7 +9,7 @@ import numpy as np
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-from trafico.metrics import LANE_SATURATION, LANE_SERIES, SPEED_BIN
+from trafico.metrics import ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, SPEED_BIN
 from trafico.runner import Aggregate
 
 # Paleta categórica validada, en orden fijo: el color sigue al tipo (su posición en la
@@ -37,11 +37,12 @@ LANE_COLORS = tuple(TYPE_COLORS[k] for k in (4, 5, 6, 7, 3, 2, 1, 0))
 LANE_COLORMAP = "viridis"
 BASE_HEIGHT = 13.0  # alto (pulgadas) para el que están ajustadas las posiciones de la cabecera
 BASE_PANELS = 4  # paneles que caben en BASE_HEIGHT; cada panel extra agrega su parte proporcional
+LANE_PANELS = 4  # saturación, cruces contra capacidad de salida, colas de entrada y salida, violines de velocidad
+EXIT_DASH = (0, (4, 3))  # trazo de la cola de salida y de las capacidades de salida
 
 PANELS = (
     ("cum_pax", "pasajeros", "{:,.0f}"),
     ("pax_flow", "pax/min", "{:,.0f}"),
-    ("pax_per_m", "pax/m", "{:,.2f}"),
 )
 
 
@@ -49,7 +50,6 @@ def _titles(cfg) -> dict[str, str]:
     return {
         "cum_pax": "Pasajeros acumulados que cruzan el semáforo",
         "pax_flow": f"Flujo de pasajeros en el semáforo (ventana de un ciclo, {cfg.cycle:g} s)",
-        "pax_per_m": "Pasajeros por metro de carril ocupado (largo + gap real al líder)",
     }
 
 
@@ -74,7 +74,7 @@ def _lane_label(lane: int, lanes: int, assigned: list[str] = ()) -> str:
 
 def _lane_assignments(cfg, active: list[int]) -> list[list[str]]:
     """Tipos que participan y tienen configurado un carril fijo ([vehicles.<tipo>] lane), por carril;
-    en un carril exclusivo se anteponen con "solo"."""
+    en un carril exclusivo se anteponen con "solo". Un carril sin semáforo lo indica al final."""
     out: list[list[str]] = [[] for _ in range(cfg.lanes)]
     for k in active:
         spec = cfg.specs[k]
@@ -82,6 +82,8 @@ def _lane_assignments(cfg, active: list[int]) -> list[list[str]]:
             out[spec.lane].append(spec.name)
     for lane in cfg.reserved_lanes:
         out[lane] = ["solo " + ", ".join(out[lane])] if out[lane] else ["reservado"]
+    for lane in cfg.free_lanes:
+        out[lane].append("sin semáforo")
     return out
 
 
@@ -129,11 +131,18 @@ def _lane_panel(ax, agg: Aggregate, t: np.ndarray, red_spans, key: str, title: s
 
 
 def _speed_refs(cfg, active: list[int]) -> dict[float, str]:
-    """Etiqueta de cada velocidad a flujo libre; los tipos con la misma velocidad comparten una."""
-    by_speed: dict[float, list[str]] = {}
+    """Etiqueta de la velocidad máxima de cada tipo (la media, con su rango si es variable); los tipos
+    con la misma velocidad comparten una."""
+    by_speed: dict[float, dict[str, list[str]]] = {}
     for k in active:
-        by_speed.setdefault(cfg.specs[k].speed_kmh, []).append(cfg.specs[k].name)
-    return {v: f"{' · '.join(names)} {v:g}" for v, names in by_speed.items()}
+        spec = cfg.specs[k]
+        spread = f" ({spec.slowest_kmh:g}–{spec.fastest_kmh:g})" if spec.speed_std > 0 else ""
+        by_speed.setdefault(spec.speed_kmh, {}).setdefault(spread, []).append(spec.name)
+    # Un renglón por grupo: con velocidades variables la etiqueta sería demasiado ancha en una sola línea.
+    return {
+        v: "\n".join(f"{' · '.join(names)} {v:g}{spread}" for spread, names in groups.items())
+        for v, groups in by_speed.items()
+    }  # fmt: skip
 
 
 def _lane_panels(axes, agg: Aggregate, t: np.ndarray, red_spans, active: list[int]) -> None:
@@ -141,14 +150,101 @@ def _lane_panels(axes, agg: Aggregate, t: np.ndarray, red_spans, active: list[in
     assigned = _lane_assignments(cfg, active)
     colors = _lane_colors(cfg.lanes)
     names = [_lane_label(k, cfg.lanes, assigned[k]) for k in range(cfg.lanes)]
-    by_lane = cfg.lane_congestion
-    sat_labels = [f"{n} · factor {f:g}" for n, f in zip(names, by_lane)] if any(by_lane) else names
     _lane_panel(
         axes[0], agg, t, red_spans, LANE_SATURATION,
-        "Saturación de cada carril (cola de detenidos / largo del tramo) y su factor de congestión",
-        "% del carril", "{:,.0f} %", 100.0, sat_labels, "upper left", colors,
+        "Saturación de cada carril (cola de detenidos / largo del tramo)",
+        "% del carril", "{:,.0f} %", 100.0, names, "upper left", colors,
     )  # fmt: skip
-    _speed_violins(axes[1], agg, active, names, colors)
+    _exit_panel(axes[1], agg, t, red_spans, names, colors)
+    _queue_panels(axes[2], agg, t, red_spans, names, colors)
+    _speed_violins(axes[3], agg, active, names, colors)
+
+
+def _exit_labels(cfg) -> dict[float, str]:
+    """Etiqueta de la capacidad de la cola de salida, una por valor (los carriles con la misma la comparten)."""
+    by_cap: dict[float, list[int]] = {}
+    for lane, cap in enumerate(cfg.lane_exit_capacity):
+        if cap > 0:
+            by_cap.setdefault(cap, []).append(lane)
+    return {
+        cap: f"salida {cap:g}/min · " + ("carril " if len(lanes) == 1 else "carriles ") + ", ".join(map(str, lanes))
+        for cap, lanes in by_cap.items()
+    }  # fmt: skip
+
+
+def _exit_panel(ax, agg: Aggregate, t: np.ndarray, red_spans, names: list[str], colors: list[str]) -> None:
+    """Demanda en la línea (vehículos que cruzan por carril, ventana de un ciclo) contra la capacidad de la
+    cola de salida de cada carril, como línea punteada del color del carril (neutra si la comparten)."""
+    cfg = agg.cfg
+    limited = any(c > 0 for c in cfg.lane_exit_capacity)
+    title = "Vehículos que cruzan el semáforo por carril (ventana de un ciclo)"
+    if limited:
+        title += " contra la capacidad de su cola de salida"
+    _lane_panel(ax, agg, t, red_spans, LANE_EXIT_FLOW, title, "veh/min", "{:,.0f}", 1.0, names, "upper left", colors)
+    top = ax.get_ylim()[1]
+    for cap, label in _exit_labels(cfg).items():
+        lanes = [k for k, c in enumerate(cfg.lane_exit_capacity) if c == cap]
+        color = colors[lanes[0]] if len(lanes) == 1 else MUTED
+        ax.axhline(cap, color=color, linewidth=1.5, linestyle=EXIT_DASH, zorder=4)
+        ax.annotate(label, (1.0, cap), xycoords=("axes fraction", "data"), xytext=(4, 0), textcoords="offset points",
+                    va="center", fontsize=8, color=INK_2, annotation_clip=False)  # fmt: skip
+        top = max(top, cap * 1.15)
+    ax.set_ylim(0, top)
+
+
+def _storage_labels(cfg) -> dict[float, str]:
+    """Etiqueta de los m que mide la cola de salida, una por valor, solo de los carriles con salida limitada."""
+    by_size: dict[float, list[int]] = {}
+    for lane, (cap, size) in enumerate(zip(cfg.lane_exit_capacity, cfg.lane_exit_storage)):
+        if cap > 0:
+            by_size.setdefault(size, []).append(lane)
+    return {
+        size: f"mide {size:g} m · " + ("carril " if len(lanes) == 1 else "carriles ") + ", ".join(map(str, lanes))
+        for size, lanes in by_size.items()
+    }  # fmt: skip
+
+
+def _queue_panels(axes, agg: Aggregate, t: np.ndarray, red_spans, names: list[str], colors: list[str]) -> None:
+    """Lado a lado, cada una con su escala: la cola de entrada al tramo (vehículos que llegaron y aún no caben) y
+    la cola de salida después del semáforo (m ocupados por los que cruzaron y aún no salen), por carril (media
+    ± 1σ entre réplicas). La de entrada puede crecer sin límite y la de salida no pasa de lo que mide. Lo que mide
+    la salida va como línea punteada del color del carril (neutra si la comparten)."""
+    cfg = agg.cfg
+    limited = [lane for lane, c in enumerate(cfg.lane_exit_capacity) if c > 0]
+    entry_ax, exit_ax = axes
+    for ax, key, lanes, unit in ((entry_ax, ENTRY_QUEUE, range(cfg.lanes), "vehículos"),
+                                 (exit_ax, EXIT_QUEUE, limited, "m ocupados")):  # fmt: skip
+        _style_axis(ax, "{:,.0f}")
+        shade_phases(ax, red_spans)
+        stats = agg.series[key]
+        for lane in lanes:
+            m, s = stats.mean[:, lane], stats.std[:, lane]
+            ax.fill_between(t, np.maximum(m - s, 0), m + s, color=colors[lane], alpha=0.10, linewidth=0)
+            ax.plot(t, m, color=colors[lane], linewidth=2, solid_capstyle="round", solid_joinstyle="round")
+        ax.set_ylim(0, max(ax.get_ylim()[1], 1.0))
+        ax.set_ylabel(unit, color=INK_2, fontsize=9)
+    entry_ax.set_title("Cola de entrada al tramo por carril", loc="left", fontsize=11, color=INK, pad=8)
+    # Lugar arriba para la leyenda: la cola de entrada suele crecer hacia la esquina superior derecha.
+    entry_ax.set_ylim(0, entry_ax.get_ylim()[1] * 1.45)
+    entry_ax.legend(
+        handles=[Patch(facecolor=colors[k], label=names[k]) for k in range(cfg.lanes)], loc="upper left",
+        ncol=2, frameon=True, facecolor=SURFACE, edgecolor="none", framealpha=0.9, fontsize=8, labelcolor=INK_2,
+        handlelength=1.0, borderaxespad=0.6, columnspacing=1.0,
+    )  # fmt: skip
+    exit_ax.set_title("Cola de salida después del semáforo por carril", loc="left", fontsize=11, color=INK, pad=8)
+    if not limited:
+        exit_ax.text(0.5, 0.5, "sin cola de salida ([exit] capacity = 0)", transform=exit_ax.transAxes, ha="center",
+                     va="center", fontsize=9, color=MUTED)  # fmt: skip
+        return
+    top = exit_ax.get_ylim()[1]
+    for size, label in _storage_labels(cfg).items():
+        lanes = [k for k in limited if cfg.lane_exit_storage[k] == size]
+        color = colors[lanes[0]] if len(lanes) == 1 else MUTED
+        exit_ax.axhline(size, color=color, linewidth=1.5, linestyle=EXIT_DASH, zorder=4)
+        exit_ax.annotate(label, (1.0, size), xycoords=("axes fraction", "data"), xytext=(4, 0),
+                         textcoords="offset points", va="center", fontsize=8, color=INK_2, annotation_clip=False)  # fmt: skip
+        top = max(top, size * 1.15)
+    exit_ax.set_ylim(0, top)
 
 
 def _speed_violins(ax, agg: Aggregate, active: list[int], names: list[str], colors: list[str]) -> None:
@@ -197,12 +293,14 @@ def _speed_violins(ax, agg: Aggregate, active: list[int], names: list[str], colo
     # Referencia: velocidad a flujo libre de los tipos que participan (una línea por velocidad).
     for v, label in _speed_refs(cfg, active).items():
         ax.axhline(v, color=BASELINE, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
+        # Una etiqueta de varios renglones crece hacia arriba desde su línea, sin tapar las de abajo.
+        multi = "\n" in label
         ax.annotate(
             label, (1.0, v), xycoords=("axes fraction", "data"),
-            xytext=(4, 0), textcoords="offset points", va="center", fontsize=8, color=MUTED,
-            annotation_clip=False,
+            xytext=(4, -4 if multi else 0), textcoords="offset points", va="bottom" if multi else "center",
+            fontsize=8, color=MUTED, annotation_clip=False,
         )  # fmt: skip
-    top = max((cfg.specs[k].speed_kmh for k in active), default=0)
+    top = max((cfg.specs[k].fastest_kmh for k in active), default=0)
     ax.set_ylim(0, top * 1.1 if top else None)
 
 
@@ -313,7 +411,7 @@ def plot_mobility(
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0]
     passengers = [k for k in active if cfg.specs[k].carries_passengers]  # los que solo llevan mercancía no se grafican
 
-    n_panels = len(PANELS) + len(LANE_SERIES)  # el último (velocidad por carril) no es una serie de tiempo
+    n_panels = len(PANELS) + LANE_PANELS  # el último (velocidad por carril) no es una serie de tiempo
     height = BASE_HEIGHT * (n_panels + VIOLIN_GAP) / BASE_PANELS
 
     def fy(y: float) -> float:
@@ -323,9 +421,13 @@ def plot_mobility(
     fig = plt.figure(figsize=(11, height), facecolor=SURFACE)
     grid = fig.add_gridspec(n_panels + 1, 1, hspace=0.42, height_ratios=[1] * (n_panels - 1) + [VIOLIN_GAP, 1])
     axes = [fig.add_subplot(grid[0])]
-    for i in range(1, n_panels - 1):
+    for i in range(1, n_panels - 2):
         axes.append(fig.add_subplot(grid[i], sharex=axes[0]))
         axes[i - 1].tick_params(labelbottom=False)
+    axes[-1].tick_params(labelbottom=False)
+    # Colas de entrada y de salida: dos paneles lado a lado en la última fila de tiempo.
+    pair = grid[n_panels - 2].subgridspec(1, 2, wspace=0.16)
+    axes.append(tuple(fig.add_subplot(pair[j], sharex=axes[0]) for j in range(2)))
     axes.append(fig.add_subplot(grid[n_panels]))  # violines: eje x propio (carriles)
     red_spans = phase_spans(cfg)
     titles = _titles(cfg)
@@ -348,17 +450,17 @@ def plot_mobility(
         if key == "cum_pax":
             _end_labels(ax, float(t[-1]), ends, fmt)
             _crossed_vehicles(ax, agg, active)
-    _lane_panels(axes[-2:], agg, t, red_spans, active)
+    _lane_panels(axes[-LANE_PANELS:], agg, t, red_spans, active)
 
-    bottom = axes[-2]  # último panel de tiempo
-    bottom.set_xlabel("Tiempo simulado (s)", color=INK_2, fontsize=9)
-    bottom.set_xlim(0, cfg.sim_seconds)
-    proc = bottom.secondary_xaxis(
-        -0.3, functions=(lambda s: s / cfg.time_scale, lambda p: p * cfg.time_scale)
-    )
-    proc.set_xlabel("Tiempo de proceso (s)", color=INK_2, fontsize=9)
-    proc.tick_params(colors=MUTED, labelcolor=MUTED, labelsize=9, length=0)
-    proc.spines["bottom"].set_color(BASELINE)
+    for bottom in axes[-2]:  # última fila de tiempo (las dos colas)
+        bottom.set_xlabel("Tiempo simulado (s)", color=INK_2, fontsize=9)
+        bottom.set_xlim(0, cfg.sim_seconds)
+        proc = bottom.secondary_xaxis(
+            -0.3, functions=(lambda s: s / cfg.time_scale, lambda p: p * cfg.time_scale)
+        )
+        proc.set_xlabel("Tiempo de proceso (s)", color=INK_2, fontsize=9)
+        proc.tick_params(colors=MUTED, labelcolor=MUTED, labelsize=9, length=0)
+        proc.spines["bottom"].set_color(BASELINE)
 
     # Leyenda con la tasa de llegada de cada tipo, en filas de hasta LEGEND_COLS entradas.
     handles = [
@@ -387,7 +489,8 @@ def plot_mobility(
         fig.text(0.075, fy(0.944), footer, ha="left", fontsize=8, color=MUTED)
     # El margen derecho deja lugar a la etiqueta más larga a la derecha de los paneles: los
     # valores finales del primer panel y las velocidades de referencia del último.
-    longest = max(len(label) for label in _speed_refs(cfg, active).values())
+    labels = [*_speed_refs(cfg, active).values(), *_exit_labels(cfg).values(), *_storage_labels(cfg).values()]
+    longest = max(len(line) for label in labels for line in label.split("\n"))
     if len(passengers) <= MAX_END_LABELS:
         longest = max(longest, *(len(f"{cfg.specs[k].name} 0,000") for k in passengers))
     right = min(0.93, 0.975 - 0.0063 * longest)

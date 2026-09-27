@@ -16,16 +16,21 @@ CONFIG_NAME = "config.toml"
 DEFAULT_RUN_NAME = "corrida"
 # Parámetros numéricos de un vehículo: obligatorios para los tipos nuevos.
 _SPEC_FIELDS = {
-    "speed_kmh": float, "gap_run": float, "gap_stop": float,
+    "gap_run": float, "gap_stop": float,
 }  # fmt: skip
-# Diccionarios {min, max, mean, std}: pasajeros por vehículo ([vehicles.<clave>] pax), largo y tasa de llegada.
+# Diccionarios {min, max, mean, std}: pasajeros por vehículo ([vehicles.<clave>] pax), velocidad máxima, largo
+# y tasa de llegada.
 _PAX_KINDS = {"min": int, "max": int, "mean": float, "std": float}
 _RATE_KINDS = dict.fromkeys(("min", "max", "mean", "std"), float)
-_LENGTH_KINDS = _RATE_KINDS
+_FLOAT_DIST_KINDS = _RATE_KINDS  # velocidad máxima y largo
 # Campos de VehicleSpec que salen de [vehicles.<clave>] length.
 _LENGTH_FIELDS = {"mean": "length", "std": "length_std", "min": "length_min", "max": "length_max"}
+# Campos de VehicleSpec que salen de [vehicles.<clave>] speed_kmh.
+_SPEED_FIELDS = {"mean": "speed_kmh", "std": "speed_std", "min": "speed_min", "max": "speed_max"}
 # Umbrales de cambio de carril que un tipo puede fijar para sí; sin ellos, los de [behavior].
 _LANE_CHANGE_FIELDS = ("lookahead", "min_advantage", "lane_change_cooldown")
+# Aceleración y frenado graduales (m/s²); sin ellos, cambios de velocidad instantáneos.
+_DYNAMICS_FIELDS = ("accel", "decel")
 # Detenciones de [bottleneck] de cada tipo: probabilidad y duración.
 _BOTTLENECK_FIELDS = ("bottleneck_prob", "bottleneck_time_mean", "bottleneck_time_std")
 # Claves que [bottleneck] ya no admite y a dónde se movieron (para el mensaje de error).
@@ -177,11 +182,10 @@ def parse_settings(text: str, path: Path) -> Settings:
     r = _Reader(data)
 
     specs, rates = _parse_vehicles(r)
+    kinds = {"queue_reaction": bool}
     behavior = Behavior(
         **{
-            f.name: r.get(
-                ("behavior", f.name), FLOATS if f.name == "congestion_factor" else float, getattr(Behavior(), f.name)
-            )
+            f.name: r.get(("behavior", f.name), kinds.get(f.name, float), getattr(Behavior(), f.name))
             for f in fields(Behavior)
             if not f.name.startswith("reaction_")
         },
@@ -196,7 +200,16 @@ def parse_settings(text: str, path: Path) -> Settings:
 
     d = SimConfig()
     occupancy = r.get(("initial", "occupancy"), FLOATS, d.initial_occupancy)
-    lanes, speed_limit, notices = _lanes(r, behavior, occupancy, d.lanes)
+    exit_capacity = r.get(("exit", "capacity"), FLOATS, d.exit_capacity)
+    exit_storage = r.get(("exit", "storage"), FLOATS, d.exit_storage)
+    # [behavior] congestion_factor se eliminó (casi no cambiaba los resultados y duplicaba lo que ya hacen la
+    # dinámica gradual y la reacción en cadena); las copias anteriores la traen. Una lista sigue contando para el
+    # número de carriles, para que esas copias carguen con los mismos carriles.
+    congestion = r.get(("behavior", "congestion_factor"), FLOATS, None)
+    lanes, speed_limit, notices = _lanes(r, occupancy, d.lanes, exit_capacity, exit_storage, congestion)
+    if congestion is not None:
+        notices += ("Aviso: [behavior] congestion_factor se eliminó y se ignora (no cambia la velocidad); puedes "
+                    "quitarla del archivo",)  # fmt: skip
     # [demand] slow_lane se eliminó; las copias anteriores la traen con "right", que es lo que se hace ahora.
     slow_lane = r.get(("demand", "slow_lane"), str, None)
     if slow_lane is not None:
@@ -215,10 +228,13 @@ def parse_settings(text: str, path: Path) -> Settings:
         green=r.get(("traffic_light", "green"), float, d.green),
         yellow=r.get(("traffic_light", "yellow"), float, d.yellow),
         start_phase=r.get(("traffic_light", "start_phase"), str, d.start_phase),
+        free_lanes=r.get(("traffic_light", "free_lanes"), INTS, d.free_lanes),
         # Solo con alguna tasa variable hace falta la distribución; si todas son fijas, basta su valor.
         **({"rate_dists": rates} if any(rate.variable for rate in rates) else {"rates": tuple(r.expected for r in rates)}),
         rate_interval=r.get(("demand", "rate_interval"), float, d.rate_interval),
         initial_occupancy=occupancy,
+        exit_capacity=exit_capacity,
+        exit_storage=exit_storage,
         run=r.get(("execution", "run"), float, d.run),
         time_scale=r.get(("execution", "time_scale"), float, d.time_scale),
         sample=r.get(("execution", "sample"), float, d.sample),
@@ -295,10 +311,10 @@ def validate_animation(anim: AnimationOptions, sim: SimConfig, replicas: int) ->
     check(1 <= anim.replica <= replicas, f"[animation] replica debe estar entre 1 y {replicas} ([execution] replicas)")
 
 
-def _lanes(r: _Reader, behavior: Behavior, occupancy, default: int):
-    """Número de carriles: la longitud de las listas por carril ([behavior] congestion_factor,
-    [road] max_line_speed e [initial] occupancy), que deben coincidir. Un número suelto aplica a todos los carriles;
-    sin ninguna lista se usan `default` carriles.
+def _lanes(r: _Reader, occupancy, default: int, exit_capacity=0.0, exit_storage=60.0, congestion=None):
+    """Número de carriles: la longitud de las listas por carril ([road] max_line_speed, [initial] occupancy,
+    [exit] capacity y storage y, en copias anteriores, [behavior] congestion_factor), que deben coincidir. Un
+    número suelto aplica a todos los carriles; sin ninguna lista se usan `default` carriles.
 
     `[road] lanes` está obsoleto: solo se acepta para replicar copias anteriores, y en ese caso
     las listas se ajustan a él (los carriles extra usan el último valor; los sobrantes se ignoran).
@@ -306,16 +322,18 @@ def _lanes(r: _Reader, behavior: Behavior, occupancy, default: int):
     speed = r.get(("road", "max_line_speed"), FLOATS, None)
     legacy = r.get(("road", "lanes"), int, None)
     lists = {
-        "[behavior] congestion_factor": behavior.congestion_factor,
+        "[behavior] congestion_factor": congestion,
         "[road] max_line_speed": speed,
         "[initial] occupancy": occupancy,
+        "[exit] capacity": exit_capacity,
+        "[exit] storage": exit_storage,
     }
     lengths = {name: len(v) for name, v in lists.items() if isinstance(v, tuple)}
     notices: tuple[str, ...] = ()
     if legacy is not None:
         lanes = legacy
         notices = ("Aviso: [road] lanes está obsoleto; el número de carriles sale de la longitud de "
-                   "congestion_factor o max_line_speed",)  # fmt: skip
+                   "max_line_speed (o de las demás listas por carril)",)  # fmt: skip
     elif lengths:
         if len(set(lengths.values())) > 1:
             detail = ", ".join(f"{name} tiene {n}" for name, n in lengths.items())
@@ -337,11 +355,12 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
     para los tipos que lo tienen como fijo; por defecto, false), la parada antes del semáforo
     (`stop_position`, `stop_time_mean`, `stop_time_std`; por defecto, sin parada) y `abreast`
     (cuántos se detienen lado a lado en un carril; por defecto, 1) son opcionales, igual que el
-    rebase agresivo (`overtake`; por defecto, false), los umbrales de cambio de carril propios
+    rebase dentro del carril (`pass_in_lane`; por defecto, false), la aceleración y el frenado
+    graduales (`accel`, `decel` en m/s²; por defecto, instantáneos), el rebase agresivo (`overtake`; por defecto, false), los umbrales de cambio de carril propios
     del tipo (`lookahead`, `min_advantage`, `lane_change_cooldown`; por defecto, los de [behavior]),
     la probabilidad de llevar mercancía (`cargo_prob`; por defecto, 0; con 1, `pax` es
-    opcional). El largo (`length`) es un diccionario {min, max, mean, std}: normal truncada a [min, max]
-    sorteada para cada vehículo; con std = 0, todos miden mean.
+    opcional). La velocidad máxima (`speed_kmh`) y el largo (`length`) son diccionarios {min, max, mean,
+    std}: normal truncada a [min, max] sorteada para cada vehículo; con std = 0, todos tienen mean.
     """
     table = r.data.get("vehicles", {})
     if not isinstance(table, dict):
@@ -359,13 +378,17 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
         try:
             cargo_prob = r.get(section + ("cargo_prob",), float, base.cargo_prob if base else 0.0)
             values = {f: r.get(section + (f,), kind, getattr(base, f) if base else _REQUIRED) for f, kind in _SPEC_FIELDS.items()}
-            length = _dist(r, section + ("length",), _LENGTH_KINDS, "{min = 4, max = 5, mean = 4.5, std = 0.3} (m)")
-            if length is not None:
-                values.update({_LENGTH_FIELDS[f]: v for f, v in length.items()})
-            elif base is not None:
-                values.update({f: getattr(base, f) for f in _LENGTH_FIELDS.values()})
-            else:
-                raise ConfigError(f"falta la clave obligatoria [vehicles.{key}] length")
+            for name, fields, example in (
+                ("speed_kmh", _SPEED_FIELDS, "{min = 60, max = 90, mean = 80, std = 8} (km/h)"),
+                ("length", _LENGTH_FIELDS, "{min = 4, max = 5, mean = 4.5, std = 0.3} (m)"),
+            ):
+                dist = _dist(r, section + (name,), _FLOAT_DIST_KINDS, example)
+                if dist is not None:
+                    values.update({fields[f]: v for f, v in dist.items()})
+                elif base is not None:
+                    values.update({f: getattr(base, f) for f in fields.values()})
+                else:
+                    raise ConfigError(f"falta la clave obligatoria [vehicles.{key}] {name}")
             pax = _dist(r, section + ("pax",), _PAX_KINDS, "{min = 1, max = 6, mean = 1.5, std = 0.8}")
             if pax is not None:
                 values.update({f"pax_{f}": v for f, v in pax.items()})
@@ -391,8 +414,10 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
                 stop_time_mean=r.get(section + ("stop_time_mean",), float, base.stop_time_mean if base else _SPEC_DEFAULTS["stop_time_mean"]),
                 stop_time_std=r.get(section + ("stop_time_std",), float, base.stop_time_std if base else _SPEC_DEFAULTS["stop_time_std"]),
                 abreast=r.get(section + ("abreast",), int, base.abreast if base else 1),
+                pass_in_lane=r.get(section + ("pass_in_lane",), bool, base.pass_in_lane if base else False),
                 overtake=r.get(section + ("overtake",), bool, base.overtake if base else False),
                 **{f: r.get(section + (f,), float, getattr(base, f) if base else None) for f in _LANE_CHANGE_FIELDS},
+                **{f: r.get(section + (f,), float, getattr(base, f) if base else None) for f in _DYNAMICS_FIELDS},
                 cargo_prob=cargo_prob,
                 **{f: r.get(section + (f,), float, getattr(base, f) if base else _SPEC_DEFAULTS[f]) for f in _BOTTLENECK_FIELDS},
                 **values,
@@ -479,6 +504,11 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
         check(not spec.exclusive or spec.lane is not None,
               f"[vehicles.{spec.key}] exclusive = true requiere un carril fijo (lane)")  # fmt: skip
         check(1 <= spec.abreast <= 4, f"[vehicles.{spec.key}] abreast debe estar entre 1 y 4")
+        check(not spec.pass_in_lane or spec.abreast >= 2,
+              f"[vehicles.{spec.key}] pass_in_lane = true requiere abreast ≥ 2 (que quepan dos lado a lado)")  # fmt: skip
+        for name in _DYNAMICS_FIELDS:
+            value = getattr(spec, name)
+            check(value is None or 0 < value <= 20, f"[vehicles.{spec.key}] {name} debe estar en (0, 20] m/s²")
         overrides = {f: getattr(spec, f) for f in _LANE_CHANGE_FIELDS if getattr(spec, f) is not None}
         for name in ([*overrides, "overtake"] if spec.overtake else overrides):
             check(spec.can_change_lane, f"[vehicles.{spec.key}] {name} solo aplica a tipos con lane_change = true")
@@ -516,8 +546,6 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
     for name in ("lane_change_cooldown", "lookahead", "min_advantage", "release_space", "yellow_approach"):
         check(getattr(b, name) >= 0, f"[behavior] {name} no puede ser negativo")
     check(b.lane_change_interval >= DT, f"[behavior] lane_change_interval debe ser ≥ {DT} s")
-    cf = b.congestion_factor if isinstance(b.congestion_factor, tuple) else (b.congestion_factor,)
-    check(all(0 <= v < 1 for v in cf), "[behavior] congestion_factor: cada valor debe estar en [0, 1)")
 
     _validate_bottleneck(sim, check)
 
@@ -534,6 +562,8 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
     check(sim.rate_interval >= DT, f"[demand] rate_interval debe ser ≥ {DT} s")
     check(any(rate > 0 for rate in sim.rates), "[demand] al menos un tipo de vehículo debe tener tasa > 0")
     check(all(0 <= v <= 1 for v in sim.lane_initial_occupancy), "[initial] occupancy: cada valor debe estar en [0, 1]")
+    check(all(v >= 0 for v in sim.lane_exit_capacity), "[exit] capacity: cada valor debe ser ≥ 0 veh/min (0 = sin cola de salida)")
+    check(all(v > 0 for v in sim.lane_exit_storage), "[exit] storage: cada valor debe ser > 0 m")
     check(sim.run > 0, "[execution] run debe ser mayor que 0")
     check(sim.time_scale > 0, "[execution] time_scale debe ser mayor que 0")
     check(sim.sample > 0, "[execution] sample debe ser mayor que 0")
@@ -564,13 +594,24 @@ def _validate_bottleneck(sim: SimConfig, check) -> None:
               f"{label} la detención no puede durar más de una hora (media + 6·σ ≤ 3600 s)")  # fmt: skip
     for lane in sim.bottleneck.stop_lanes or ():
         check(0 <= lane < sim.lanes, f"[bottleneck] stop_lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
+    for lane in sim.free_lanes:
+        check(0 <= lane < sim.lanes, f"[traffic_light] free_lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
+    check(len(set(sim.free_lanes)) == len(sim.free_lanes), "[traffic_light] free_lanes: hay carriles repetidos")
+    for lane in sim.free_lanes:
+        check(lane not in range(sim.lanes) or lane in sim.reserved_lanes,
+              f"[traffic_light] free_lanes: el carril {lane} no es exclusivo de ningún tipo; free_lanes solo aplica "
+              "a los tipos con carril exclusivo ([vehicles.<clave>] lane y exclusive = true)")  # fmt: skip
     lo, hi = sim.bottleneck_zone()
     check(0 <= lo < hi <= sim.length, f"[bottleneck] stop_zone requiere 0 ≤ inicio < fin ≤ {sim.length:g} ([road] length)")
 
 
 def _validate_spec(s: VehicleSpec, label: str, check) -> None:
     check(bool(s.name.strip()), f"{label} name no puede estar vacío")
-    check(s.speed_kmh > 0 and s.length > 0, f"{label} speed_kmh y length deben ser mayores que 0")
+    check(s.speed_std >= 0, f"{label} speed_kmh: std no puede ser negativa")
+    lo = s.speed_kmh if s.speed_min is None else s.speed_min
+    hi = s.speed_kmh if s.speed_max is None else s.speed_max
+    check(0 < lo <= s.speed_kmh <= hi, f"{label} speed_kmh: debe cumplirse 0 < min ≤ mean ≤ max")
+    check(s.slowest_kmh > 0, f"{label} speed_kmh: la velocidad mínima (mean − 3·std sin min) debe ser mayor que 0")
     check(0 < s.gap_stop <= s.gap_run, f"{label} requiere 0 < gap_stop ≤ gap_run")
     check(1 <= s.pax_min <= s.pax_max <= 255, f"{label} pax: debe cumplirse 1 ≤ min ≤ max ≤ 255")
     check(s.pax_min <= s.pax_mean <= s.pax_max, f"{label} pax: mean debe estar entre min y max")

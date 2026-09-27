@@ -10,14 +10,17 @@
 [road]
 length = 500.0          # m; el semáforo está al final del tramo
 max_line_speed = [20, 30, 50, 80]   # km/h, límite de cada carril (0 = derecho); ningún vehículo lo rebasa.
-                                # El número de carriles es el largo de esta lista y de
-                                # [behavior] congestion_factor, que deben coincidir.
+                                # El número de carriles es el largo de esta lista y de las demás listas por
+                                # carril ([initial] occupancy, [exit] capacity y storage), que deben coincidir.
 
 [traffic_light]
 red = 25.0              # s (múltiplo de 0.1)
 green = 35.0            # s (múltiplo de 0.1)
 yellow = 3.0            # s (múltiplo de 0.1) entre el verde y el rojo: verde → amarillo → rojo; 0 = sin amarillo
 start_phase = "red"     # "red" | "green"
+free_lanes = []         # carriles sin semáforo (0 = derecho), p. ej. [0] para una vuelta continua a la derecha.
+                        # Solo aplica a los tipos con carril exclusivo ahí ([vehicles.<clave>] lane y
+                        # exclusive = true): cruzan aunque esté en rojo y no bajan la velocidad en amarillo
 
 [demand]                # llegadas Poisson en veh/min, un diccionario por tipo: {min, max, mean, std}.
                         # La tasa es una normal(mean, std) truncada a [min, max] que se vuelve a sortear
@@ -33,6 +36,15 @@ carga_rate = {min = 1, max = 1, mean = 1, std = 0}   # vehículos de carga (ver 
 occupancy = 0.0         # fracción de cada carril ocupada: Σ(largo + gap_stop) / length; 1 = cola compacta.
                         # Un número para todos o una lista por carril (0 = derecho) del largo de max_line_speed,
                         # p. ej. [0.2, 0.6, 0.6, 0.05]; 0 = tramo vacío. Tipos según las tasas de [demand].
+
+[exit]                  # cola de salida después del semáforo, por carril (0 = derecho)
+capacity = 0            # veh/min que acepta cada carril: un número para todos o una lista por carril,
+                        # p. ej. [0, 12, 15, 0]; 0 = sin cola de salida. Si por la línea pasan más de los que
+                        # acepta, la cola se llena, la línea de ese carril se cierra (aunque esté en verde) y el
+                        # carril se satura.
+storage = 60            # m que mide la cola de salida de cada carril (número o lista por carril); cada vehículo ocupa su largo + gap_stop
+                        # (60 m ≈ 11 autos de 4.5 m + 1 m). Si el siguiente no cabe, la línea de su carril se
+                        # cierra para él; una cola vacía acepta a cualquiera.
 
 [bottleneck]            # cuellos de botella: dónde ocurren las detenciones. Quién se detiene, con qué
                         # probabilidad y cuánto tiempo va en cada [vehicles.<clave>] (bottleneck_prob,
@@ -69,10 +81,12 @@ format = "webm"         # "webm" (VP9) | "mp4" (H.264) | "gif"
 # --- Modelo -------------------------------------------------------------------------------
 
 [vehicles.car]          # automóvil: puede cambiar de carril
-speed_kmh = 80.0        # velocidad máxima del vehículo
+speed_kmh = {min = 80, max = 80, mean = 80, std = 0}   # km/h, velocidad máxima de cada vehículo: normal(mean, std) truncada a [min, max]
 length = {min = 4.5, max = 4.5, mean = 4.5, std = 0}   # m
 gap_run = 3.0           # m al líder en marcha
 gap_stop = 1.0          # m al líder detenido (compresión)
+accel = 2.5             # m/s², aceleración gradual (sin ella, instantánea)
+decel = 4.5             # m/s², frenado gradual con anticipación (sin ella, en seco)
 pax = {min = 1, max = 6, mean = 1.3, std = 1}   # pasajeros: normal(mean, std) redondeada y truncada a [min, max]
 cargo_prob = 0.1        # probabilidad de que lleve mercancía: ocupa la vía, pero no cuenta en los pasajeros
 # bottleneck_prob = 0.4     # [bottleneck]: probabilidad de detenerse una vez en el tramo …
@@ -80,20 +94,26 @@ cargo_prob = 0.1        # probabilidad de que lleve mercancía: ocupa la vía, p
 # bottleneck_time_std = 10.0
 
 [vehicles.bike]         # bicicleta: un solo carril
-speed_kmh = 20.0        # velocidad máxima del vehículo
+speed_kmh = {min = 20, max = 20, mean = 20, std = 0}   # km/h
 length = {min = 1.8, max = 1.8, mean = 1.8, std = 0}
 gap_run = 1.0
 gap_stop = 0.5
+accel = 1.0
+decel = 3.0
 pax = {min = 1, max = 1, mean = 1, std = 0}
 lane = 0              # carril fijo (0 = derecho); sin él, el derecho libre
 exclusive = true        # reserva el carril: solo lo usan los tipos con este lane (autos y motos no)
 abreast = 2             # al detenerse, hasta 2 bicis lado a lado en el carril (1 = en fila)
+pass_in_lane = true     # en marcha, la más rápida rebasa a la de adelante dentro del carril (requiere
+                        # abreast ≥ 2; solo hay rebases si speed_kmh varía, std > 0)
 
 [vehicles.bus]          # autobús: un solo carril
-speed_kmh = 60.0        # velocidad máxima del vehículo
+speed_kmh = {min = 60, max = 60, mean = 60, std = 0}   # km/h
 length = {min = 15, max = 15, mean = 15, std = 0}
 gap_run = 4.0           # supuesto: el enunciado no lo especifica
 gap_stop = 1.5
+accel = 1.2
+decel = 3.5
 pax = {min = 1, max = 120, mean = 80, std = 15}
 lane = 3              # p. ej. separa autobuses (carril 1) de bicis (carril 0)
 exclusive = true        # carril exclusivo de autobuses
@@ -102,10 +122,12 @@ stop_time_mean = 25.0   # s de descenso y ascenso de pasajeros: media …
 stop_time_std = 5.0     # … y desviación estándar (normal truncada a ≥ 0)
 
 [vehicles.motorbike]
-speed_kmh = 70.0        # velocidad máxima del vehículo
+speed_kmh = {min = 70, max = 70, mean = 70, std = 0}   # km/h
 length = {min = 2, max = 2, mean = 2, std = 0}
 gap_run = 2.0
 gap_stop = 1
+accel = 3.0
+decel = 5.0
 pax = {min = 1, max = 2, mean = 1.2, std = 0.2}
 cargo_prob = 0.3        # motos de reparto: probabilidad de que lleve mercancía en vez de pasajeros
 overtake = true         # rebasa a quien va más lento que ella (por su velocidad real) y baja incluso
@@ -115,10 +137,12 @@ min_advantage = 1.0     # m de espacio libre extra que le basta para cambiar
 lane_change_cooldown = 1.0  # s sin volver a cambiar tras una maniobra
 
 [vehicles.carga]        # vehículo de carga: solo mercancía, no cuenta en los pasajeros
-speed_kmh = 40.0        # velocidad máxima del vehículo
+speed_kmh = {min = 40, max = 40, mean = 40, std = 0}   # km/h
 length = {min = 8, max = 16, mean = 10, std = 2}   # m, normal truncada a [min, max], sorteada para cada vehículo
 gap_run = 4.0           # supuesto: como el autobús
 gap_stop = 1.5
+accel = 1.0
+decel = 3.0
 cargo_prob = 1.0        # siempre lleva mercancía (con 1, pax es opcional)
 # bottleneck_prob = 0.6     # [bottleneck]: se detiene más seguido …
 # bottleneck_time_mean = 120.0  # … y por más tiempo (s) que un auto
@@ -128,6 +152,9 @@ cargo_prob = 1.0        # siempre lleva mercancía (con 1, pax es opcional)
 reaction = {min = 2.0, max = 5.0, mean = 3.0, std = 1.0}
                                 # s, reacción al poder avanzar (verde o arranque del líder): normal(mean, std)
                                 # truncada a [min, max]; sin mean y std, uniforme en [min, max]
+queue_reaction = true           # la cola de entrada detenida (cola del tramo detenida hasta la entrada)
+                                # arranca con reacción: cada vehículo reacciona cuando se mueve el de
+                                # adelante; con false entra ya en marcha en cuanto hay lugar
 lane_change_min = 1.5           # s, duración de la maniobra de cambio de carril
 lane_change_max = 4.0
 lane_change_speed_factor = 0.5  # fracción de la velocidad durante la maniobra
@@ -140,7 +167,3 @@ leader_slowdown = 0.25          # solo cambia de carril si el vehículo de enfre
 release_space = 0.5             # m de espacio que libera a un vehículo detenido
 yellow_approach = 50.0          # m antes del semáforo en los que, en amarillo, se baja la velocidad
 yellow_speed_factor = 0.5       # fracción de la velocidad en esa zona durante el amarillo (la línea sigue abierta)
-congestion_factor = [0.05, 0.5, 0.4, 0.6]  # reducción máx. de velocidad con la cola ocupando todo el carril,
-                                # en [0, 1): un número para todos o una lista por carril (0 = derecho).
-                                # Si faltan valores, los carriles extra usan el último; si sobran, se ignoran.
-                                # velocidad × (1 − factor del carril × largo de la cola / length); 0 = sin efecto
