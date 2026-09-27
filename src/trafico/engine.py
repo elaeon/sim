@@ -45,7 +45,7 @@ import numpy as np
 
 from trafico.config import DT, RED, YELLOW, SimConfig
 from trafico.distributions import (
-    normal_ticks, reaction_ticks, sample_lengths, sample_passengers, stop_ticks, uniform_ticks,
+    normal_ticks, reaction_ticks, sample_lengths, sample_passengers, sample_rates, stop_ticks, uniform_ticks,
 )  # fmt: skip
 from trafico.metrics import Recorder
 
@@ -94,13 +94,15 @@ class Simulation:
         self.rng_arrivals = per_type[0::PER_TYPE_STREAMS]  # llegadas Poisson
         self.rng_pax = per_type[1::PER_TYPE_STREAMS]  # pasajeros por vehículo
         self.rng_react = per_type[2::PER_TYPE_STREAMS]  # tiempos de reacción
-        self.rng_entry = per_type[3::PER_TYPE_STREAMS]  # carril de entrada (desempates, slow_lane = "random")
+        self.rng_entry = per_type[3::PER_TYPE_STREAMS]  # carril de entrada (desempates)
         self.rng_stop = per_type[4::PER_TYPE_STREAMS]  # duración de la parada
         # Hijos del generador de pasajeros (spawn no consume sus sorteos): si lleva mercancía y su
         # largo. Agregarlos no altera los sorteos anteriores ni dependen del número de tipos.
         self.rng_cargo, self.rng_length = zip(*(g.spawn(2) for g in self.rng_pax))
         # Cuellos de botella: si se detiene y dónde (al llegar) y cuánto tiempo (al detenerse).
         self.rng_bottleneck, self.rng_bottleneck_time = zip(*(g.spawn(2) for g in self.rng_pax))
+        # Hijo del generador de llegadas: la tasa de cada intervalo de los tipos con tasa variable.
+        self.rng_rate = [g.spawn(1)[0] for g in self.rng_arrivals]
         specs = cfg.specs
         b = cfg.behavior
         self.L = float(cfg.length)
@@ -130,6 +132,12 @@ class Simulation:
             self.allowed[k, list(cfg.allowed_lanes(k))] = True
         self._entry_lanes = [np.array(cfg.entry_lanes(k)) for k in range(self.n_types)]
         self.rate_tick = np.array(cfg.rates, dtype=np.float64) / 60.0 * DT
+        # Tasas variables: llegadas por paso en cada intervalo de rate_interval, sorteadas al inicio.
+        n_intervals = -(-cfg.n_ticks // cfg.rate_ticks)
+        self.rate_by_interval = {
+            k: sample_rates(self.rng_rate[k], cfg.rate(k), n_intervals) / 60.0 * DT
+            for k in range(self.n_types) if cfg.rate(k).variable
+        }  # fmt: skip
 
         self.lane_cf = np.array(cfg.lane_congestion)  # factor de congestión de cada carril
         self.lane_vmax = np.array(cfg.lane_max_kmh) / 3.6 * DT  # límite de cada carril, m/paso
@@ -169,6 +177,8 @@ class Simulation:
         self.pax_m = np.zeros(self.n_types)  # pasajeros·m dentro del tramo en el intervalo de muestreo
         self.lane_dist = np.zeros(cfg.lanes)  # m recorridos en cada carril en el intervalo de muestreo
         self.lane_time = np.zeros(cfg.lanes)  # vehículo·s presentes en cada carril en el intervalo
+        self.type_dist = np.zeros(self.n_types)  # m recorridos dentro del tramo por tipo, en toda la corrida
+        self.type_time = np.zeros(self.n_types)  # vehículo·s dentro del tramo por tipo (con los detenidos)
         self.lane_changes = 0
         self.lane_changes_t = np.zeros(self.n_types)  # cambios de carril por tipo
         self.stops = np.zeros(self.n_types)  # paradas completadas por tipo
@@ -351,9 +361,7 @@ class Simulation:
         offset = self.tick % ARRIVAL_CHUNK
         if offset == 0:
             # Sorteo de llegadas Poisson por bloques; solo se guardan los pasos con llegadas.
-            chunk = np.column_stack(
-                [g.poisson(rate, ARRIVAL_CHUNK) for g, rate in zip(self.rng_arrivals, self.rate_tick)]
-            )
+            chunk = np.column_stack([self._arrival_counts(k) for k in range(self.n_types)])
             self._pending_arrivals = {int(t): chunk[t] for t in np.flatnonzero(chunk.any(axis=1))}
         counts = self._pending_arrivals.get(offset)
         if counts is None:
@@ -377,14 +385,21 @@ class Simulation:
             for p, length, a in zip(paxs, lengths, at):
                 self.queues[self._entry_lane(vt)].append((int(vt), int(p), float(length), float(a), self.tick))
 
+    def _arrival_counts(self, k: int) -> np.ndarray:
+        """Llegadas del tipo k en cada paso del bloque que empieza en el paso actual."""
+        g = self.rng_arrivals[k]
+        by_interval = self.rate_by_interval.get(k)
+        if by_interval is None:
+            return g.poisson(self.rate_tick[k], ARRIVAL_CHUNK)
+        idx = (self.tick + np.arange(ARRIVAL_CHUNK)) // self.cfg.rate_ticks
+        return g.poisson(by_interval[np.minimum(idx, by_interval.size - 1)])
+
     def _entry_lane(self, vt: int) -> int:
         if self.n_lanes == 1:
             return 0
         lanes = self._entry_lanes[vt]  # sin los carriles exclusivos de otros tipos
-        if lanes.size == 1:
+        if lanes.size == 1:  # carril fijo: los que no cambian de carril
             return int(lanes[0])
-        if not self.can_change[vt]:
-            return int(self.rng_entry[vt].choice(lanes))  # slow_lane = "random"
         # Los que cambian de carril: cola de entrada más corta; desempate por más espacio libre a la entrada.
         qlen = np.fromiter((len(self.queues[ln]) for ln in lanes), np.int64, lanes.size)
         best = lanes[qlen == qlen.min()]
@@ -521,6 +536,11 @@ class Simulation:
         lane_now = self.lane[:n][present]
         self.lane_dist += np.bincount(lane_now, weights=inside[present], minlength=self.n_lanes)
         self.lane_time += np.bincount(lane_now, minlength=self.n_lanes) * DT
+        vt_now = vt[present]
+        self.type_dist += np.bincount(vt_now, weights=inside[present], minlength=self.n_types)
+        # En el paso en que cruza la línea solo cuenta la fracción del paso que pasó dentro del tramo.
+        frac = np.where(adv > EPS, inside / np.maximum(adv, EPS), 1.0)[present]
+        self.type_time += np.bincount(vt_now, weights=frac, minlength=self.n_types) * DT
         x += adv
 
         # Llegada a la parada: queda detenido el tiempo de descenso y ascenso.
@@ -858,6 +878,8 @@ class Simulation:
             # Espera media en la cola de entrada de los que llegaron por la demanda y ya entraron al tramo.
             queue_wait = self.queue_wait_ticks * DT / (self.entered_veh - self.initial_veh)
             pax_per_veh = self.arrived_pax / (self.arrived_veh - self.arrived_cargo)  # solo los de pasajeros
+            # Velocidad media dentro del tramo: distancia / tiempo de sus vehículos, con los detenidos.
+            mean_speed = self.type_dist / self.type_time * 3.6
         return {
             "arrived_veh": self.arrived_veh.copy(),
             "arrived_pax": self.arrived_pax.copy(),
@@ -868,6 +890,7 @@ class Simulation:
             "crossed_veh": self.cum_veh.copy(),
             "crossed_pax": self.cum_pax.copy(),
             "travel_time": travel_time,
+            "mean_speed": mean_speed,
             "queue_wait": queue_wait,
             "pax_per_veh": pax_per_veh,
             "queued": queued,

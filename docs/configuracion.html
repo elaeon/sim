@@ -152,11 +152,22 @@ uv run trafico-variantes --largos 50 150 300 --semaforos 40/20 30/30 20/40 --car
     <li>Cada corrida crea <code>resultados/&lt;AAAAMMDD-HHMMSS&gt;_&lt;nombre&gt;/</code> con la gráfica, el
       resumen, las series y una copia de la configuración usada. Esa copia registra la semilla y el nombre,
       así que basta para replicar la corrida con resultados idénticos.</li>
-    <li>La gráfica tiene seis paneles: cuatro por tipo de vehículo (pasajeros acumulados, flujo de pasajeros,
-      pax·km/h y pasajeros por metro de carril) y dos por carril (saturación y velocidad media).</li>
+    <li>La gráfica tiene cinco paneles: tres por tipo de vehículo (pasajeros acumulados, flujo de pasajeros y
+      pasajeros por metro de carril) y dos por carril: la saturación en el tiempo y la velocidad media como
+      <strong>violín</strong>. Cada violín muestra la distribución de la velocidad media del carril (distancia entre
+      tiempo de sus vehículos, con los detenidos) en todas las muestras de todas las réplicas en que el carril tenía
+      vehículos. Adentro lleva el rango intercuartil (barra) y la mediana (punto), y el rótulo del carril da la
+      mediana, el rango intercuartil y la fracción del tiempo con vehículos. Así un carril con pocos vehículos, como
+      el del autobús, no oscila: solo cuenta cuando hay alguien. La serie en el tiempo, suavizada a 10 s, sigue en
+      <code>series.csv</code>. Los pax·km/h ya no se grafican,
+      pero siguen en <code>series.csv</code>.</li>
+    <li><code>resumen.txt</code> incluye la fila «Velocidad media (km/h)» de cada tipo: la distancia recorrida dentro
+      del tramo entre el tiempo que sus vehículos pasaron en él durante toda la corrida, contando el tiempo detenidos
+      (semáforo, parada, bottleneck, congestión) y sin contar la espera en la cola de entrada. Incluye a los que llevan
+      mercancía. Compárala con la velocidad máxima del tipo para ver cuánto lo frena el tramo.</li>
     <li><code>distribucion_pasajeros.png</code> muestra, para cada tipo que participa, el porcentaje de vehículos
       con cada número de pasajeros: todos los que llegaron durante la simulación, sumando las réplicas, con su media
-      observada. Una línea escalonada marca la distribución esperada según los <code>pax_*</code> configurados (la
+      observada. Una línea escalonada marca la distribución esperada según el <code>pax</code> configurado (la
       normal redondeada y truncada al rango que usa el sorteo), para distinguir el ruido de una muestra pequeña de un
       problema real. Si el rango tiene más de 30 valores, las barras se agrupan en intervalos (de 5 pasajeros para un
       rango de 1 a 120).</li>
@@ -282,17 +293,31 @@ stop_time_std = 5.0</code></pre>
   <div class="table-scroll"><table>
     <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
     <tbody>
-      <tr><td><code>&lt;clave&gt;_rate</code></td><td>número</td>
-        <td class="num">car 15<br>bike 4<br>bus 1</td>
-        <td>Tasa de llegada en vehículos por minuto de cada tipo definido en <code>[vehicles.&lt;clave&gt;]</code>.
-          Con 0, ese tipo no participa. Es obligatoria para los tipos nuevos.</td>
-        <td>≥ 0; al menos un tipo &gt; 0.</td></tr>
-      <tr><td><code>slow_lane</code></td><td>texto</td><td class="num">"right"</td>
-        <td>Carril fijo de los tipos que no cambian de carril (<code>lane_change = false</code>) y no definen
-          <code>lane</code>: el derecho, o uno aleatorio asignado al entrar, sin contar los carriles exclusivos.</td>
-        <td><code>"right"</code> o <code>"random"</code>.</td></tr>
+      <tr><td><code>&lt;clave&gt;_rate</code></td><td>diccionario</td>
+        <td class="num">car 15<br>bike 4<br>bus 1<br>(fijas)</td>
+        <td>Tasa de llegada en vehículos por minuto de cada tipo definido en <code>[vehicles.&lt;clave&gt;]</code>, con
+          las cuatro claves <code>{min, max, mean, std}</code>. La tasa es una normal(<code>mean</code>, <code>std</code>)
+          truncada a [<code>min</code>, <code>max</code>] y se vuelve a sortear cada <code>rate_interval</code> s; dentro
+          de cada intervalo las llegadas siguen un Poisson con esa tasa. Con <code>std = 0</code> o <code>min = max</code>
+          la tasa es fija. Con todo en 0, ese tipo no participa. Es obligatoria para los tipos nuevos; un número suelto
+          (<code>car_rate = 15</code>) es un error.</td>
+        <td>0 ≤ <code>min</code> ≤ <code>mean</code> ≤ <code>max</code>; <code>std</code> ≥ 0; al menos un tipo con
+          tasa &gt; 0.</td></tr>
+      <tr><td><code>rate_interval</code></td><td>número</td><td class="num">60</td>
+        <td>Segundos simulados entre sorteos de las tasas variables. Cada tipo sortea con su propio generador, así que
+          cambiar la tasa de un tipo no cambia las llegadas de los demás.</td>
+        <td>≥ 0.1 y múltiplo de 0.1.</td></tr>
     </tbody>
   </table></div>
+  <pre><code>[demand]
+rate_interval = 60.0
+car_rate = {min = 1, max = 20, mean = 15, std = 5}     # entre 1 y 20 veh/min, nueva tasa cada minuto
+bus_rate = {min = 0.25, max = 0.25, mean = 0.25, std = 0}  # fija: 1 cada 4 min</code></pre>
+  <p>En TOML el diccionario se escribe con <code>=</code> y números sin comillas: <code>{min = 1, max = 20, mean = 15,
+    std = 5}</code>. La truncadura desplaza la media real cuando <code>mean</code> está cerca de un extremo (en el
+    ejemplo, 13.6 veh/min en vez de 15). La cabecera de la corrida y <code>resumen.txt</code> muestran esa media real en
+    la línea «Demanda variable», y la leyenda de la gráfica la usa como tasa del tipo. «Llegadas (veh/min)» del resumen
+    es la tasa observada.</p>
   <div class="note"><p>Si la demanda total supera la capacidad del semáforo, la cola de entrada crece durante toda la
     corrida. El resumen lo muestra en «En cola de entrada al final» (vehículos esperando al terminar) y en
     «T. medio en cola de entrada (s)»: la espera media, desde que el vehículo llega hasta que entra al tramo, de los que
@@ -459,33 +484,31 @@ bottleneck_time_std = 30.0</code></pre>
       <tr><td><code>speed_kmh</code></td><td>número</td><td>Velocidad máxima que puede alcanzar el vehículo, en km/h.
           Avanza a ella salvo que la limiten el carril (<code>max_line_speed</code>), la congestión, un cambio de
           carril o el vehículo de adelante.</td><td>&gt; 0.</td></tr>
-      <tr><td><code>length</code></td><td>número</td><td>Largo del vehículo en metros; con <code>length_std</code>, el largo
-          medio.</td><td>&gt; 0.</td></tr>
-      <tr><td><code>length_std</code></td><td>número</td><td>Desviación estándar del largo (m). Con un valor mayor que 0,
-          cada vehículo sortea su largo de una normal(<code>length</code>, <code>length_std</code>) truncada a
-          [<code>length_min</code>, <code>length_max</code>]. El corte mueve la media observada: con media 10, σ 2 y
-          mínimo 8, el largo medio es ~10.6 m. Opcional; por defecto 0 (todos miden <code>length</code>).</td>
-        <td>≥ 0.</td></tr>
-      <tr><td><code>length_min</code>, <code>length_max</code></td><td>número</td><td>Largo mínimo y máximo (m) cuando
-          <code>length_std</code> &gt; 0. Opcionales; por defecto <code>length</code> ∓ 3·<code>length_std</code>. El
-          máximo es el que cuenta para validar <code>[road] length</code> y <code>stop_position</code>.</td>
-        <td>0 &lt; mín ≤ <code>length</code> ≤ máx.</td></tr>
+      <tr><td><code>length</code></td><td>diccionario</td><td>Largo del vehículo en metros:
+          <code>{min, max, mean, std}</code>. Cada vehículo sortea su largo de una normal(<code>mean</code>,
+          <code>std</code>) truncada a [<code>min</code>, <code>max</code>]. Con <code>std = 0</code>, todos miden
+          <code>mean</code>. El corte mueve la media observada: con media 10, σ 2 y mínimo 8, el largo medio es
+          ~10.6 m. El máximo es el que cuenta para validar <code>[road] length</code> y <code>stop_position</code>.
+          Las cuatro claves son obligatorias. Ejemplos: <code>length = {min = 4.5, max = 4.5, mean = 4.5, std = 0}</code>
+          (fijo) y <code>length = {min = 8, max = 16, mean = 10, std = 2}</code>.</td>
+        <td>0 &lt; min ≤ mean ≤ max; std ≥ 0.</td></tr>
       <tr><td><code>gap_run</code></td><td>número</td><td>Distancia al vehículo de adelante cuando éste va en marcha (m).</td>
         <td>≥ <code>gap_stop</code>.</td></tr>
       <tr><td><code>gap_stop</code></td><td>número</td><td>Distancia al vehículo de adelante cuando éste está detenido (m).
           Que sea menor que <code>gap_run</code> produce la <strong>compresión</strong> de la cola.</td><td>&gt; 0.</td></tr>
-      <tr><td><code>pax_min</code>, <code>pax_max</code></td><td>entero</td><td>Rango de pasajeros por vehículo. Con
-          <code>cargo_prob = 1</code>, estas cuatro claves son opcionales: el tipo nunca lleva pasajeros.</td>
-        <td>1 ≤ min ≤ max ≤ 255.</td></tr>
-      <tr><td><code>pax_mean</code>, <code>pax_std</code></td><td>número</td><td>Media y desviación de una normal que se
-          trunca al rango y se redondea. La truncadura puede mover la media observada: en autos, μ = 1.5 con mínimo 1
-          da ~1.8.</td><td>min ≤ media ≤ max; σ ≥ 0.</td></tr>
+      <tr><td><code>pax</code></td><td>diccionario</td><td>Pasajeros por vehículo:
+          <code>{min, max, mean, std}</code>, con <code>min</code> y <code>max</code> enteros. Cada vehículo sortea una
+          normal(<code>mean</code>, <code>std</code>) redondeada y truncada a [<code>min</code>, <code>max</code>]. La
+          truncadura puede mover la media observada: en autos, μ = 1.5 con mínimo 1 da ~1.8. Las cuatro claves son
+          obligatorias. Con <code>cargo_prob = 1</code>, <code>pax</code> es opcional porque el tipo nunca lleva
+          pasajeros. Ejemplo: <code>pax = {min = 1, max = 6, mean = 1.5, std = 0.8}</code>.</td>
+        <td>1 ≤ min ≤ max ≤ 255; min ≤ mean ≤ max; std ≥ 0.</td></tr>
       <tr><td><code>name</code></td><td>texto</td><td>Etiqueta en la gráfica, el resumen y el CSV. Opcional; por defecto,
           la clave.</td><td>No vacía y distinta entre tipos.</td></tr>
       <tr><td><code>lane_change</code></td><td>booleano</td><td>Si el tipo puede cambiar de carril. Opcional; por defecto
           <code>true</code> para los tipos nuevos.</td><td>—</td></tr>
       <tr><td><code>lane</code></td><td>entero</td><td>Carril fijo de un tipo que no cambia de carril: 0 = derecho, 1 = el
-          siguiente hacia la izquierda, … Opcional; sin él se aplica <code>[demand] slow_lane</code>. Sirve, por
+          siguiente hacia la izquierda, … Opcional; sin él, el tipo va por el carril más a la derecha que no sea exclusivo de otro tipo. Sirve, por
           ejemplo, para separar bicis (<code>lane = 0</code>) y autobuses (<code>lane = 1</code>).</td>
         <td>Solo con <code>lane_change = false</code>; entre 0 y el número de carriles − 1.</td></tr>
       <tr><td><code>exclusive</code></td><td>booleano</td><td>Reserva el carril <code>lane</code> para los tipos que lo
@@ -556,16 +579,14 @@ lane_change_cooldown = 1.0  # s</code></pre>
 
   <h3>Ejemplo: mercancía y vehículos de carga</h3>
   <pre><code>[demand]
-carga_rate = 1.0
+carga_rate = {min = 1, max = 1, mean = 1, std = 0}
 
 [vehicles.motorbike]
 cargo_prob = 0.3        # 30 % de las motos son de reparto
 
-[vehicles.carga]        # solo mercancía: no hacen falta pax_min … pax_std
+[vehicles.carga]        # solo mercancía: no hace falta pax
 speed_kmh = 40.0
-length = 10.0           # largo medio (m) …
-length_std = 2.0        # … con desviación estándar 2 …
-length_min = 8.0        # … y mínimo 8 m (máximo por defecto: 10 + 3·2 = 16 m)
+length = {min = 8, max = 16, mean = 10, std = 2}   # m: media 10, σ 2, entre 8 y 16
 gap_run = 4.0
 gap_stop = 1.5
 cargo_prob = 1.0</code></pre>
@@ -592,22 +613,19 @@ cargo_prob = 1.0</code></pre>
     es la menor entre ella y el límite del mejor carril que puede usar.</p>
 
   <h3>Agregar un tipo nuevo</h3>
-  <p>Un tipo nuevo debe definir los ocho parámetros numéricos y su tasa en <code>[demand]</code>. Si falta alguno,
+  <p>Un tipo nuevo debe definir los parámetros numéricos (<code>speed_kmh</code>, <code>gap_run</code>, <code>gap_stop</code>), su largo <code>length</code>, sus pasajeros <code>pax</code> y su tasa en <code>[demand]</code>. Si falta alguno,
     la corrida se detiene indicando cuál.</p>
   <pre><code>[demand]
-motorbike_rate = 5.0
+motorbike_rate = {min = 5, max = 5, mean = 5, std = 0}
 
 [vehicles.motorbike]
 name = "moto"          # opcional
 lane_change = true     # opcional
 speed_kmh = 40.0
-length = 2.0
+length = {min = 2, max = 2, mean = 2, std = 0}
 gap_run = 2.0
 gap_stop = 1.0
-pax_min = 1
-pax_max = 2
-pax_mean = 1.2
-pax_std = 0.2</code></pre>
+pax = {min = 1, max = 2, mean = 1.2, std = 0.2}</code></pre>
   <p>El color de cada tipo en la gráfica depende de su posición: primero los incorporados y después los nuevos, en el
     orden del archivo.</p>
 </section>
@@ -618,18 +636,18 @@ pax_std = 0.2</code></pre>
   <div class="table-scroll"><table>
     <thead><tr><th>Clave</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
     <tbody>
-      <tr><td><code>reaction_min</code>, <code>reaction_max</code></td><td class="num">1.0, 5.0</td>
-        <td>Rango (s) del tiempo de reacción de un vehículo detenido que queda libre: se puso verde o arrancó el de
-          adelante. Encadenado vehículo tras vehículo, produce el <strong>estiramiento</strong> del pelotón. Sin
-          <code>reaction_std</code>, la reacción es uniforme en este rango.</td>
-        <td>0 &lt; min ≤ max ≤ 600.</td></tr>
-      <tr><td><code>reaction_mean</code>, <code>reaction_std</code></td><td class="num">—</td>
-        <td>Media y desviación estándar (s) del tiempo de reacción. Con <code>reaction_std</code>, se sortea de una
-          normal(media, σ) truncada a [<code>reaction_min</code>, <code>reaction_max</code>] y redondeada a 0.1 s. El
-          corte puede mover la media observada: con 1.5 ± 0.5 en [0.7, 3.0], la media real es ~1.56 s. Sin
-          <code>reaction_mean</code>, la media es el punto medio del rango. Con σ = 0, todos reaccionan en la media.
-          Opcionales; sin ellas, la reacción es uniforme.</td>
-        <td>min ≤ media ≤ max; σ ≥ 0; <code>reaction_mean</code> requiere <code>reaction_std</code>.</td></tr>
+      <tr><td><code>reaction</code></td><td class="num">{min = 1, max = 5}</td>
+        <td>Tiempo de reacción (s) de un vehículo detenido que queda libre: se puso verde o arrancó el de adelante.
+          Encadenado vehículo tras vehículo, produce el <strong>estiramiento</strong> del pelotón. Es un diccionario:
+          <ul>
+            <li><code>{min, max}</code>: uniforme en [<code>min</code>, <code>max</code>].</li>
+            <li><code>{min, max, mean, std}</code>: normal(<code>mean</code>, <code>std</code>) truncada a
+              [<code>min</code>, <code>max</code>] y redondeada a 0.1 s. El corte puede mover la media observada: con
+              1.5 ± 0.5 en [0.7, 3.0], la media real es ~1.56 s. Con <code>std = 0</code>, todos reaccionan en la
+              media.</li>
+          </ul>
+          Ejemplo: <code>reaction = {min = 0.7, max = 3, mean = 1.5, std = 0.5}</code>.</td>
+        <td>0 &lt; min ≤ max ≤ 600; <code>mean</code> y <code>std</code> van juntas; min ≤ mean ≤ max; std ≥ 0.</td></tr>
       <tr><td><code>lane_change_min</code>, <code>lane_change_max</code></td><td class="num">1.0, 4.0</td>
         <td>Rango (s) de la duración uniforme de la maniobra de cambio de carril. Mientras dura, el vehículo ocupa
           ambos carriles y comprime a los de atrás en los dos.</td><td>0 &lt; min ≤ max ≤ 600.</td></tr>
@@ -713,7 +731,7 @@ pax_std = 0.2</code></pre>
   <ul>
     <li><code>espacio_tiempo_&lt;inicio&gt;-&lt;fin&gt;s.png</code>: una línea por vehículo (posición contra tiempo),
       un panel por carril. La pendiente es la velocidad; un tramo horizontal, un vehículo detenido; el abanico al
-      ponerse verde muestra la reacción (<code>reaction_min</code>/<code>reaction_max</code>) y el estiramiento; las
+      ponerse verde muestra la reacción (<code>reaction</code>) y el estiramiento; las
       líneas juntas en la cola, la compresión (<code>gap_stop</code>). Quien cambia de carril aparece en los dos
       durante la maniobra.</li>
     <li><code>movimiento_&lt;inicio&gt;-&lt;fin&gt;s.webm</code> (o <code>.mp4</code>/<code>.gif</code> según

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from trafico.cli import CSV_NAME, PAX_PLOT_NAME, PLOT_NAME, SUMMARY_NAME, run
-from trafico.config import BUS, DEFAULT_SPECS, MAX_TYPES, SimConfig
+from trafico.config import BUS, DEFAULT_RATES, DEFAULT_SPECS, MAX_TYPES, Rate, SimConfig
 from trafico.settings import (
     CONFIG_NAME,
     ConfigError,
@@ -33,16 +33,13 @@ def _parse(text: str):
 
 SCOOTER = """
 [demand]
-scooter_rate = 6
+scooter_rate = {min = 6, max = 6, mean = 6, std = 0}
 [vehicles.scooter]
 speed_kmh = 25
-length = 1.5
+length = {min = 1.5, max = 1.5, mean = 1.5, std = 0}
 gap_run = 1.5
 gap_stop = 0.5
-pax_min = 1
-pax_max = 1
-pax_mean = 1
-pax_std = 0
+pax = {min = 1, max = 1, mean = 1, std = 0}
 """
 
 
@@ -76,9 +73,13 @@ def test_missing_keys_take_defaults_and_overrides_apply():
         ),
         ("[output]\ncsv = 1\n", "[output] csv debe ser true o false"),
         ("[road]\nlength = 10\n", "[road] length debe ser al menos"),
-        ("[demand]\ncar_rate = 0\nbike_rate = 0\nbus_rate = 0\n", "al menos un tipo"),
+        ("[demand]\ncar_rate = {min = 0, max = 0, mean = 0, std = 0}\nbike_rate = {min = 0, max = 0, mean = 0, std = 0}\nbus_rate = {min = 0, max = 0, mean = 0, std = 0}\n", "al menos un tipo"),
         ("[traffic_light]\nred = 12.35\n", "múltiplo de 0.1"),
-        ("[vehicles.car]\npax_mean = 9\n", "pax_mean debe estar entre"),
+        ("[vehicles.car]\npax = {min = 1, max = 6, mean = 9, std = 1}\n", "pax: mean debe estar entre min y max"),
+        ("[vehicles.car]\npax = {min = 1, max = 6, mean = 2}\n", "falta la clave obligatoria [vehicles.car.pax] std"),
+        ("[vehicles.car]\npax = {min = 1, max = 6.5, mean = 2, std = 1}\n", "[vehicles.car.pax] max debe ser"),
+        ("[vehicles.car]\npax = 2\n", "[vehicles.car] pax debe ser un diccionario"),
+        ("[vehicles.car]\npax_mean = 2\n", "los pasajeros van ahora en un diccionario"),
         ("[behavior]\ncongestion_factor = 1.0\n", "congestion_factor: cada valor debe estar en"),
         ("[behavior]\ncongestion_factor = [0.2, 1.0]\n", "congestion_factor: cada valor debe estar en"),
         ("[behavior]\ncongestion_factor = []\n", "congestion_factor debe ser un número o una lista"),
@@ -106,9 +107,9 @@ def test_new_vehicle_type_from_config_only():
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        (SCOOTER.replace("pax_std = 0\n", ""), "falta la clave obligatoria [vehicles.scooter] pax_std"),
-        (SCOOTER.replace("scooter_rate = 6\n", ""), "falta la clave obligatoria [demand] scooter_rate"),
-        ("[demand]\ntruck_rate = 2\n", "define también su sección [vehicles.truck]"),
+        (SCOOTER.replace("pax = {min = 1, max = 1, mean = 1, std = 0}\n", ""), "falta la clave obligatoria [vehicles.scooter] pax"),
+        (SCOOTER.replace("scooter_rate = {min = 6, max = 6, mean = 6, std = 0}\n", ""), "falta la clave obligatoria [demand] scooter_rate"),
+        ("[demand]\ntruck_rate = {min = 2, max = 2, mean = 2, std = 0}\n", "define también su sección [vehicles.truck]"),
         (SCOOTER + 'name = "bici"\n', "se repite bici"),
         ("[vehicles]\nscooter = 3\n", "debe ser una sección [vehicles.scooter]"),
     ],
@@ -150,6 +151,19 @@ def test_legacy_lanes_key_still_replicates_old_copies(lanes, expected):
     assert s.sim.lanes == lanes
     assert s.sim.lane_congestion == expected
     assert "[road] lanes está obsoleto" in s.notices[0]
+
+
+def test_removed_saturation_threshold_is_ignored_in_old_copies():
+    s = _parse("[output]\nsaturation_threshold = 0.9\n")
+    assert any("saturation_threshold se eliminó" in n for n in s.notices)
+
+
+def test_removed_slow_lane_key_is_ignored_in_old_copies():
+    """[demand] slow_lane se eliminó: con "right" (lo que se hace ahora) se ignora con un aviso; otro valor es error."""
+    s = _parse('[demand]\nslow_lane = "right"\n')
+    assert any("slow_lane se eliminó" in n for n in s.notices)
+    with pytest.raises(ConfigError, match="slow_lane se eliminó"):
+        _parse('[demand]\nslow_lane = "random"\n')
 
 
 def test_congestion_notice_when_list_does_not_match_lanes():
@@ -217,12 +231,10 @@ def test_leader_slowdown_setting():
 
 CARGA_TOML = """
 [demand]
-carga_rate = 1
+carga_rate = {min = 1, max = 1, mean = 1, std = 0}
 [vehicles.carga]
 speed_kmh = 40
-length = 10
-length_std = 2
-length_min = 8
+length = {min = 8, max = 16, mean = 10, std = 2}
 gap_run = 4
 gap_stop = 1.5
 cargo_prob = 1
@@ -230,25 +242,30 @@ cargo_prob = 1
 
 
 def test_cargo_type_and_variable_length():
-    carga = _parse(CARGA_TOML).sim.specs[-1]  # sin pax_*: solo lleva mercancía
+    carga = _parse(CARGA_TOML).sim.specs[-1]  # sin pax: solo lleva mercancía
     assert carga.cargo_prob == 1.0 and not carga.carries_passengers
     assert (carga.shortest, carga.length, carga.longest) == (8.0, 10.0, 16.0)
     assert _parse("[vehicles.car]\ncargo_prob = 0.2\n").sim.specs[0].cargo_prob == 0.2
     assert DEFAULT_SPECS[0].cargo_prob == 0 and DEFAULT_SPECS[0].longest == DEFAULT_SPECS[0].length
     for text, message in [
         (CARGA_TOML.replace("cargo_prob = 1", "cargo_prob = 0.5"),
-         "falta la clave obligatoria [vehicles.carga] pax_min"),
+         "falta la clave obligatoria [vehicles.carga] pax"),
         ("[vehicles.car]\ncargo_prob = 1.5\n", "[vehicles.car] cargo_prob debe estar entre 0 y 1"),
-        ("[vehicles.car]\nlength_std = -1\n", "[vehicles.car] length_std no puede ser negativo"),
-        ("[vehicles.car]\nlength_std = 1\nlength_min = 5\n", "[vehicles.car] requiere 0 < length_min ≤ length ≤ length_max"),
-        ("[vehicles.car]\nlength_std = 2\n", "[vehicles.car] requiere 0 < length_min"),  # 4.5 − 3·2 < 0
+        ("[vehicles.car]\nlength = {min = 4, max = 5, mean = 4.5, std = -1}\n", "[vehicles.car] length: std no puede ser negativa"),
+        ("[vehicles.car]\nlength = {min = 5, max = 6, mean = 4.5, std = 1}\n", "[vehicles.car] length: debe cumplirse 0 < min ≤ mean ≤ max"),
+        ("[vehicles.car]\nlength = {min = 0, max = 6, mean = 4.5, std = 1}\n", "[vehicles.car] length: debe cumplirse 0 < min"),
+        ("[vehicles.car]\nlength = {min = 4, max = 5, mean = 4.5}\n", "falta la clave obligatoria [vehicles.car.length] std"),
+        ("[vehicles.car]\nlength = 4.5\n", "[vehicles.car] length debe ser un diccionario"),
+        ("[vehicles.car]\nlength_std = 2\n", "el largo va ahora en un diccionario"),
+        (SCOOTER.replace("length = {min = 1.5, max = 1.5, mean = 1.5, std = 0}\n", ""),
+         "falta la clave obligatoria [vehicles.scooter] length"),
     ]:  # fmt: skip
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
 
 
 def test_summary_reports_cargo_share(root):
-    text = FAST + CARGA_TOML.replace("carga_rate = 1", "carga_rate = 30") + "[vehicles.car]\ncargo_prob = 0.3\n"
+    text = FAST + CARGA_TOML.replace("carga_rate = {min = 1, max = 1, mean = 1, std = 0}", "carga_rate = {min = 30, max = 30, mean = 30, std = 0}") + "[vehicles.car]\ncargo_prob = 0.3\n"
     (root / CONFIG_NAME).write_text(text, encoding="utf-8")
     summary = (run([]) / SUMMARY_NAME).read_text()
     row = next(line for line in summary.splitlines() if line.startswith("Con mercancía (%)"))
@@ -272,17 +289,22 @@ def test_initial_occupancy_setting():
 
 
 def test_reaction_time_settings():
-    b = _parse("[behavior]\nreaction_min = 0.7\nreaction_max = 3\nreaction_mean = 1.5\nreaction_std = 0.5\n").sim.behavior
+    b = _parse("[behavior]\nreaction = {min = 0.7, max = 3, mean = 1.5, std = 0.5}\n").sim.behavior
     assert (b.reaction_min, b.reaction_max, b.reaction_mean, b.reaction_std) == (0.7, 3.0, 1.5, 0.5)
+    b = _parse("[behavior]\nreaction = {min = 0.7, max = 3}\n").sim.behavior  # sin mean ni std: uniforme
+    assert (b.reaction_min, b.reaction_max, b.reaction_mean, b.reaction_std) == (0.7, 3.0, None, None)
     assert _parse("").sim.behavior.reaction_std is None  # por defecto, uniforme
     for text, message in [
-        ("[behavior]\nreaction_mean = 2\n", "[behavior] reaction_mean requiere reaction_std"),
-        ("[behavior]\nreaction_std = -1\n", "[behavior] reaction_std no puede ser negativo"),
-        ("[behavior]\nreaction_mean = 9\nreaction_std = 1\n",
-         "[behavior] reaction_mean debe estar entre reaction_min y reaction_max"),
+        ("reaction = {min = 1, max = 3, mean = 2}", "[behavior] reaction: mean y std van juntas"),
+        ("reaction = {min = 1, mean = 2, std = 1}", "falta la clave obligatoria [behavior.reaction] max"),
+        ("reaction = {min = 1, max = 3, mean = 2, std = -1}", "[behavior] reaction: std no puede ser negativa"),
+        ("reaction = {min = 1, max = 3, mean = 9, std = 1}", "[behavior] reaction: mean debe estar entre min y max"),
+        ("reaction = {min = 3, max = 1}", "[behavior] reaction: debe cumplirse 0 < min ≤ max ≤ 600"),
+        ("reaction = 2", "[behavior] reaction debe ser un diccionario"),
+        ("reaction_min = 2", "la reacción va ahora en un diccionario"),
     ]:  # fmt: skip
         with pytest.raises(ConfigError, match=re.escape(message)):
-            _parse(text)
+            _parse(f"[behavior]\n{text}\n")
 
 
 def test_bottleneck_settings():
@@ -326,7 +348,7 @@ def test_bottleneck_per_type_settings():
 def test_vehicle_type_limit():
     keys = [f"s{i}" for i in range(MAX_TYPES - len(DEFAULT_SPECS) + 1)]
     vehicle = SCOOTER[SCOOTER.index("[vehicles.scooter]") :]
-    text = "[demand]\n" + "".join(f"{k}_rate = 1\n" for k in keys)
+    text = "[demand]\n" + "".join(f"{k}_rate = {{min = 1, max = 1, mean = 1, std = 0}}\n" for k in keys)
     text += "".join(vehicle.replace("scooter", k) for k in keys)
     with pytest.raises(ConfigError, match=f"hasta {MAX_TYPES} tipos"):
         _parse(text)
@@ -473,7 +495,7 @@ def test_exclusive_lanes():
             _parse(text)
     # Sin autos ni tipos sin carril fijo que participen, todos los carriles pueden ser exclusivos.
     _parse(
-        "[road]\nmax_line_speed = [40, 40]\n[demand]\ncar_rate = 0\n[vehicles.bike]\nlane = 0\nexclusive = true\n"
+        "[road]\nmax_line_speed = [40, 40]\n[demand]\ncar_rate = {min = 0, max = 0, mean = 0, std = 0}\n[vehicles.bike]\nlane = 0\nexclusive = true\n"
         "[vehicles.bus]\nlane = 1\nexclusive = true\n"
     )
 
@@ -491,3 +513,28 @@ def test_bus_stop_settings():
     ]:
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
+
+
+def test_rate_is_a_dictionary():
+    s = _parse("[demand]\nrate_interval = 30\ncar_rate = {min = 1, max = 20, mean = 15, std = 5}\n")
+    assert s.sim.rate(0) == Rate(1.0, 20.0, 15.0, 5.0) and s.sim.rate_interval == 30.0
+    assert s.sim.rates[0] == pytest.approx(Rate(1, 20, 15, 5).expected)
+    assert s.sim.rate(1) == Rate.fixed(DEFAULT_RATES[1])  # sin la clave: la fija por defecto
+
+
+@pytest.mark.parametrize(
+    ("demand", "message"),
+    [
+        ("car_rate = 15", "car_rate debe ser un diccionario"),
+        ("car_rate = {min = 1, max = 20, mean = 15}", "falta la clave obligatoria [demand.car_rate] std"),
+        ('car_rate = {min = 1, max = "20", mean = 15, std = 5}', "[demand.car_rate] max debe ser"),
+        ("car_rate = {min = 1, max = 20, mean = 15, std = 5, avg = 3}", "claves desconocidas: [demand.car_rate] avg"),
+        ("car_rate = {min = 10, max = 20, mean = 25, std = 5}", "0 ≤ min ≤ mean ≤ max"),
+        ("car_rate = {min = 1, max = 20, mean = 15, std = -1}", "std no puede ser negativa"),
+        ("rate_interval = 0.05", "rate_interval debe ser"),
+        ("rate_interval = 30.05", "rate_interval debe ser múltiplo"),
+    ],
+)
+def test_invalid_rates(demand, message):
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        _parse(f"[demand]\n{demand}\n")

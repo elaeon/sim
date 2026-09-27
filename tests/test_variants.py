@@ -66,7 +66,7 @@ def test_light_names_and_default_splits():
 def root(tmp_path, monkeypatch):
     monkeypatch.setattr("trafico.settings.project_root", lambda: tmp_path)
     (tmp_path / CONFIG_NAME).write_text(
-        "[road]\nmax_line_speed = [20, 30, 50]\n[demand]\ncar_rate = 30\nbike_rate = 8\nbus_rate = 1\n"
+        "[road]\nmax_line_speed = [20, 30, 50]\n[demand]\ncar_rate = {min = 30, max = 30, mean = 30, std = 0}\nbike_rate = {min = 8, max = 8, mean = 8, std = 0}\nbus_rate = {min = 1, max = 1, mean = 1, std = 0}\n"
         "[vehicles.bike]\nlane = 0\nexclusive = true\n[execution]\nrun = 2\nreplicas = 3\nworkers = 2\nseed = 7\n"
         "[output]\nprogress = false\n",
         encoding="utf-8",

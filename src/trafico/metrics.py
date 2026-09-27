@@ -13,6 +13,7 @@ LANE_SPEED = "lane_speed"
 """Serie con una columna por carril: velocidad media (km/h) de sus vehículos, con los detenidos."""
 LANE_SERIES = (LANE_SATURATION, LANE_SPEED)
 SMOOTH_S = 10.0  # s de la media móvil de pax·km/h
+SPEED_BIN = 0.5  # km/h, ancho de los intervalos del histograma de velocidad por carril
 """Series derivadas que se agregan y grafican (una columna por tipo de vehículo)."""
 
 
@@ -82,6 +83,25 @@ def derive_series(rec: Recorder, cfg: SimConfig) -> dict[str, np.ndarray]:
         LANE_SATURATION: rec.lane_sat.copy(),
         LANE_SPEED: lane_speed.astype(np.float32),
     }
+
+
+def speed_bin_count(cfg: SimConfig) -> int:
+    """Intervalos de SPEED_BIN km/h desde 0 hasta la velocidad máxima de cualquier tipo."""
+    return int(np.ceil(max(s.speed_kmh for s in cfg.specs) / SPEED_BIN)) + 1
+
+
+def lane_speed_histogram(rec: Recorder, cfg: SimConfig) -> np.ndarray:
+    """(carriles, intervalos): cuántas muestras de la réplica tuvo cada carril en cada intervalo de
+    velocidad media (distancia / tiempo de sus vehículos en el intervalo de muestreo, con los
+    detenidos). Solo cuentan las muestras con vehículos en el carril."""
+    n_bins = speed_bin_count(cfg)
+    dist, time = rec.lane_dist[: rec.count], rec.lane_time[: rec.count]
+    out = np.zeros((cfg.lanes, n_bins), np.int64)
+    for lane in range(cfg.lanes):
+        present = time[:, lane] > 0
+        speed = dist[present, lane] / time[present, lane] * 3.6
+        out[lane] = np.bincount(np.minimum((speed / SPEED_BIN).astype(np.int64), n_bins - 1), minlength=n_bins)
+    return out
 
 
 class RunningStats:

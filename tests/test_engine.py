@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from trafico.config import (
-    BIKE, BUS, CAR, DEFAULT_SPECS, DT, GREEN, RED, YELLOW, Behavior, Bottleneck, SimConfig, VehicleSpec,
+    BIKE, BUS, CAR, DEFAULT_SPECS, DT, GREEN, RED, YELLOW, Behavior, Bottleneck, Rate, SimConfig, VehicleSpec,
 )  # fmt: skip
 from trafico.engine import Simulation
 
@@ -122,7 +122,7 @@ def test_invariants_every_step(lanes, extra, separate, congestion, bus_stop, abr
             assert sim.cum_veh.sum() == crossed_before, "cruzó en rojo"
         slow = ~sim.can_change[sim.vtype[:n]]
         assert np.all(sim.lc_target[:n][slow] == -1)
-        fixed = np.array([s.lane if s.lane is not None else 0 for s in specs])  # slow_lane = "right"
+        fixed = np.array([s.lane if s.lane is not None else 0 for s in specs])  # sin lane: el carril derecho
         assert np.all(sim.lane[:n][slow] == fixed[sim.vtype[:n][slow]])
     _check_conservation(sim)
     assert sim.cum_veh.sum() > 0
@@ -329,18 +329,16 @@ def test_free_flow_speed_respects_lane_limits():
     cfg = SimConfig(lanes=3, lane_speed_limit=(30.0, 10.0, 45.0), specs=specs)
     assert cfg.free_flow_kmh(CAR) == 45.0  # puede cambiar: el mejor carril (45 < 50)
     assert cfg.free_flow_kmh(BIKE) == 10.0  # fijo en el carril 1
-    assert cfg.free_flow_kmh(BUS) == 30.0  # slow_lane right: carril 0
+    assert cfg.free_flow_kmh(BUS) == 30.0  # no cambia de carril y no tiene lane: carril 0
 
 
-@pytest.mark.parametrize("slow_lane", ["right", "random"])
-def test_exclusive_lanes_are_only_used_by_their_types(slow_lane):
+def test_exclusive_lanes_are_only_used_by_their_types():
     """Bicis (carril 0) y autobuses (carril 1) exclusivos: autos y motos nunca los ocupan, ni al
     entrar ni durante un cambio de carril; el tranvía sin carril fijo usa solo los libres."""
     car, bike, bus = DEFAULT_SPECS
     specs = (car, replace(bike, lane=0, exclusive=True), replace(bus, lane=1, exclusive=True), *EXTRA_TYPES)
     cfg = SimConfig(
         length=150, lanes=4, rates=(30, 8, 2, 10, 1), red=20, green=15, run=30, specs=specs,
-        slow_lane=slow_lane,
     )  # fmt: skip
     assert cfg.allowed_lanes(0) == (2, 3) and cfg.allowed_lanes(1) == (0,) and cfg.allowed_lanes(4) == (2, 3)
     sim = Simulation(cfg, np.random.default_rng(3))
@@ -357,8 +355,7 @@ def test_exclusive_lanes_are_only_used_by_their_types(slow_lane):
                 used[t, ln] = True
     assert not (used & ~sim.allowed).any()
     assert used[0, 2] and used[0, 3] and sim.lane_changes > 0
-    if slow_lane == "right":
-        assert not used[4, 3]  # el tranvía entra por el carril libre más a la derecha
+    assert not used[4, 3]  # el tranvía entra por el carril libre más a la derecha
 
 
 def test_non_exclusive_fixed_lane_is_shared():
@@ -882,3 +879,63 @@ def test_no_entry_queue_wait_on_an_empty_road():
     sim = Simulation(SimConfig(length=300, lanes=2, rates=(6, 2, 0), red=10, green=50, run=5), np.random.default_rng(0))
     sim.run()
     assert sim.queue_wait_ticks.sum() == 0 and sim.summary()["queue_wait"][CAR] == 0
+
+
+def test_mean_speed_is_free_flow_on_an_empty_road_in_green():
+    """Sin tráfico y en verde, la velocidad media de cada tipo es la de flujo libre; un tipo que no
+    participa queda sin dato."""
+    cfg = SimConfig(length=300, lanes=2, rates=(3, 0, 0), red=0.1, green=100, start_phase="green", run=9)
+    sim = Simulation(cfg, np.random.default_rng(1))
+    sim.run()
+    speed = sim.summary()["mean_speed"]
+    assert speed[CAR] == pytest.approx(cfg.free_flow_kmh(CAR), rel=1e-6)
+    assert np.isnan(speed[BIKE]) and np.isnan(speed[BUS])
+
+
+def test_mean_speed_counts_stopped_time():
+    """La velocidad media es distancia / tiempo dentro del tramo, con el tiempo detenido en el rojo."""
+    cfg = SimConfig(length=150, lanes=2, rates=(20, 0, 0), red=40, green=10, run=10)
+    sim = Simulation(cfg, np.random.default_rng(2))
+    sim.run()
+    speed = sim.summary()["mean_speed"][CAR]
+    assert speed == pytest.approx(sim.type_dist[CAR] / sim.type_time[CAR] * 3.6)
+    assert 0 < speed < 0.5 * cfg.free_flow_kmh(CAR)
+
+
+def test_fixed_rate_dicts_give_the_same_run_as_plain_rates():
+    """Una tasa con std = 0 no consume sorteos: la corrida es idéntica a la de la tasa fija."""
+    base = SimConfig(length=150, lanes=2, rates=(20, 5, 1), red=20, green=20, run=5)
+    dists = replace(base, rate_dists=(Rate.fixed(20), Rate(3, 9, 5, 0), Rate.fixed(1)))
+    assert dists.rates == base.rates
+    a, b = Simulation(base, np.random.default_rng(4)), Simulation(dists, np.random.default_rng(4))
+    a.run()
+    b.run()
+    for key, value in a.summary().items():
+        np.testing.assert_array_equal(value, b.summary()[key], err_msg=key)
+
+
+def test_variable_rate_is_redrawn_every_interval():
+    """Cada intervalo sortea su tasa en [min, max]; las llegadas del intervalo siguen esa tasa."""
+    rate = Rate(min=10, max=110, mean=60, std=40)
+    cfg = SimConfig(length=150, lanes=2, rates=(0, 0, 0), rate_dists=(rate, Rate.fixed(0), Rate.fixed(0)),
+                    rate_interval=30, red=10, green=50, run=24)  # fmt: skip
+    sim = Simulation(cfg, np.random.default_rng(5))
+    per_min = sim.rate_by_interval[CAR] * 60.0 / DT
+    assert per_min.size == 8 and np.all((per_min >= 10) & (per_min <= 110)) and np.ptp(per_min) > 20
+    assert BIKE not in sim.rate_by_interval
+    counts = []
+    for _ in range(per_min.size):
+        before = sim.arrived_veh[CAR]
+        for _ in range(cfg.rate_ticks):
+            sim.step()
+        counts.append(sim.arrived_veh[CAR] - before)
+    expected = per_min * cfg.rate_interval / 60.0
+    assert np.corrcoef(counts, expected)[0, 1] > 0.9
+
+
+def test_rate_expected_is_the_truncated_mean():
+    assert Rate.fixed(4).expected == 4
+    assert Rate(0, 20, 10, 5).expected == pytest.approx(10)  # simétrica
+    draws = np.random.default_rng(0).normal(15, 5, 2_000_000)
+    draws = draws[(draws >= 1) & (draws <= 20)]
+    assert Rate(1, 20, 15, 5).expected == pytest.approx(draws.mean(), abs=0.01)
