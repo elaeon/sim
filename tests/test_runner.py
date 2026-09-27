@@ -110,7 +110,7 @@ def test_lane_speed_histogram_counts_only_samples_with_vehicles():
     zeros = np.zeros(cfg.n_types)
     # Carril 0: 10 m en 1 vehículo·s = 36 km/h, luego detenidos (0 km/h). Carril 1: vacío salvo una muestra.
     for dist, time in (([10, 0], [1, 0]), ([0, 0], [2, 0]), ([0, 5], [0, 1]), ([0, 0], [0, 0])):
-        rec.record(zeros, zeros, zeros, zeros, np.zeros(2), np.array(dist, float), np.array(time, float))
+        rec.record(zeros, zeros, zeros, zeros, np.zeros(2), np.array(dist, float), np.array(time, float), np.zeros(2), np.zeros(2), np.zeros(2))
     hist = lane_speed_histogram(rec, cfg)
     assert hist[0].sum() == 2 and hist[0, 0] == 1 and hist[0, int(36 / SPEED_BIN)] == 1
     assert hist[1].sum() == 1 and hist[1, int(18 / SPEED_BIN)] == 1

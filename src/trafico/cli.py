@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from trafico.config import DT, MAX_TYPES
-from trafico.metrics import LANE_SATURATION, LANE_SPEED, SERIES
+from trafico.metrics import ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, LANE_SPEED, SERIES
 from trafico.runner import Aggregate, run_parallel
 from trafico.settings import (
     CONFIG_NAME,
@@ -84,7 +84,7 @@ def format_summary(agg: Aggregate) -> str:
         ("Pax/m de carril en marcha", s["pax_per_veh"] / footprint, 2),
         ("T. recorrido medio (s)", s["travel_time"], 1),
         ("T. medio en cola de entrada (s)", s["queue_wait"], 1),
-        ("T. a flujo libre (s)", np.array([cfg.length / (cfg.free_flow_kmh(k) / 3.6) + sp.expected_stop_time
+        ("T. a flujo libre (s)", np.array([cfg.free_flow_time(k) + sp.expected_stop_time
                                            for k, sp in enumerate(cfg.specs)]), 1),
         ("Velocidad media (km/h)", s["mean_speed"], 1),
         ("En el tramo al final", s["on_road"], 1),
@@ -99,6 +99,12 @@ def format_summary(agg: Aggregate) -> str:
     if cfg.bottleneck_active:
         rows.append(("Detenciones (bottleneck)", s["bottleneck_stops"], 1))
         rows.append(("T. medio detenido (s)", s["bottleneck_time"], 1))
+    passers = np.array([sp.pass_in_lane for sp in cfg.specs])
+    if passers[active].any():
+        # Rebases dentro del carril por vehículo que entró; «—» para los tipos que no rebasan así.
+        per_veh = np.divide(s["in_lane_passes"], s["entered_veh"], out=np.full(cfg.n_types, np.nan),
+                            where=passers & (s["entered_veh"] > 0))  # fmt: skip
+        rows.append(("Rebases en el carril/veh", per_veh, 2))
     if any(cfg.specs[k].cargo_prob > 0 for k in active):
         # Los de mercancía cuentan como vehículos, pero no en las filas de pasajeros.
         cargo = np.divide(100.0 * s["arrived_cargo"], s["arrived_veh"], out=np.full(cfg.n_types, np.nan),
@@ -110,8 +116,14 @@ def format_summary(agg: Aggregate) -> str:
     lines = ["", " " * w0 + "".join(f"{cfg.specs[k].name:>{widths[k]}}" for k in active)]
     for label, values, digits in rows:
         lines.append(f"{label:<{w0}}" + "".join(f"{_fmt(values[k], digits):>{widths[k]}}" for k in active))
+    minutes_run = cfg.sim_seconds / 60.0
+    lines += ["", "Cruzan el semáforo por carril (veh/min): " + " · ".join(
+        f"{lane}: {_fmt(v / minutes_run)}" for lane, v in enumerate(s["lane_crossed"]))]  # fmt: skip
+    if any(c > 0 for c in cfg.lane_exit_capacity):
+        lines.append("Línea cerrada por la cola de salida (% del tiempo, el siguiente no cabe): " + " · ".join(
+            f"{lane}: {_fmt(100 * v)}" for lane, v in enumerate(s["exit_blocked"])
+            if cfg.lane_exit_capacity[lane] > 0))  # fmt: skip
     lines += [
-        "",
         f"Cambios de carril por réplica: {_fmt(s['lane_changes'][0])}",
         f"Tiempo de proceso nominal: {cfg.run:g} s ≙ {cfg.sim_seconds:g} s simulados "
         f"({cfg.n_ticks:,} pasos de {DT} s)",
@@ -132,7 +144,13 @@ def write_csv(agg: Aggregate, path: Path) -> None:
         for k, sp in enumerate(cfg.specs):
             cols += [mean[:, k], std[:, k]]
             header += [f"{key}_{sp.name}_media", f"{key}_{sp.name}_sd"]
-    for key, label in ((LANE_SATURATION, "saturacion"), (LANE_SPEED, "velocidad_kmh")):
+    lane_series = [
+        (LANE_SATURATION, "saturacion"), (LANE_SPEED, "velocidad_kmh"), (LANE_EXIT_FLOW, "cruzan_veh_min"),
+        (ENTRY_QUEUE, "cola_entrada_veh"),
+    ]  # fmt: skip
+    if any(c > 0 for c in cfg.lane_exit_capacity):
+        lane_series.append((EXIT_QUEUE, "cola_salida_m"))
+    for key, label in lane_series:
         stats = agg.series[key]
         for lane in range(cfg.lanes):
             cols += [stats.mean[:, lane], stats.std[:, lane]]
@@ -141,11 +159,14 @@ def write_csv(agg: Aggregate, path: Path) -> None:
 
 
 def _lane_lines(cfg) -> list[str]:
-    """Límite de velocidad y factor de congestión de cada carril."""
+    """Límite de velocidad, carriles sin semáforo, paradas y demás ajustes por carril o por tipo."""
     lines = []
     if cfg.lane_speed_limit is not None:
         limits = " · ".join(f"{i}: {v:g}" for i, v in enumerate(cfg.lane_max_kmh))
         lines.append(f"Límite de velocidad por carril (km/h, 0 = derecho): {limits}")
+    free = [f"{sp.name} (carril {sp.lane})" for k, sp in enumerate(cfg.specs) if cfg.ignores_light(k) and cfg.rates[k] > 0]
+    if free:
+        lines.append("Sin semáforo, siguen en rojo y en amarillo (carril exclusivo en free_lanes): " + ", ".join(free))
     stops = [
         f"{sp.name} a {sp.stop_position:g} m, {sp.stop_time_mean:g} ± {sp.stop_time_std:g} s"
         for k, sp in enumerate(cfg.specs) if sp.stop_position is not None and cfg.rates[k] > 0
@@ -156,6 +177,10 @@ def _lane_lines(cfg) -> list[str]:
     if variable:
         lines.append(f"Demanda variable (veh/min, nueva tasa cada {cfg.rate_interval:g} s): " + " · ".join(
             f"{name} {r.mean:g} ± {r.std:g} en [{r.min:g}, {r.max:g}], media {r.expected:.3g}" for name, r in variable))
+    speeds = [sp for k, sp in enumerate(cfg.specs) if sp.speed_std > 0 and cfg.rates[k] > 0]
+    if speeds:
+        lines.append("Velocidad máxima variable (km/h, sorteada por vehículo): " + " · ".join(
+            f"{sp.name} {sp.speed_kmh:g} ± {sp.speed_std:g} en [{sp.slowest_kmh:g}, {sp.fastest_kmh:g}]" for sp in speeds))
     reserved = sorted(cfg.reserved_lanes)
     if reserved:
         owners = {ln: [s.name for s in cfg.specs if s.lane == ln] for ln in reserved}
@@ -172,28 +197,18 @@ def _lane_lines(cfg) -> list[str]:
     if any(occupancy):
         lines.append("Condición inicial, ocupación por carril (0 = derecho): "
                      + " · ".join(f"{i}: {100 * v:g} %" for i, v in enumerate(occupancy)))  # fmt: skip
-    return lines + _congestion_lines(cfg)
-
-
-def _congestion_lines(cfg) -> list[str]:
-    """Factor de congestión por carril y, si la lista no coincide con los carriles, cómo se ajustó."""
-    by_lane = cfg.lane_congestion
-    if not any(by_lane):
-        return []
-    lines = ["Congestión por carril (0 = derecho): " + " · ".join(f"{i}: {v:g}" for i, v in enumerate(by_lane))]
-    given = cfg.behavior.congestion_factor
-    if isinstance(given, tuple) and len(given) != cfg.lanes:
-        if len(given) < cfg.lanes:
-            lines.append(
-                f"Aviso: congestion_factor tiene {len(given)} valores para {cfg.lanes} carriles; "
-                f"los carriles {len(given)}–{cfg.lanes - 1} usan el último ({given[-1]:g})"
-            )
-        else:
-            ignored = ", ".join(f"{v:g}" for v in given[cfg.lanes :])
-            lines.append(
-                f"Aviso: congestion_factor tiene {len(given)} valores para {cfg.lanes} carriles; "
-                f"se ignoran los sobrantes ({ignored})"
-            )
+    gradual = [sp for k, sp in enumerate(cfg.specs) if cfg.rates[k] > 0 and (sp.accel or sp.decel)]
+    if gradual:
+        def fmt(v):
+            return "—" if v is None else f"{v:g}"
+        lines.append("Aceleración / frenado graduales (m/s², — = instantáneo): " + " · ".join(
+            f"{sp.name} {fmt(sp.accel)} / {fmt(sp.decel)}" for sp in gradual))  # fmt: skip
+    if any(c > 0 for c in cfg.lane_exit_capacity):
+        lines.append("Cola de salida por carril (acepta veh/min, mide m): " + " · ".join(
+            f"{lane}: " + (f"{c:g}/min, {st:g} m" if c > 0 else "sin límite")
+            for lane, (c, st) in enumerate(zip(cfg.lane_exit_capacity, cfg.lane_exit_storage))))  # fmt: skip
+    if cfg.behavior.queue_reaction:
+        lines.append("Cola de entrada detenida: cada vehículo arranca con su tiempo de reacción ([behavior] queue_reaction)")
     return lines
 
 

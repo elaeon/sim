@@ -3,7 +3,9 @@ import numpy as np
 from trafico.config import BIKE, BUS, CAR, DEFAULT_SPECS, DT
 from trafico.config import VehicleSpec
 from trafico.config import Behavior
-from trafico.distributions import passenger_pmf, reaction_ticks, sample_lengths, sample_passengers, uniform_ticks
+from trafico.distributions import (
+    passenger_pmf, reaction_ticks, sample_lengths, sample_passengers, sample_speeds, uniform_ticks,
+)  # fmt: skip
 
 
 def test_passengers_within_bounds_and_means():
@@ -56,6 +58,18 @@ def test_lengths_truncated_normal():
     assert abs(lengths.mean() - 10.57) < 0.02
     fixed = sample_lengths(np.random.default_rng(0), DEFAULT_SPECS[CAR], 10)
     np.testing.assert_array_equal(fixed, 4.5)
+
+
+def test_speeds_truncated_normal():
+    """Velocidad máxima normal(70, 10) truncada a [60, 90]: la media sube a ≈ 72.3 km/h por el corte en 60."""
+    spec = VehicleSpec("car", "auto", 70.0, 4.5, 4.0, 1.0, 1, 6, 1.5, 0.8, True,
+                       speed_std=10.0, speed_min=60.0, speed_max=90.0)  # fmt: skip
+    assert (spec.slowest_kmh, spec.fastest_kmh) == (60.0, 90.0)
+    speeds = sample_speeds(np.random.default_rng(0), spec, 200_000)
+    assert speeds.min() >= 60.0 and speeds.max() <= 90.0
+    assert abs(speeds.mean() - 72.3) < 0.1
+    fixed = sample_speeds(np.random.default_rng(0), DEFAULT_SPECS[CAR], 10)
+    np.testing.assert_array_equal(fixed, DEFAULT_SPECS[CAR].speed_kmh)
 
 
 def test_reaction_uniform_without_std():

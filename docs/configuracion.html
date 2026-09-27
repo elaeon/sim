@@ -123,6 +123,7 @@
   <a href="#traffic_light">[traffic_light]</a>
   <a href="#demand">[demand]</a>
   <a href="#initial">[initial]</a>
+  <a href="#exit">[exit]</a>
   <a href="#bottleneck">[bottleneck]</a>
   <a href="#execution">[execution]</a>
   <a href="#output">[output]</a>
@@ -152,8 +153,11 @@ uv run trafico-variantes --largos 50 150 300 --semaforos 40/20 30/30 20/40 --car
     <li>Cada corrida crea <code>resultados/&lt;AAAAMMDD-HHMMSS&gt;_&lt;nombre&gt;/</code> con la gráfica, el
       resumen, las series y una copia de la configuración usada. Esa copia registra la semilla y el nombre,
       así que basta para replicar la corrida con resultados idénticos.</li>
-    <li>La gráfica tiene cinco paneles: tres por tipo de vehículo (pasajeros acumulados, flujo de pasajeros y
-      pasajeros por metro de carril) y dos por carril: la saturación en el tiempo y la velocidad media como
+    <li>La gráfica tiene seis filas de paneles: dos por tipo de vehículo (pasajeros acumulados y flujo de pasajeros;
+      los pasajeros por metro de carril ocupado ya no se grafican, pero siguen en <code>series.csv</code> como
+      <code>pax_per_m</code>) y cuatro por carril: la saturación en el tiempo, los vehículos que cruzan el
+      semáforo contra la capacidad de su cola de salida (ver <a href="#exit">[exit]</a>), la cola de entrada al tramo
+      junto a la cola de salida (dos paneles lado a lado, cada uno con su escala) y la velocidad media como
       <strong>violín</strong>. Cada violín muestra la distribución de la velocidad media del carril (distancia entre
       tiempo de sus vehículos, con los detenidos) en todas las muestras de todas las réplicas en que el carril tenía
       vehículos. Adentro lleva el rango intercuartil (barra) y la mediana (punto), y el rótulo del carril da la
@@ -163,8 +167,41 @@ uv run trafico-variantes --largos 50 150 300 --semaforos 40/20 30/30 20/40 --car
       pero siguen en <code>series.csv</code>.</li>
     <li><code>resumen.txt</code> incluye la fila «Velocidad media (km/h)» de cada tipo: la distancia recorrida dentro
       del tramo entre el tiempo que sus vehículos pasaron en él durante toda la corrida, contando el tiempo detenidos
-      (semáforo, parada, bottleneck, congestión) y sin contar la espera en la cola de entrada. Incluye a los que llevan
+      (semáforo, parada, bottleneck, cola de salida) y sin contar la espera en la cola de entrada. Incluye a los que llevan
       mercancía. Compárala con la velocidad máxima del tipo para ver cuánto lo frena el tramo.</li>
+    <li><code>[vehicles.&lt;clave&gt;] speed_kmh</code> es ahora un diccionario <code>{min, max, mean, std}</code>, como
+      <code>length</code>: cada vehículo sortea su velocidad máxima. Con velocidad variable, la cabecera de la corrida
+      muestra la línea «Velocidad máxima variable» y las líneas de referencia del violín dan la media y el rango
+      (p. ej. «auto 75 (60–90)»). Con <code>std = 0</code> los resultados son los mismos que con el número suelto.</li>
+    <li>Las bicis pueden rebasar dentro de su carril: con <code>[vehicles.bike] pass_in_lane = true</code> (requiere
+      <code>abreast</code> ≥ 2) y velocidades variables, la más rápida rebasa a la más lenta por un lado. Sin
+      <code>pass_in_lane</code>, o con todas a la misma velocidad, los resultados no cambian.</li>
+    <li><code>[vehicles.&lt;clave&gt;] accel</code> y <code>decel</code> (m/s²): aceleración y frenado graduales con
+      anticipación. Sin ellos, los cambios de velocidad siguen siendo instantáneos y los resultados no cambian. Con
+      ellos la cola arranca más despacio (en la prueba de seis autos, ~1.7 s entre autos en vez de 1.5 s, y el
+      primero pierde ~1.5 s más) y la cabecera de la corrida lo indica.</li>
+    <li>Nueva sección <a href="#exit"><code>[exit]</code></a>: cola de salida por carril después del semáforo con
+      capacidad (veh/min) y largo (<code>storage</code>, en m); si el siguiente vehículo no cabe, cierra la línea de ese
+      carril y lo satura. Por defecto
+      <code>capacity = 0</code> (sin cola de salida, resultados iguales). La gráfica agrega un panel por carril con los
+      vehículos que cruzan la línea contra la capacidad de su cola de salida, y otra fila con la cola de entrada al
+      tramo junto a la cola de salida. El video muestra, a la derecha de cada carril con cola de salida, los m
+      ocupados contra lo que mide.</li>
+    <li>Se eliminó <code>[behavior] congestion_factor</code>. Frenaba a quienes avanzan en proporción a la cola de
+      detenidos de todo el carril, incluso a los que iban delante de ella, y dependía de <code>length</code>. En la
+      práctica casi no cambiaba los resultados (en la configuración de Insurgentes, 661 autos con el factor contra 661
+      sin él; la descarga de la cola, idéntica), y lo que pretendía representar ya lo hacen la dinámica gradual
+      (<code>accel</code>/<code>decel</code>), la reacción en cadena y <code>queue_reaction</code>. Las copias
+      anteriores la traen: se ignora con un aviso, y si es una lista sigue contando para el número de carriles. El
+      panel de saturación ya no muestra el factor, y el rebase compara solo velocidades reales.</li>
+    <li>Nueva clave <a href="#traffic_light"><code>[traffic_light] free_lanes</code></a>: carriles sin semáforo (p. ej.
+      una vuelta continua). Solo aplica a los tipos con carril exclusivo en ellos: siguen en rojo y no bajan la
+      velocidad en amarillo. La cabecera de la corrida lista esos tipos. <code>trafico-variantes --carriles</code> conserva también la cola de salida y los carriles
+      sin semáforo de los carriles elegidos.</li>
+    <li><code>[behavior] queue_reaction = true</code>: la cola de entrada detenida arranca con tiempo de reacción,
+      como el resto de la cola, en vez de entrar ya en marcha. Corrige el flujo de más en tramos más cortos que la
+      cola. Por defecto <code>false</code> (los resultados anteriores no cambian); la cabecera de la corrida indica
+      cuando está activa.</li>
     <li><code>distribucion_pasajeros.png</code> muestra, para cada tipo que participa, el porcentaje de vehículos
       con cada número de pasajeros: todos los que llegaron durante la simulación, sumando las réplicas, con su media
       observada. Una línea escalonada marca la distribución esperada según el <code>pax</code> configurado (la
@@ -192,7 +229,7 @@ uv run trafico-variantes --redibujar resultados/&lt;ID&gt;_variantes_semaforo</c
         configuración. Hasta 8.</td><td>Rojo 2/3, 1/2 y 1/3 del ciclo rojo + verde (con 30/30: 40/20, 30/30,
         20/40)</td></tr>
       <tr><td><code>--carriles N …</code></td><td>Carriles de la configuración que se conservan, renumerados desde 0 en
-        ese orden. Cada uno se lleva su límite de velocidad, su factor de congestión, su ocupación inicial y, si está en
+        ese orden. Cada uno se lleva su límite de velocidad, su ocupación inicial, su cola de salida y, si está en
         <code>[bottleneck] stop_lanes</code>, sus detenciones.</td><td>Todos</td></tr>
       <tr><td><code>--sin CLAVE …</code></td><td>Tipos de vehículo que no participan (tasa 0). Pierden su carril fijo,
         su exclusividad, su parada y sus detenciones, así que no estorban al quitar carriles. Un tipo que sí participa
@@ -219,8 +256,8 @@ uv run trafico-variantes --redibujar resultados/&lt;ID&gt;_variantes_semaforo</c
   <h2><code>[road]</code> Tramo de vía</h2>
   <p class="lead">Geometría del tramo. El semáforo está al final, en <code>x = length</code>.</p>
   <div class="note"><p><strong>Número de carriles.</strong> Es la longitud de las listas por carril:
-    <code>max_line_speed</code> y <code>[behavior] congestion_factor</code>. Si ambas son listas deben tener el mismo
-    largo; un número suelto aplica a todos los carriles, y sin ninguna lista se usan 2. Con 1 carril no hay cambios
+    <code>max_line_speed</code>, <code>[initial] occupancy</code> y <code>[exit] capacity</code> y <code>storage</code>.
+    Las que sean listas deben tener el mismo largo; un número suelto aplica a todos los carriles, y sin ninguna lista se usan 2. Con 1 carril no hay cambios
     de carril. La antigua clave <code>lanes</code> ya no se usa; solo se acepta, con un aviso, para replicar copias
     anteriores.</p></div>
   <div class="table-scroll"><table>
@@ -245,8 +282,8 @@ uv run trafico-variantes --redibujar resultados/&lt;ID&gt;_variantes_semaforo</c
 length = 500.0
 max_line_speed = [40, 50, 40]         # carril 0 (derecho), 1 y 2 (izquierdo)
 
-[behavior]
-congestion_factor = [0.2, 0.3, 0.5]   # mismo largo que max_line_speed → 3 carriles
+[initial]
+occupancy = [0.0, 0.2, 0.3]           # mismo largo que max_line_speed → 3 carriles
 
 [vehicles.bike]
 lane = 0                              # bicis en el carril derecho
@@ -257,16 +294,17 @@ exclusive = true                      # autos y motos usan solo el carril 2
 stop_position = 400.0                 # parada a 100 m del semáforo …
 stop_time_mean = 20.0                 # … de 20 ± 5 s
 stop_time_std = 5.0</code></pre>
-  <p>La cabecera de cada corrida y <code>resumen.txt</code> muestran el límite, los carriles exclusivos y el factor de
-    congestión de cada carril.</p>
+  <p>La cabecera de cada corrida y <code>resumen.txt</code> muestran el límite y los carriles exclusivos de cada
+    carril.</p>
 </section>
 
 <section id="traffic_light">
   <h2><code>[traffic_light]</code> Semáforo</h2>
   <p class="lead">Ciclo fijo verde → amarillo → rojo. En amarillo la línea sigue abierta, pero quien se aproxima al
     semáforo baja la velocidad (ver <code>yellow_approach</code> y <code>yellow_speed_factor</code> en
-    <a href="#behavior">[behavior]</a>). En rojo, ningún vehículo cuyo frente no haya cruzado puede pasar la línea.
-    Las gráficas sombrean el rojo y el amarillo, y el video pinta el semáforo del color de la fase.</p>
+    <a href="#behavior">[behavior]</a>). En rojo, ningún vehículo cuyo frente no haya cruzado puede pasar la línea,
+    salvo los tipos con carril exclusivo en un carril sin semáforo (<code>free_lanes</code>). Las gráficas sombrean el rojo y el amarillo, y el
+    video pinta el semáforo del color de la fase.</p>
   <div class="table-scroll"><table>
     <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
     <tbody>
@@ -282,6 +320,17 @@ stop_time_std = 5.0</code></pre>
       <tr><td><code>start_phase</code></td><td>texto</td><td class="num">"red"</td>
         <td>Fase con la que empieza la corrida. Empezando en verde, le siguen el amarillo y el rojo.</td>
         <td><code>"red"</code> o <code>"green"</code>.</td></tr>
+      <tr><td><code>free_lanes</code></td><td>lista de enteros</td><td class="num">[]</td>
+        <td>Carriles sin semáforo, empezando por el derecho (carril 0), p. ej. <code>[0]</code> para una vuelta
+          continua a la derecha. <strong>Solo aplica a los tipos con carril exclusivo</strong> en uno de ellos
+          (<code>lane</code> y <code>exclusive = true</code> en <a href="#vehicles">[vehicles.&lt;clave&gt;]</a>): esos
+          vehículos cruzan la línea aunque esté en rojo y no bajan la velocidad en amarillo. Siguen respetando al de
+          adelante, las paradas, las detenciones y su <a href="#exit">cola de salida</a>. Otro tipo con el mismo
+          <code>lane</code> pero sin <code>exclusive</code> sí obedece el semáforo, y quien va detrás de él lo espera.
+          Como nadie más entra a un carril exclusivo, los que esperan en rojo en los demás carriles no pueden
+          cambiarse a él. El nombre del carril dice «sin semáforo» en las gráficas y el video; en el video su semáforo
+          siempre está en verde, y el diagrama espacio-tiempo no sombrea sus fases.</td>
+        <td>Cada carril entre 0 y el número de carriles − 1, sin repetir, y exclusivo de algún tipo.</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -364,6 +413,63 @@ bus_rate = {min = 0.25, max = 0.25, mean = 0.25, std = 0}  # fija: 1 cada 4 min<
     como llegadas de la demanda («Llegadas (veh/min)»). Tampoco cuentan en el tiempo de recorrido medio, porque no
     recorrieron el tramo completo. <code>resumen.txt</code> los muestra en la fila «En el tramo al inicio», y la
     cabecera indica la ocupación de cada carril.</p></div>
+</section>
+
+<section id="exit">
+  <h2><code>[exit]</code> Cola de salida</h2>
+  <p class="lead">Después del semáforo cada carril desemboca en una cola de salida (la calle de adelante) que acepta
+    un número limitado de vehículos por minuto y mide <code>storage</code> m. Si por la línea pasan más de los que
+    acepta, la cola se llena, la línea de ese carril se cierra aunque esté en verde y el carril se satura: la cola de
+    detenidos crece hacia atrás y bajan los vehículos que cruzan.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>capacity</code></td><td>número o lista</td><td class="num">0</td>
+        <td>Vehículos por minuto que acepta la cola de salida de cada carril; 0 = sin cola de salida (cruzar la línea
+          basta, como antes). Un número aplica a todos los carriles; una lista da un valor por carril, empezando por
+          el derecho, y su longitud debe coincidir con las demás listas por carril (ver <a href="#road">[road]</a>),
+          p. ej. <code>[0, 12, 15, 0]</code>.</td>
+        <td>Cada valor ≥ 0.</td></tr>
+      <tr><td><code>storage</code></td><td>número o lista</td><td class="num">60</td>
+        <td>Metros que mide la cola de salida de cada carril. Cada vehículo ocupa en ella su largo más su
+          <code>gap_stop</code> (un auto de 4.5 m, 5.5 m; una bici de 1.8 m, 2.3 m), así que 60 m son ~11 autos.
+          Quien cruza la línea entra a ella y sale a razón de <code>capacity</code>, en orden de llegada. Si el
+          siguiente vehículo no cabe en los metros libres, la línea de ese carril se cierra para él como en rojo; una
+          bici puede caber donde ya no cabe un auto. Una cola vacía acepta a cualquiera, aunque mida menos que él.</td>
+        <td>Cada valor &gt; 0 m.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Cómo funciona:</p>
+  <ul>
+    <li>Cuenta el carril por el que el vehículo cruza la línea (el de origen, si está cambiando de carril). Tampoco
+      puede cruzar quien se está cambiando hacia un carril en cuya cola de salida no cabe.</li>
+    <li>Los que esperan en la línea cerrada se detienen en ella y, cuando hay lugar para ellos, arrancan
+      con su tiempo de reacción, como al ponerse el verde. Con <code>decel</code>, la línea cerrada se respeta con
+      anticipación igual que el rojo.</li>
+    <li>La cola de salida se vacía de forma continua: a 12 veh/min sale un vehículo cada 5 s. Sin vehículos
+      esperando no acumula salidas para después.</li>
+    <li>La gráfica tiene el panel «Vehículos que cruzan el semáforo por carril (ventana de un ciclo) contra la
+      capacidad de su cola de salida»: la demanda en la línea de cada carril y su capacidad de salida como línea
+      punteada. Si la demanda toca la capacidad, la salida es la que limita.</li>
+    <li>Debajo, la fila «Cola de entrada al tramo por carril» | «Cola de salida después del semáforo por carril»
+      compara lo que espera para entrar al tramo (en vehículos) con lo que ya cruzó y espera para salir (en m
+      ocupados); lo que mide la salida va como línea punteada. Son dos paneles con escala propia porque la cola de entrada puede crecer
+      sin límite y la de salida no pasa de <code>storage</code>. Con la salida saturada, la cola de salida se queda
+      pegada a su tope y la de entrada crece: la saturación se propaga hacia atrás hasta la entrada del tramo. Sin
+      cola de salida, el panel derecho lo indica.</li>
+    <li><code>resumen.txt</code> muestra la línea «Cruzan el semáforo por carril (veh/min)» y, con cola de salida,
+      «Línea cerrada por la cola de salida (% del tiempo)»: la fracción del tiempo en que el siguiente vehículo del
+      carril no cabía. <code>series.csv</code> agrega las columnas
+      <code>cruzan_veh_min_carril&lt;N&gt;</code>, <code>cola_entrada_veh_carril&lt;N&gt;</code> y, con cola de salida,
+      <code>cola_salida_m_carril&lt;N&gt;</code> (m ocupados).</li>
+    <li>En el video, la columna «salida» a la derecha del semáforo muestra la cola de salida de cada carril que la
+      tiene como «m ocupados/mide» (p. ej. <code>33/55 m</code>), en rojo cuando el siguiente vehículo no cabe y la
+      línea de ese carril está cerrada aunque el semáforo esté en verde.</li>
+  </ul>
+  <p>Ejemplo (con la configuración de Insurgentes en un tramo de 100 m): con <code>capacity = [0, 6, 8, 0]</code> y
+    <code>storage = 55</code> (10 autos) los carriles 1 y 2 cruzan 6.1 y 8.1 veh/min, pegados a su capacidad, su línea
+    está cerrada por la cola de salida el 23 % y el 16 % del tiempo, y los autos que cruzan bajan de 667 a 496. Con <code>[0, 12, 15, 0]</code> la salida nunca se llena:
+    por esos carriles solo pasan 8.3 y 10.6 veh/min, así que el semáforo sigue siendo el que limita.</p>
 </section>
 
 <section id="bottleneck">
@@ -481,9 +587,15 @@ bottleneck_time_std = 30.0</code></pre>
   <div class="table-scroll"><table>
     <thead><tr><th>Clave</th><th>Tipo</th><th>Descripción</th><th>Restricción</th></tr></thead>
     <tbody>
-      <tr><td><code>speed_kmh</code></td><td>número</td><td>Velocidad máxima que puede alcanzar el vehículo, en km/h.
-          Avanza a ella salvo que la limiten el carril (<code>max_line_speed</code>), la congestión, un cambio de
-          carril o el vehículo de adelante.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>speed_kmh</code></td><td>diccionario</td><td>Velocidad máxima que puede alcanzar el vehículo, en
+          km/h: <code>{min, max, mean, std}</code>. Cada vehículo sortea la suya al llegar, de una normal(<code>mean</code>,
+          <code>std</code>) truncada a [<code>min</code>, <code>max</code>]. Con <code>std = 0</code>, todos van a
+          <code>mean</code>. Avanza a ella salvo que la limiten el carril (<code>max_line_speed</code>),
+          un cambio de carril o el vehículo de adelante. Un auto más lento que el límite es un líder lento para los
+          que vienen detrás, que pueden rebasarlo. Las cuatro claves son obligatorias. Ejemplos:
+          <code>speed_kmh = {min = 80, max = 80, mean = 80, std = 0}</code> (fija) y
+          <code>speed_kmh = {min = 60, max = 90, mean = 75, std = 8}</code>.</td>
+        <td>0 &lt; min ≤ mean ≤ max; std ≥ 0.</td></tr>
       <tr><td><code>length</code></td><td>diccionario</td><td>Largo del vehículo en metros:
           <code>{min, max, mean, std}</code>. Cada vehículo sortea su largo de una normal(<code>mean</code>,
           <code>std</code>) truncada a [<code>min</code>, <code>max</code>]. Con <code>std = 0</code>, todos miden
@@ -524,6 +636,17 @@ bottleneck_time_std = 30.0</code></pre>
           lugar en la saturación del carril y en los pasajeros por metro; en el video se dibujan uno junto al otro.
           Opcional; por defecto <code>1</code> (en fila).</td>
         <td>Entre 1 y 4.</td></tr>
+      <tr><td><code>pass_in_lane</code></td><td>true/false</td><td>Rebase dentro del carril (p. ej. bicis): en marcha,
+          quien tiene una velocidad máxima mayor que la del de adelante de su mismo tipo (las dos acotadas por el
+          límite del carril) lo rebasa por un lado sin cambiar de carril. Mientras lo rebasa solo respeta al vehículo
+          que va delante del rebasado. El rebasado no frena por el que se le adelanta mientras van lado a lado ni
+          mientras éste se aleja, y no puede volver a rebasarlo. Nunca van más de dos lado a lado: no se rebasa a
+          quien ya tiene a otro a su lado, a quien está rebasando o a quien va a detenerse al lado de otro. Si el
+          vehículo de adelante los frena a los dos, quedan lado a lado como una fila detenida. Solo hay rebases si
+          <code>speed_kmh</code> varía (<code>std &gt; 0</code>). <code>resumen.txt</code> muestra la fila «Rebases
+          en el carril/veh» y en el video se ven lado a lado mientras se rebasan. Cuesta alrededor de un cuarto más
+          de tiempo de proceso. Opcional; por defecto <code>false</code>.</td>
+        <td>Requiere <code>abreast</code> ≥ 2.</td></tr>
       <tr><td><code>stop_position</code></td><td>número</td><td>Parada antes del semáforo para el descenso y ascenso
           de pasajeros: posición, en m desde el inicio del tramo, donde el vehículo se detiene con el frente. Opcional;
           sin ella no hay parada. Quien viene detrás en el mismo carril espera y se comprime; otro vehículo del mismo
@@ -535,8 +658,7 @@ bottleneck_time_std = 30.0</code></pre>
           con <code>stop_position</code>.</td>
         <td>≥ 0; media + 6σ ≤ 3600 s.</td></tr>
       <tr><td><code>overtake</code></td><td>true/false</td><td>Rebase agresivo (p. ej. motos): el líder cuenta
-          como lento por su velocidad real en el último paso (un auto en maniobra, frenado por su cola o por la
-          congestión), no solo por la nominal, y el vehículo baja incluso a un carril de menor límite si ahí avanza
+          como lento por su velocidad real en el último paso (un auto en maniobra o frenado por su cola), no solo por la nominal, y el vehículo baja incluso a un carril de menor límite si ahí avanza
           más que detrás de él. Como todos, solo cambia de carril detrás de un líder que va al menos
           <code>leader_slowdown</code> por debajo del límite del carril. Opcional; por defecto <code>false</code>.</td>
         <td>Solo con <code>lane_change = true</code>.</td></tr>
@@ -556,6 +678,28 @@ bottleneck_time_std = 30.0</code></pre>
           (p. ej. la del autobús). Opcionales; por defecto 0 (no se detiene), 30 s y 0 s.</td>
         <td>Probabilidad entre 0 y 1; media y σ ≥ 0, media + 6σ ≤ 3600 s; probabilidad &gt; 0 no se admite con
           <code>stop_position</code>.</td></tr>
+      <tr><td><code>accel</code>, <code>decel</code></td><td>número</td>
+        <td>Aceleración y frenado graduales (m/s²). Sin ellos, el vehículo pasa de inmediato a su velocidad y se
+          detiene en seco. Con ellos:
+          <ul>
+            <li>La velocidad sube a lo más <code>accel</code> por segundo hacia la deseada (máxima, límite del carril,
+              maniobra) y baja a lo más <code>decel</code> si la deseada baja. Al arrancar tras la reacción
+              parte de 0: la cola descarga más espaciada y el primero pierde tiempo al arrancar.</li>
+            <li>Frena con anticipación: no rebasa la velocidad a la que aún puede detenerse frenando a
+              <code>decel</code> (con un paso de reacción) detrás del de adelante, contando lo que éste recorre al
+              detenerse, ni antes de la línea en rojo o de una parada (regla de Gipps).</li>
+            <li>Detrás de un líder en marcha, el gap va de <code>gap_stop</code> (casi detenido) a
+              <code>gap_run</code> (a su velocidad deseada), para que la cola arranque sin frenazos.</li>
+            <li>En amarillo se detiene si todavía puede hacerlo frenando a <code>decel</code>; si no, cruza sin bajar
+              la velocidad (no aplica <code>yellow_speed_factor</code>).</li>
+            <li>Solo cambia de carril (o rebasa dentro del carril) si ni él ni el seguidor del carril destino tienen
+              que frenar más que su <code>decel</code>.</li>
+          </ul>
+          El espacio al de adelante sigue siendo un límite duro: si algo aparece de golpe (el inicio del rojo sin
+          amarillo, un vehículo que se detiene al lado), frena más que <code>decel</code>, pero nunca hay traslapes.
+          Opcionales; por defecto, instantáneos. Valores típicos: auto 2.5 / 4.5, moto 3 / 5, autobús 1.2 / 3.5,
+          bici y carga 1 / 3.</td>
+        <td>En (0, 20].</td></tr>
       <tr><td><code>lookahead</code>, <code>min_advantage</code>, <code>lane_change_cooldown</code></td><td>número</td>
         <td>Umbrales de cambio de carril propios del tipo: distancia (m) a la que un líder lento motiva cambiar,
           espacio libre extra (m) que hace que valga la pena y tiempo (s) sin volver a cambiar. Con valores más
@@ -585,7 +729,7 @@ carga_rate = {min = 1, max = 1, mean = 1, std = 0}
 cargo_prob = 0.3        # 30 % de las motos son de reparto
 
 [vehicles.carga]        # solo mercancía: no hace falta pax
-speed_kmh = 40.0
+speed_kmh = {min = 40, max = 40, mean = 40, std = 0}
 length = {min = 8, max = 16, mean = 10, std = 2}   # m: media 10, σ 2, entre 8 y 16
 gap_run = 4.0
 gap_stop = 1.5
@@ -609,11 +753,13 @@ cargo_prob = 1.0</code></pre>
     </tbody>
   </table></div>
   <p class="lead">* Supuesto: el enunciado original no especifica el gap en marcha del autobús.
-    <code>speed_kmh</code> es la velocidad máxima; con <code>max_line_speed</code>, la velocidad a flujo libre de cada tipo
-    es la menor entre ella y el límite del mejor carril que puede usar.</p>
+    <code>speed_kmh</code> es la velocidad máxima (aquí, fija: <code>std = 0</code>); con <code>max_line_speed</code>,
+    la velocidad a flujo libre de cada tipo es la menor entre ella y el límite del mejor carril que puede usar. Con
+    velocidad variable, «T. a flujo libre» del resumen es el promedio de largo del tramo / min(velocidad, límite) sobre
+    la distribución, que es mayor que el largo entre la velocidad media.</p>
 
   <h3>Agregar un tipo nuevo</h3>
-  <p>Un tipo nuevo debe definir los parámetros numéricos (<code>speed_kmh</code>, <code>gap_run</code>, <code>gap_stop</code>), su largo <code>length</code>, sus pasajeros <code>pax</code> y su tasa en <code>[demand]</code>. Si falta alguno,
+  <p>Un tipo nuevo debe definir su velocidad máxima <code>speed_kmh</code>, los parámetros numéricos (<code>gap_run</code>, <code>gap_stop</code>), su largo <code>length</code>, sus pasajeros <code>pax</code> y su tasa en <code>[demand]</code>. Si falta alguno,
     la corrida se detiene indicando cuál.</p>
   <pre><code>[demand]
 motorbike_rate = {min = 5, max = 5, mean = 5, std = 0}
@@ -621,7 +767,7 @@ motorbike_rate = {min = 5, max = 5, mean = 5, std = 0}
 [vehicles.motorbike]
 name = "moto"          # opcional
 lane_change = true     # opcional
-speed_kmh = 40.0
+speed_kmh = {min = 40, max = 40, mean = 40, std = 0}
 length = {min = 2, max = 2, mean = 2, std = 0}
 gap_run = 2.0
 gap_stop = 1.0
@@ -632,7 +778,7 @@ pax = {min = 1, max = 2, mean = 1.2, std = 0.2}</code></pre>
 
 <section id="behavior">
   <h2><code>[behavior]</code> Conducta</h2>
-  <p class="lead">Parámetros comunes a todos los vehículos: reacción al arrancar, cambios de carril y congestión.</p>
+  <p class="lead">Parámetros comunes a todos los vehículos: reacción al arrancar, cambios de carril y amarillo.</p>
   <div class="table-scroll"><table>
     <thead><tr><th>Clave</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
     <tbody>
@@ -668,23 +814,24 @@ pax = {min = 1, max = 2, mean = 1.2, std = 0.2}</code></pre>
           detenido cuenta como 0. Sin vehículo enfrente no se cambia de carril.</td><td>En [0, 1).</td></tr>
       <tr><td><code>release_space</code></td><td class="num">0.5</td>
         <td>Espacio (m) que, al abrirse delante de un vehículo detenido, lo libera para iniciar su reacción.</td><td>≥ 0.</td></tr>
+      <tr><td><code>queue_reaction</code></td><td class="num">false</td>
+        <td>Tiempo de reacción en la cola de entrada. Los vehículos que no caben en el tramo esperan fuera, en la cola
+          de entrada de su carril. Con <code>false</code> entran ya en marcha en cuanto hay lugar, aunque la cola
+          del tramo esté detenida; así, en un tramo más corto que la cola, los que esperan fuera se saltan el tiempo
+          de reacción y el semáforo deja pasar más vehículos de los reales. Con <code>true</code>, si la cola del
+          tramo llega detenida hasta la entrada, la cola de entrada también cuenta como detenida: el primero empieza
+          su reacción (sorteada de <code>reaction</code>) cuando se mueve el de adelante y entra al terminarla, en
+          cuanto quepa; luego reacciona el siguiente. Una cola de entrada que solo espera lugar detrás de vehículos
+          en marcha sigue entrando en marcha. Por ejemplo, con la configuración de Insurgentes y un tramo de 50 m,
+          los autos cruzan 20.9 pax/min en vez de 24.6, cerca de los 19.7–20.2 de los tramos de 100 a 550 m.</td>
+        <td>true/false.</td></tr>
       <tr><td><code>yellow_approach</code></td><td class="num">50.0</td>
         <td>Distancia (m) antes de la línea de alto dentro de la cual, con el semáforo en amarillo, los vehículos que aún
           no la cruzan bajan la velocidad. Solo aplica con <code>[traffic_light] yellow</code> &gt; 0.</td><td>≥ 0.</td></tr>
       <tr><td><code>yellow_speed_factor</code></td><td class="num">0.5</td>
-        <td>Fracción de la velocidad a la que avanzan en esa zona durante el amarillo; se combina con la congestión y
-          con la reducción por cambio de carril. Quien llega a la línea en amarillo cruza; quien no, se detiene al
+        <td>Fracción de la velocidad a la que avanzan en esa zona durante el amarillo; se combina con la reducción por
+          cambio de carril. Quien llega a la línea en amarillo cruza; quien no, se detiene al
           ponerse el rojo.</td><td>En (0, 1].</td></tr>
-      <tr><td><code>congestion_factor</code></td><td class="num">0.0</td>
-        <td>Reducción máxima de velocidad por congestión: un número para todos los carriles, o una lista con un
-          valor por carril empezando por el derecho, como <code>[0.2, 0.3, 0.5]</code>; su longitud define el número
-          de carriles (ver <a href="#road">[road]</a>). En un
-          carril con vehículos detenidos esperando avanzar, quienes avanzan van a
-          <code>velocidad × (1 − factor del carril × saturación)</code>, donde la saturación es
-          el largo de la cola de detenidos (largo + <code>gap_stop</code>) entre <code>length</code>. Con 0.5 y una
-          cola que ocupa la mitad del carril, se avanza un 25 % más lento. Quien cambia de carril toma la mayor
-          reducción de sus dos carriles; quien ya cruzó el semáforo no se ve afectado. Con 0 no tiene efecto.</td>
-        <td>Cada valor en [0, 1); lista no vacía.</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -702,7 +849,8 @@ pax = {min = 1, max = 2, mean = 1.2, std = 0.2}</code></pre>
     pasajeros que han cruzado el semáforo desde el inicio del video, actualizados en cada cuadro. Para un tipo que
     solo lleva mercancía cuenta vehículos. Los vehículos con mercancía no suman pasajeros. A la izquierda de cada carril,
     la columna «en cola» muestra cuántos vehículos esperan en su cola de entrada: ya llegaron, pero aún no caben en el
-    tramo y por eso no se dibujan.</p>
+    tramo y por eso no se dibujan. Si hay <a href="#exit">cola de salida</a>, la columna «salida» a la derecha del
+    semáforo muestra los m ocupados en ella contra lo que mide, en rojo cuando el siguiente vehículo no cabe.</p>
   <div class="table-scroll"><table>
     <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
     <tbody>

@@ -6,18 +6,42 @@ La capacidad inicial es la cota física de vehículos que caben en el tramo, as�
 que la memoria no crece con la duración de la corrida.
 
 Modelo por paso de DT segundos (actualización paralela con posiciones previas):
-  * Cada tipo avanza a su velocidad máxima sin rebasar el límite del carril; el
-    avance está limitado por el espacio al líder del carril y, en rojo, por la
-    línea de alto.
+  * Cada vehículo avanza a su velocidad máxima (sorteada al llegar si la del tipo
+    es variable) sin rebasar el límite del carril; el avance está limitado por el
+    espacio al líder del carril y, en rojo, por la línea de alto.
   * Semáforo: ciclo verde → amarillo → rojo. En amarillo la línea de alto sigue
     abierta, pero quien está a menos de `yellow_approach` m de ella avanza a
-    `yellow_speed_factor` de su velocidad; en rojo, se detiene.
+    `yellow_speed_factor` de su velocidad; en rojo, se detiene. Los tipos con
+    carril exclusivo en uno de `free_lanes` no obedecen ni el rojo ni el
+    amarillo (no cambian de carril, así que siempre van por él).
   * Condición inicial (opcional): los carriles empiezan con vehículos en marcha
     que ocupan una fracción del tramo, para no esperar a que se llene.
   * Compresión: detrás de un líder detenido basta `gap_stop` (< `gap_run`).
   * Estiramiento: un vehículo detenido que queda libre (se puso verde o arrancó
     su líder) espera un tiempo de reacción U[1,5] s antes de avanzar, y además
     necesita reabrir `gap_run` detrás del líder en marcha.
+  * Aceleración y frenado graduales (tipos con `accel`/`decel`): la velocidad
+    sube a lo más `accel`·DT por paso hacia la deseada y baja a lo más `decel`·DT
+    si la deseada baja; el gap detrás de un líder en marcha va de `gap_stop`
+    (casi detenido) a `gap_run` (a su velocidad deseada). Además no rebasa la velocidad a la que aún puede
+    detenerse, frenando a `decel` (con un paso de reacción), detrás del de
+    adelante (contando lo que éste necesita para detenerse), antes de la línea en
+    rojo o de una parada; en amarillo se detiene si todavía puede hacerlo y, si
+    no, cruza sin bajar la velocidad (no aplica `yellow_speed_factor`). El
+    espacio al de adelante sigue siendo un límite duro (frenado de emergencia).
+    Al arrancar tras la reacción parte de 0.
+  * Cola de salida (opcional, [exit]): quien cruza la línea entra a la cola de
+    salida de su carril, que acepta a lo más `capacity` veh/min y mide
+    `storage` m; cada vehículo ocupa en ella su largo + su gap detenido. Si el
+    siguiente no cabe, la línea de ese carril se cierra para él como en rojo
+    (aunque esté en verde): se detiene en ella y arranca con su reacción cuando
+    hay lugar; si llegan más de los que acepta, el carril se satura. Una cola
+    vacía acepta a cualquiera.
+  * Cola de entrada: los vehículos que no caben esperan fuera del tramo y entran
+    en marcha en cuanto hay lugar. Con `queue_reaction`, si la cola del tramo
+    llega detenida hasta la entrada, la cola de entrada también está detenida:
+    cada vehículo arranca con su tiempo de reacción cuando se mueve el de
+    adelante, como en el resto de la cola.
   * Cambio de carril (solo tipos que pueden): la maniobra dura U[1,4] s, el
     vehículo ocupa ambos carriles a velocidad reducida y los seguidores de los
     dos carriles se comprimen detrás de él. Se cambia para rebasar a un líder
@@ -29,6 +53,11 @@ Modelo por paso de DT segundos (actualización paralela con posiciones previas):
     un vehículo detenido de su mismo tipo se detiene a su lado, con los frentes
     alineados, mientras la fila tenga lugar; el siguiente hace fila detrás. Al
     arrancar salen uno tras otro (reacción y gap en marcha habituales).
+  * Rebase dentro del carril (tipos con `pass_in_lane`, p. ej. bicis): en marcha,
+    quien tiene una velocidad máxima mayor (acotada por el límite del carril) que
+    el de adelante de su mismo tipo lo rebasa por un lado sin cambiar de carril;
+    solo respeta al siguiente vehículo. El rebasado no frena por quien se le
+    adelanta hasta que éste le saca `gap_run`. Nunca van más de dos lado a lado.
   * Parada (tipos con `stop_position`, p. ej. el autobús): el vehículo se detiene
     con el frente en esa posición durante un tiempo normal(μ, σ) de descenso y
     ascenso de pasajeros, y luego arranca sin tiempo de reacción adicional. Quien
@@ -45,7 +74,8 @@ import numpy as np
 
 from trafico.config import DT, RED, YELLOW, SimConfig
 from trafico.distributions import (
-    normal_ticks, reaction_ticks, sample_lengths, sample_passengers, sample_rates, stop_ticks, uniform_ticks,
+    normal_ticks, reaction_ticks, sample_lengths, sample_passengers, sample_rates, sample_speeds, stop_ticks,
+    uniform_ticks,
 )  # fmt: skip
 from trafico.metrics import Recorder
 
@@ -56,6 +86,46 @@ ARRIVAL_CHUNK = 1024  # pasos por bloque de sorteo de llegadas
 PER_TYPE_STREAMS = 5  # generadores aleatorios por tipo de vehículo
 MAX_PAX = 255  # cota de pasajeros por vehículo (pax es uint8)
 INITIAL_MISSES = 30  # sorteos seguidos que no caben antes de dar por lleno un carril en la condición inicial
+
+
+def _safe_speed(space, v_lead, dec, dec_lead) -> np.ndarray:
+    """Velocidad máxima (m/paso) con la que aún se detiene frenando a `dec` (m/paso²), con un paso de
+    reacción, sin rebasar `space` m más lo que el de adelante (a `v_lead`, frenando a `dec_lead`)
+    recorre al detenerse: v + v²/(2·dec) ≤ space + v_lead²/(2·dec_lead) (regla de Gipps). inf donde
+    dec es infinito (frenado instantáneo, sin anticipación) o no hay nada adelante; un líder de frenado
+    instantáneo se detiene en seco.
+
+    Se supone que el de adelante frena al menos tan fuerte como él (dec_lead ≥ dec): así, siguiendo a
+    un líder a velocidad constante, el equilibrio es space = v_lead, el mismo que impone el límite duro
+    de espacio (actualización en paralelo), y se acerca sin frenazos. Con un líder que frena menos
+    (p. ej. un auto detrás de una bici), la regla lo dejaría acercarse más y el límite duro lo frenaría
+    de golpe."""
+    with np.errstate(invalid="ignore"):  # inf − inf con dec infinito: se vuelve inf abajo
+        lead = np.where(np.isfinite(dec_lead), v_lead * v_lead * dec / np.maximum(dec_lead, dec), 0.0)
+        out = -dec + np.sqrt(dec * dec + 2 * dec * np.maximum(space, 0.0) + lead)
+    return np.where(np.isnan(out), INF, out)
+
+
+def _safe_speed_1(space: float, v_lead: float, dec: float, dec_lead: float) -> float:
+    """_safe_speed para un solo vehículo (sin arreglos)."""
+    if not math.isfinite(dec):
+        return INF
+    lead = v_lead * v_lead * dec / max(dec_lead, dec) if math.isfinite(dec_lead) else 0.0
+    return -dec + math.sqrt(dec * dec + 2 * dec * max(space, 0.0) + lead)
+
+
+def _next(a: np.ndarray) -> np.ndarray:
+    """Valor de la entrada siguiente en el orden (la del líder); False en la última."""
+    out = np.zeros_like(a)
+    out[:-1] = a[1:]
+    return out
+
+
+def _prev(a: np.ndarray) -> np.ndarray:
+    """Valor de la entrada anterior en el orden (la del seguidor); False en la primera."""
+    out = np.zeros_like(a)
+    out[1:] = a[:-1]
+    return out
 
 
 class Occupancy(NamedTuple):
@@ -74,7 +144,7 @@ class Simulation:
     _FIELDS = (
         "vtype", "pax", "lane", "lc_target", "lc_timer", "cooldown",
         "react", "x", "stopped", "crossed", "entry_tick", "vid", "stop_state", "dwell", "v_last", "vcap_last", "vlen",
-        "stop_pos", "stop_kind",
+        "stop_pos", "stop_kind", "vmax",
     )  # fmt: skip
     # Estados de parada: sin parada pendiente, antes de la parada, detenido en ella.
     NO_STOP, STOP_AHEAD, AT_STOP = 0, 1, 2
@@ -103,6 +173,10 @@ class Simulation:
         self.rng_bottleneck, self.rng_bottleneck_time = zip(*(g.spawn(2) for g in self.rng_pax))
         # Hijo del generador de llegadas: la tasa de cada intervalo de los tipos con tasa variable.
         self.rng_rate = [g.spawn(1)[0] for g in self.rng_arrivals]
+        # Hijo del generador de pasajeros: la velocidad máxima de cada vehículo (si es variable).
+        self.rng_speed = [g.spawn(1)[0] for g in self.rng_pax]
+        # Hijo del generador de reacción: la reacción de quien arranca en la cola de entrada detenida.
+        self.rng_queue_react = [g.spawn(1)[0] for g in self.rng_react]
         specs = cfg.specs
         b = cfg.behavior
         self.L = float(cfg.length)
@@ -110,7 +184,7 @@ class Simulation:
         self.n_types = cfg.n_types
 
         # Tablas por tipo de vehículo (indexadas por vtype).
-        self.v_step = np.array([s.speed * DT for s in specs])
+        self.v_step = np.array([s.speed * DT for s in specs])  # velocidad media; la de cada vehículo está en vmax
         self.length_t = np.array([s.length for s in specs])  # largo medio; el de cada vehículo está en vlen
         self.gap_run_t = np.array([s.gap_run for s in specs])
         self.gap_stop_t = np.array([s.gap_stop for s in specs])
@@ -121,12 +195,15 @@ class Simulation:
         self.bn_prob = np.array([cfg.bottleneck_prob(k) for k in range(self.n_types)])
         self.bn_time = [cfg.bottleneck_time(k) for k in range(self.n_types)]
         self.bn_type = self.bn_prob > 0  # tipos que pueden detenerse en un cuello de botella
+        self.free_type = np.array([cfg.ignores_light(k) for k in range(self.n_types)], np.bool_)  # sin semáforo
         self.bn_lane = np.zeros(cfg.lanes, np.bool_)
         self.bn_lane[list(cfg.bottleneck_lanes())] = True
         self.bn_zone = cfg.bottleneck_zone()
         self.any_stop = bool(self.has_stop.any() or self.bn_type.any())
         self.abreast = np.array([s.abreast for s in specs])
         self.any_abreast = bool((self.abreast > 1).any())
+        self.pass_in_lane = np.array([s.pass_in_lane for s in specs])  # rebasan dentro del carril
+        self.any_pass_in_lane = bool(self.pass_in_lane.any())
         self.allowed = np.zeros((self.n_types, cfg.lanes), np.bool_)  # carriles que puede usar cada tipo
         for k in range(self.n_types):
             self.allowed[k, list(cfg.allowed_lanes(k))] = True
@@ -139,7 +216,6 @@ class Simulation:
             for k in range(self.n_types) if cfg.rate(k).variable
         }  # fmt: skip
 
-        self.lane_cf = np.array(cfg.lane_congestion)  # factor de congestión de cada carril
         self.lane_vmax = np.array(cfg.lane_max_kmh) / 3.6 * DT  # límite de cada carril, m/paso
         self.lc_every = max(1, round(b.lane_change_interval / DT))
         # Umbrales de cambio de carril por tipo: los del tipo o, si no los fija, los de [behavior].
@@ -150,20 +226,24 @@ class Simulation:
         self.min_adv_t = own("min_advantage")
         self.cooldown_ticks_t = np.round(own("lane_change_cooldown") / DT).astype(np.int16)
         self.overtake = np.array([s.overtake for s in specs])
-        # Tipo y carril desde los que un carril adyacente permitido es más rápido (subida).
-        eff = np.minimum(self.v_step[:, None], self.lane_vmax[None, :])
-        self.can_rise = np.zeros_like(self.allowed)
-        self.can_rise[:, :-1] |= self.allowed[:, 1:] & (eff[:, 1:] > eff[:, :-1] + EPS)
-        self.can_rise[:, 1:] |= self.allowed[:, :-1] & (eff[:, :-1] > eff[:, 1:] + EPS)
-        self.can_rise &= self.can_change[:, None]
+        # Aceleración y frenado por tipo en m/paso² (inf = instantáneos, sin anticipación).
+        self.acc_t = np.array([INF if s.accel is None else s.accel * DT * DT for s in specs])
+        self.dec_t = np.array([INF if s.decel is None else s.decel * DT * DT for s in specs])
+        self.dyn_t = np.isfinite(self.acc_t) | np.isfinite(self.dec_t)  # tipos con dinámica gradual
+        self.any_dynamics = bool(self.dyn_t.any())
+        # Sin límites distintos entre carriles no hay a dónde subir.
+        self.any_rise = len(set(cfg.lane_max_kmh)) > 1
         self._key_stride = self.L + 1e4  # separa los carriles en la clave de orden
 
         min_slot = min(s.shortest + s.gap_stop for s in specs)
         per_lane = math.ceil((self.L + max(s.longest for s in specs)) / min_slot) + 2
         self._alloc(cfg.lanes * per_lane)
         self.n = 0
-        # (tipo, pax, largo, posición de su detención de [bottleneck], paso de llegada a la cola)
-        self.queues: list[deque[tuple[int, int, float, float, int]]] = [deque() for _ in range(cfg.lanes)]
+        # (tipo, pax, largo, posición de su detención de [bottleneck], velocidad máxima km/h, paso de llegada a la cola)
+        self.queues: list[deque[tuple[int, int, float, float, float, int]]] = [deque() for _ in range(cfg.lanes)]
+        # Cola de entrada detenida por carril y pasos de reacción que le faltan a su primero (-1 = sin empezar).
+        self.queue_stopped = np.zeros(cfg.lanes, np.bool_)
+        self.queue_react = np.full(cfg.lanes, -1, np.int32)
         self.tick = 0
         self._pending_arrivals: dict[int, np.ndarray] = {}
 
@@ -181,12 +261,27 @@ class Simulation:
         self.type_time = np.zeros(self.n_types)  # vehículo·s dentro del tramo por tipo (con los detenidos)
         self.lane_changes = 0
         self.lane_changes_t = np.zeros(self.n_types)  # cambios de carril por tipo
+        self.in_lane_passes = np.zeros(self.n_types)  # rebases dentro del carril, por tipo de quien rebasa
         self.stops = np.zeros(self.n_types)  # paradas completadas por tipo
         self.stop_time_ticks = np.zeros(self.n_types)  # pasos detenidos en la parada, por tipo
         self.queue_wait_ticks = np.zeros(self.n_types)  # pasos en la cola de entrada de los que ya entraron
         self.bn_stops = np.zeros(self.n_types)  # detenciones de [bottleneck] por tipo
         self.bn_ticks = np.zeros(self.n_types)  # pasos detenidos en ellas, por tipo
         self.pax_hist = np.zeros((self.n_types, MAX_PAX + 1), np.int64)  # vehículos llegados por nº de pasajeros
+        # Cola de salida por carril: vehículos que acepta por paso (inf = sin cola de salida).
+        exit_cap = np.array(cfg.lane_exit_capacity, dtype=np.float64)
+        self.exit_rate = np.where(exit_cap > 0, exit_cap / 60.0 * DT, INF)
+        # m de cada cola de salida; sin cola de salida, sin límite.
+        self.exit_storage = np.where(exit_cap > 0, np.array(cfg.lane_exit_storage, dtype=np.float64), INF)
+        self.any_exit = bool((exit_cap > 0).any())
+        self.exit_q = np.zeros(cfg.lanes)  # m ocupados en la cola de salida (largo + gap detenido de cada vehículo)
+        # Lo que ocupa cada vehículo en la cola de salida, en orden de llegada: sale el primero que entró.
+        self.exit_items: list[deque[float]] = [deque() for _ in range(cfg.lanes)]
+        self.exit_credit = np.zeros(cfg.lanes)  # fracción acumulada de la siguiente salida
+        self.exit_closed = np.zeros(cfg.lanes, np.bool_)  # el siguiente vehículo del carril no cabe en la salida
+        self.exit_blocked_ticks = np.zeros(cfg.lanes)  # pasos con la línea cerrada por la cola de salida
+        self.lane_cross = np.zeros(cfg.lanes)  # cruces de la línea por carril en el intervalo de muestreo
+        self.lane_crossed = np.zeros(cfg.lanes)  # cruces de la línea por carril en toda la corrida
         self.recorder = Recorder(cfg.n_samples, cfg.n_types, cfg.lanes)
         self.initial_veh = np.zeros(self.n_types)  # vehículos de la condición inicial
         self.initial_pax = np.zeros(self.n_types)
@@ -215,6 +310,7 @@ class Simulation:
         self.v_last = np.zeros(cap, np.float64)  # m avanzados en el último paso (velocidad real)
         self.vcap_last = np.zeros(cap, np.float64)  # m que podía avanzar en él sin líder ni alto
         self.vlen = np.zeros(cap, np.float64)  # largo del vehículo (m)
+        self.vmax = np.zeros(cap, np.float64)  # velocidad máxima del vehículo (m/paso)
         self.stop_pos = np.full(cap, np.inf)  # posición de su parada o detención (frente); inf = ninguna
         self.stop_kind = np.zeros(cap, np.int8)  # TYPE_STOP | BOTTLENECK_STOP
 
@@ -234,12 +330,13 @@ class Simulation:
 
     def _add(
         self, vt: int, pax: int, lane: int, length: float | None = None, x: float | None = None,
-        bottleneck_at: float = INF,
+        bottleneck_at: float = INF, speed_kmh: float | None = None, v0: float | None = None,
     ) -> None:  # fmt: skip
         """Agrega un vehículo al inicio del tramo; pax = 0 si lleva mercancía. Sin `length`, mide
-        el largo medio de su tipo. Con `x` (frente), es un vehículo de la condición inicial: ya está
-        en el tramo, no cuenta como llegada y no tiene tiempo de recorrido. `bottleneck_at` es la
-        posición de su detención de [bottleneck] (inf = no se detiene)."""
+        el largo medio de su tipo; sin `speed_kmh`, su velocidad máxima es la media del tipo. Con `x`
+        (frente), es un vehículo de la condición inicial: ya está en el tramo, no cuenta como llegada
+        y no tiene tiempo de recorrido. `bottleneck_at` es la posición de su detención de [bottleneck]
+        (inf = no se detiene). `v0` es su velocidad al entrar (m/paso); sin ella, entra a su máxima."""
         if self.n == self.x.size:
             self._grow()
         i = self.n
@@ -252,6 +349,7 @@ class Simulation:
         self.react[i] = -1
         self.vlen[i] = self.length_t[vt] if length is None else length
         self.x[i] = self.vlen[i] if x is None else x  # entra con la parte trasera en x = 0
+        self.vmax[i] = self.v_step[vt] if speed_kmh is None else speed_kmh / 3.6 * DT
         self.stopped[i] = False
         self.crossed[i] = False
         self.entry_tick[i] = self.tick if x is None else -1
@@ -263,7 +361,9 @@ class Simulation:
         ahead = self.x[i] < self.stop_pos[i] - EPS  # si empieza pasada su parada, no para
         self.stop_state[i] = self.STOP_AHEAD if ahead else self.NO_STOP
         self.dwell[i] = 0
-        self.v_last[i] = self.vcap_last[i] = min(self.v_step[vt], self.lane_vmax[lane])  # entra en marcha
+        self.v_last[i] = self.vcap_last[i] = min(self.vmax[i], self.lane_vmax[lane])  # entra en marcha
+        if v0 is not None:
+            self.v_last[i] = min(v0, self.vcap_last[i])
         self.n += 1
         self.entered_veh[vt] += 1
         if x is None:
@@ -302,13 +402,14 @@ class Simulation:
                 if spec.cargo_prob > 0 and rng.random() < spec.cargo_prob:
                     pax = 0
                 at = rng.uniform(*self.bn_zone) if self.bn_type[k] and rng.random() < self.bn_prob[k] else INF
-                chosen.append((k, pax, length, at))
+                speed = float(sample_speeds(rng, spec, 1)[0])  # sin desviación no consume sorteos
+                chosen.append((k, pax, length, at, speed))
                 used += length + self.gap_stop_t[k]
             if not chosen:
                 continue
             # Espacio sobre el mínimo (gap_stop detrás de cada líder; el primero no tiene líder).
             kinds = np.array([k for k, *_ in chosen])
-            pool = self.L - sum(length for _, _, length, _ in chosen) - self.gap_stop_t[kinds[1:]].sum()
+            pool = self.L - sum(length for _, _, length, *_ in chosen) - self.gap_stop_t[kinds[1:]].sum()
             need = np.r_[0.0, self.gap_run_t[kinds[1:]] - self.gap_stop_t[kinds[1:]]]  # hasta el gap_run
             if pool >= need.sum():
                 spare = np.diff(np.sort(rng.uniform(0.0, pool - need.sum(), len(chosen))), prepend=0.0)
@@ -317,14 +418,27 @@ class Simulation:
                 extra = need * pool / need.sum()
             # Se coloca del semáforo hacia atrás; quien queda a menos de su gap_run empieza detenido.
             rear = self.L
-            for idx, ((k, pax, length, at), free) in enumerate(zip(chosen, extra)):
+            ahead = -1  # el colocado justo delante en este carril
+            for idx, ((k, pax, length, at, speed), free) in enumerate(zip(chosen, extra)):
                 gap = (self.gap_stop_t[k] if idx else 0.0) + free
-                self._add(k, pax, lane, length, x=rear - gap, bottleneck_at=at)
+                self._add(k, pax, lane, length, x=rear - gap, bottleneck_at=at, speed_kmh=speed)
+                i = self.n - 1
                 if idx and gap < self.gap_run_t[k] - EPS:
-                    i = self.n - 1
                     self.stopped[i] = True
                     self.v_last[i] = 0.0
-                rear = self.x[self.n - 1] - length
+                elif self.dyn_t[k]:
+                    # Con frenado gradual empieza a la velocidad con la que aún frena detrás del de adelante
+                    # (o antes de la línea si la corrida empieza en rojo), no de golpe en el primer paso.
+                    if ahead >= 0:
+                        room = self.x[ahead] - self.vlen[ahead] - self.gap_run_t[k] - self.x[i]
+                        v_ahead, dec_ahead = float(self.v_last[ahead]), self.dec_t[self.vtype[ahead]]
+                    else:
+                        room = self.L - self.x[i] if cfg.phase(0) == RED and not self.free_type[k] else INF
+                        v_ahead, dec_ahead = 0.0, INF
+                    if np.isfinite(room):
+                        self.v_last[i] = min(self.v_last[i], _safe_speed_1(room, v_ahead, self.dec_t[k], dec_ahead))
+                ahead = i
+                rear = self.x[i] - length
 
     def occupancy(self) -> Occupancy:
         n = self.n
@@ -349,6 +463,8 @@ class Simulation:
     def step(self) -> None:
         self._arrivals()
         self._spawn()
+        if self.any_exit:
+            self._drain_exit()
         if self.n:
             self._move(self.cfg.phase(self.tick))
         self.tick += 1
@@ -373,6 +489,7 @@ class Simulation:
             if spec.cargo_prob > 0:  # los que llevan mercancía no llevan pasajeros
                 paxs[self.rng_cargo[vt].random(k) < spec.cargo_prob] = 0
             lengths = sample_lengths(self.rng_length[vt], spec, k)
+            speeds = sample_speeds(self.rng_speed[vt], spec, k)
             at = np.full(k, INF)  # dónde se detendrá (cuello de botella); inf = no se detiene
             if self.bn_type[vt]:
                 g = self.rng_bottleneck[vt]
@@ -382,8 +499,9 @@ class Simulation:
             self.arrived_cargo[vt] += int(np.count_nonzero(paxs == 0))
             self.arrived_pax[vt] += int(paxs.sum())
             self.pax_hist[vt] += np.bincount(paxs[paxs > 0], minlength=MAX_PAX + 1)
-            for p, length, a in zip(paxs, lengths, at):
-                self.queues[self._entry_lane(vt)].append((int(vt), int(p), float(length), float(a), self.tick))
+            for p, length, a, v in zip(paxs, lengths, at, speeds):
+                entry = (int(vt), int(p), float(length), float(a), float(v), self.tick)
+                self.queues[self._entry_lane(vt)].append(entry)
 
     def _arrival_counts(self, k: int) -> np.ndarray:
         """Llegadas del tipo k en cada paso del bloque que empieza en el paso actual."""
@@ -408,13 +526,14 @@ class Simulation:
             best = best[tail == tail.max()]
         return int(best[0] if best.size == 1 else self.rng_entry[vt].choice(best))
 
-    def _lane_tails(self) -> tuple[np.ndarray, np.ndarray]:
-        """Parte trasera del último vehículo de cada carril y si está detenido."""
+    def _lane_tails(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Parte trasera del último vehículo de cada carril, si está detenido y su índice (-1 = carril vacío)."""
         rear_min = np.full(self.n_lanes, INF)
         tail_stopped = np.zeros(self.n_lanes, np.bool_)
+        tail = np.full(self.n_lanes, -1)
         n = self.n
         if n == 0:
-            return rear_min, tail_stopped
+            return rear_min, tail_stopped, tail
         rear = self.x[:n] - self.vlen[:n]
         lane, tgt = self.lane[:n], self.lc_target[:n]
         for ln in range(self.n_lanes):
@@ -423,21 +542,62 @@ class Simulation:
                 j = occ[np.argmin(rear[occ])]
                 rear_min[ln] = rear[j]
                 tail_stopped[ln] = self.stopped[j]
-        return rear_min, tail_stopped
+                tail[ln] = j
+        return rear_min, tail_stopped, tail
 
     def _spawn(self) -> None:
         if not any(self.queues):
             return
-        rear_min, tail_stopped = self._lane_tails()
+        rear_min, tail_stopped, tail = self._lane_tails()
+        queue_reaction = self.cfg.behavior.queue_reaction
         for ln, q in enumerate(self.queues):
             if not q:
                 continue
-            vt, pax, length, at, arrived = q[0]
+            vt, pax, length, at, speed, arrived = q[0]
             gap = self.gap_stop_t[vt] if tail_stopped[ln] else self.gap_run_t[vt]
-            if rear_min[ln] >= length + gap:
+            fits = rear_min[ln] >= length + gap
+            from_stop = queue_reaction and self.queue_stopped[ln]
+            if from_stop and not self._queue_ready(ln, vt, fits, tail_stopped[ln]):
+                continue
+            if fits:
                 q.popleft()
                 self.queue_wait_ticks[vt] += self.tick - arrived
-                self._add(vt, pax, ln, length, bottleneck_at=at)
+                v0 = None
+                if self.any_dynamics:
+                    v0 = self._entry_speed(vt, speed, from_stop, rear_min[ln] - length - gap, tail[ln])
+                self._add(vt, pax, ln, length, bottleneck_at=at, speed_kmh=speed, v0=v0)
+                self.queue_react[ln] = -1
+                # Quien sigue esperaba detrás de un detenido: también arranca con reacción.
+                self.queue_stopped[ln] &= bool(q)
+            elif queue_reaction and tail_stopped[ln]:
+                self.queue_stopped[ln] = True  # la cola del tramo llega detenida hasta la entrada
+
+    def _entry_speed(self, vt: int, speed_kmh: float, from_stop: bool, space: float, tail: int) -> float | None:
+        """Velocidad (m/paso) con la que entra un vehículo con aceleración o frenado graduales: 0 si sale
+        de la cola de entrada detenida y acelera gradualmente; si no, a lo más la que le permite frenar
+        detrás del último del carril. None = a su máxima, como sin dinámica."""
+        if from_stop and np.isfinite(self.acc_t[vt]):
+            return 0.0
+        if tail < 0 or not np.isfinite(self.dec_t[vt]):
+            return None
+        v_lead = 0.0 if self.stopped[tail] else float(self.v_last[tail])
+        safe = _safe_speed_1(space, v_lead, self.dec_t[vt], self.dec_t[self.vtype[tail]])
+        return min(speed_kmh / 3.6 * DT, safe)
+
+    def _queue_ready(self, ln: int, vt: int, fits: bool, tail_stopped: bool) -> bool:
+        """El primero de la cola de entrada detenida del carril `ln` ya reaccionó y puede entrar.
+
+        Empieza a reaccionar cuando el de adelante se mueve (o ya hay lugar para él) y entra cuando
+        termina su reacción, en cuanto quepa."""
+        left = self.queue_react[ln]
+        if left < 0:
+            if tail_stopped and not fits:
+                return False
+            self.queue_react[ln] = int(reaction_ticks(self.rng_queue_react[vt], self.cfg.behavior, 1)[0])
+            return False
+        if left > 0:
+            self.queue_react[ln] = left = left - 1
+        return left == 0
 
     def _move(self, phase: int) -> None:
         n = self.n
@@ -448,18 +608,52 @@ class Simulation:
 
         # Espacio disponible de cada entrada respecto a su líder.
         lead = occ.leader
-        lead_stop = occ.has_leader & self.stopped[lead]
+        has_lead = occ.has_leader
+        side = None
+        if self.any_abreast:
+            rows = self.rows(occ)
+            side = self._side_slot(occ, rows)
+        passing = yielding = None
+        if self.any_pass_in_lane:
+            # Rebase dentro del carril: el líder que se rebasa (o que se adelanta) no cuenta; manda el siguiente.
+            skip, passing = self._in_lane_pass(occ, rows[0], side)
+            m = occ.order.size
+            after = np.minimum(np.arange(m) + 2, m - 1)
+            lead = np.where(skip, occ.veh[after], lead)
+            has_lead = np.where(skip, has_lead & _next(has_lead), has_lead)
+        lead_stop = has_lead & self.stopped[lead]
         svt = self.vtype[occ.veh]
         gap_need = np.where(lead_stop, self.gap_stop_t[svt], self.gap_run_t[svt])
+        if self.any_dynamics:
+            # Con dinámica gradual, el gap detrás de un líder en marcha crece con la velocidad propia: gap_stop
+            # casi detenido, gap_run a su velocidad deseada. Así, cuando la cola arranca, no le exige de golpe
+            # gap_run a quien estaba a gap_stop.
+            own = self.v_last[occ.veh] / np.minimum(self.vmax[occ.veh], self.lane_vmax[occ.lane])
+            gradual = self.dyn_t[svt] & ~lead_stop
+            ramp = self.gap_stop_t[svt] + (self.gap_run_t[svt] - self.gap_stop_t[svt]) * np.clip(own, 0.0, 1.0)
+            gap_need = np.where(gradual, ramp, gap_need)
         s = self.x[lead] - self.vlen[lead] - gap_need - occ.x
-        if self.any_abreast:
+        if passing is not None:
+            # Quien deja pasar puede quedar al lado del que se le adelanta, pero no volver a rebasarlo; si
+            # ambos se detienen detrás del mismo vehículo, queda SIDE_EPS atrás (como en una fila lado a lado).
+            yielding = skip & ~passing
+            front = self.x[occ.leader] - SIDE_EPS - occ.x
+            if self.any_dynamics:
+                # Con dinámica gradual cuenta lo que el que se adelanta avanzó en el último paso: si apenas lo
+                # rebasó, no lo obliga a frenar en seco.
+                front = np.where(self.dyn_t[svt], front + self.v_last[occ.leader], front)
+            s = np.where(yielding, np.minimum(s - SIDE_EPS, front), s)
+            # Si el siguiente vehículo frena a los dos, quien rebasa queda SIDE_EPS detrás del rebasado: van
+            # lado a lado en vez de empatados en la misma posición.
+            s = np.where(passing, s - SIDE_EPS, s)
+            passing = (occ.veh[passing], occ.leader[passing])  # (quien rebasa, a quién)
+        if side is not None:
             # Lugar libre al lado del líder detenido: se detiene con el frente alineado al suyo.
-            s = np.where(self._side_slot(occ), self.x[lead] - SIDE_EPS - occ.x, s)
+            s = np.where(side, self.x[occ.leader] - SIDE_EPS - occ.x, s)
         stop_e = np.empty(occ.order.size)
         move_e = np.empty(occ.order.size)
         stop_e[occ.order] = np.where(lead_stop, s, INF)
-        move_e[occ.order] = np.where(occ.has_leader & ~lead_stop, s, INF)
-        congestion = self._congestion(occ) if self.lane_cf.any() else None
+        move_e[occ.order] = np.where(has_lead & ~lead_stop, s, INF)
 
         # Por vehículo: mínimo entre su carril y, si está cambiando, el carril destino.
         stop_space = stop_e[:n]
@@ -469,8 +663,59 @@ class Simulation:
             stop_space[ch] = np.minimum(stop_space[ch], stop_e[n:])
             move_space[ch] = np.minimum(move_space[ch], move_e[n:])
         crossed = self.crossed[:n]
+        # Fuera del semáforo: quien ya cruzó y los tipos con carril exclusivo sin semáforo.
+        ruled_out = crossed | self.free_type[vt] if self.free_type.any() else crossed
+        dynamics = self.any_dynamics
+        if dynamics:
+            # Velocidad segura respecto al de adelante (el que manda en cada entrada), por vehículo.
+            v_lead = np.where(lead_stop, 0.0, self.v_last[lead])
+            if yielding is not None:
+                v_lead = np.where(yielding, np.minimum(v_lead, self.v_last[occ.leader]), v_lead)
+            safe_e = np.empty(occ.order.size)
+            safe_e[occ.order] = np.where(
+                has_lead, _safe_speed(s, v_lead, self.dec_t[svt], self.dec_t[self.vtype[lead]]), INF
+            )
+            vsafe = safe_e[:n].copy()
+            if ch.size:
+                vsafe[ch] = np.minimum(vsafe[ch], safe_e[n:])
+            dec_v = self.dec_t[vt]
+            v_prev = self.v_last[:n]
+            to_line = np.where(crossed, INF, self.L - x)
+            safe_line = _safe_speed(to_line, 0.0, dec_v, INF)
+            if phase == YELLOW:
+                # Amarillo: quien todavía puede detenerse antes de la línea (frenando a decel) se detiene.
+                halt = np.isfinite(dec_v) & ~ruled_out & (v_prev - dec_v <= safe_line + EPS)
+                stop_space = np.minimum(stop_space, np.where(halt, to_line, INF))
+                vsafe = np.minimum(vsafe, np.where(halt, safe_line, INF))
+            elif phase == RED:
+                vsafe = np.minimum(vsafe, np.where(ruled_out, INF, safe_line))
         if phase == RED:
-            stop_space = np.minimum(stop_space, np.where(crossed, INF, self.L - x))
+            stop_space = np.minimum(stop_space, np.where(ruled_out, INF, self.L - x))
+        if self.any_exit:
+            # Cola de salida sin lugar: quien no cabe en los m libres de la cola de su carril (o del destino, si
+            # está cambiando) no cruza la línea. Una cola vacía acepta a cualquiera, aunque no quepa entero.
+            need = self.vlen[:n] + self.gap_stop_t[vt]
+            used, room = self.exit_q, self.exit_storage
+
+            def no_room(lane):
+                return (used[lane] > 0) & (used[lane] + need > room[lane] + EPS)
+
+            tgt = self.lc_target[:n]
+            closed = ~crossed & (no_room(self.lane[:n]) | ((tgt >= 0) & no_room(np.maximum(tgt, 0))))
+            # Línea cerrada en el carril si no cabe el siguiente en cruzar (el de adelante que no ha cruzado).
+            self.exit_closed[:] = False
+            waiting = np.flatnonzero(~crossed)
+            if waiting.size:
+                lane_w = self.lane[:n][waiting]
+                order = np.lexsort((x[waiting], lane_w))
+                last = np.r_[lane_w[order][1:] != lane_w[order][:-1], True]
+                front = waiting[order][last]
+                self.exit_closed[self.lane[:n][front]] = closed[front]
+            self.exit_blocked_ticks += self.exit_closed
+            if closed.any():
+                stop_space = np.minimum(stop_space, np.where(closed, self.L - x, INF))
+                if dynamics:
+                    vsafe = np.minimum(vsafe, np.where(closed, safe_line, INF))
         stop_state = self.stop_state[:n]
         stop_pos = self.stop_pos[:n]
         if self.any_stop:
@@ -489,6 +734,8 @@ class Simulation:
             # Mientras la parada esté pendiente o en curso, es un alto en su posición.
             pending = (stop_state == self.AT_STOP) | ((stop_state == self.STOP_AHEAD) & ~bn_skip)
             stop_space = np.minimum(stop_space, np.where(pending, stop_pos - x, INF))
+            if dynamics:
+                vsafe = np.minimum(vsafe, np.where(pending, _safe_speed(stop_pos - x, 0.0, dec_v, INF), INF))
         space = np.minimum(stop_space, move_space)
         binding_stop = stop_space <= move_space
 
@@ -506,23 +753,31 @@ class Simulation:
                 sel = released & (vt == t)
                 react[sel] = reaction_ticks(self.rng_react[t], b, int(sel.sum()))
 
-        # Avance: velocidad máxima dentro del límite del carril, reducida al cambiar de carril, por congestión
-        # y en amarillo cerca de la línea de alto.
+        # Avance: velocidad máxima dentro del límite del carril, reducida al cambiar de carril y en amarillo cerca
+        # de la línea de alto.
         moving = ~stopped
         lane_changing = self.lc_target[:n] >= 0
         # Velocidad máxima del vehículo sin rebasar el límite del carril (el menor de sus dos
-        # carriles si está cambiando), reducida durante la maniobra y por congestión.
-        vcap = np.minimum(self.v_step[vt], self.lane_vmax[self.lane[:n]])
+        # carriles si está cambiando), reducida durante la maniobra.
+        vcap = np.minimum(self.vmax[:n], self.lane_vmax[self.lane[:n]])
         if lane_changing.any():
             tgt_lane = self.lc_target[:n][lane_changing]
             vcap[lane_changing] = np.minimum(vcap[lane_changing], self.lane_vmax[tgt_lane])
         vcap = vcap * np.where(lane_changing, b.lane_change_speed_factor, 1.0)
-        if congestion is not None:
-            vcap = vcap * congestion
         if phase == YELLOW:  # quien se aproxima a la línea de alto baja la velocidad
-            near = ~crossed & (self.L - x <= b.yellow_approach)
+            near = ~ruled_out & (self.L - x <= b.yellow_approach)
+            if dynamics:
+                # Con frenado gradual decide: se detiene si aún puede (halt, arriba) o sigue sin frenar.
+                near &= ~np.isfinite(dec_v)
             vcap = np.where(near, vcap * b.yellow_speed_factor, vcap)
-        adv = np.where(moving, np.maximum(np.minimum(vcap, space), 0.0), 0.0)
+        if dynamics:
+            # Hacia la velocidad deseada a lo más accel·DT por paso (y bajando a lo más decel·DT), sin
+            # rebasar la velocidad segura; el espacio al de adelante sigue siendo un límite duro.
+            v_new = np.maximum(np.minimum(v_prev + self.acc_t[vt], vcap), v_prev - dec_v)
+            v_new = np.minimum(v_new, vsafe)
+        else:
+            v_new = vcap
+        adv = np.where(moving, np.maximum(np.minimum(v_new, space), 0.0), 0.0)
         stopped[moving & (adv < EPS) & binding_stop] = True
         self.v_last[:n] = adv
         self.vcap_last[:n] = vcap
@@ -542,6 +797,10 @@ class Simulation:
         frac = np.where(adv > EPS, inside / np.maximum(adv, EPS), 1.0)[present]
         self.type_time += np.bincount(vt_now, weights=frac, minlength=self.n_types) * DT
         x += adv
+        if passing is not None and passing[0].size:
+            me, other = passing
+            done = (self.x[me] > self.x[other]) & (self.x[me] - adv[me] <= self.x[other] - adv[other])
+            self.in_lane_passes += np.bincount(self.vtype[me[done]], minlength=self.n_types)
 
         # Llegada a la parada: queda detenido el tiempo de descenso y ascenso.
         if self.any_stop:
@@ -591,11 +850,35 @@ class Simulation:
             self.timed_veh += np.bincount(t[timed], minlength=self.n_types)
             self.travel_ticks += np.bincount(t[timed], weights=travel, minlength=self.n_types)
             crossed[newly] = True
+            by_lane = np.bincount(self.lane[:n][newly], minlength=self.n_lanes).astype(np.float64)
+            self.lane_cross += by_lane
+            self.lane_crossed += by_lane
+            if self.any_exit:
+                for i in np.flatnonzero(newly):
+                    ln = self.lane[i]
+                    if np.isfinite(self.exit_rate[ln]):
+                        size = float(self.vlen[i] + self.gap_stop_t[vt[i]])
+                        self.exit_items[ln].append(size)
+                        self.exit_q[ln] += size
 
         # Sale del sistema cuando su parte trasera rebasa la línea.
         gone = x - self.vlen[:n] > self.L
         if gone.any():
             self._compact(~gone)
+
+    def _drain_exit(self) -> None:
+        """Salen de cada cola de salida los vehículos que acepta su capacidad en este paso. Sin cola, la
+        fracción acumulada no pasa de una salida (no se ahorran salidas para después)."""
+        limited = np.isfinite(self.exit_rate)
+        self.exit_credit += np.where(limited, self.exit_rate, 0.0)
+        for ln in np.flatnonzero(limited & (self.exit_credit >= 1)):
+            items = self.exit_items[ln]
+            while items and self.exit_credit[ln] >= 1:
+                self.exit_q[ln] -= items.popleft()
+                self.exit_credit[ln] -= 1
+            if not items:
+                self.exit_q[ln] = 0.0  # sin residuos de redondeo
+                self.exit_credit[ln] = min(self.exit_credit[ln], 1.0)
 
     def rows(self, occ: Occupancy) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Filas lado a lado en el orden de `occ`: (junto, id de fila, índice del último de su fila).
@@ -627,19 +910,19 @@ class Simulation:
         size[occ.veh[primary]] = (row_last - first + 1)[primary]
         return rank, size
 
-    def _side_slot(self, occ: Occupancy) -> np.ndarray:
+    def _side_slot(self, occ: Occupancy, rows: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None) -> np.ndarray:
         """Entradas que pueden detenerse al lado de su líder: su tipo admite `abreast` > 1, el líder
         está detenido, es de su mismo tipo (como toda su fila) y la fila tiene lugar. Solo quien
         llega en marcha toma el lugar (o quien ya lo ocupa): un vehículo ya detenido en fila, o que
         tiene a otro a su lado, no se adelanta a otra fila. No aplica a quien cambia de carril ni a
-        quien ya cruzó."""
+        quien ya cruzó. `rows` evita recalcular self.rows(occ)."""
         m = occ.order.size
         if m < 2:
             return np.zeros(m, np.bool_)
         n = self.n
         svt = self.vtype[occ.veh]
         lead = occ.leader
-        beside, rid, row_last = self.rows(occ)
+        beside, rid, row_last = self.rows(occ) if rows is None else rows
         nxt = np.minimum(np.arange(m) + 1, m - 1)  # entrada del líder (la siguiente en el orden)
         ahead = row_last[nxt] - np.arange(m)  # vehículos de la fila del líder que van delante
         starts = np.flatnonzero(np.r_[True, rid[1:] != rid[:-1]])
@@ -660,6 +943,50 @@ class Simulation:
             & ~self.crossed[occ.veh] & ~self.crossed[lead]
         )  # fmt: skip
 
+    def _in_lane_pass(self, occ: Occupancy, beside: np.ndarray, side: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Rebase dentro del carril entre vehículos en marcha del mismo tipo con `pass_in_lane`.
+
+        Devuelve, por entrada, (no cuenta a su líder, lo está rebasando). Rebasa quien tiene una
+        velocidad máxima mayor que su líder (ambas acotadas por el límite del carril), siempre que el
+        líder no tenga ya a otro a su lado ni a él lo esté alcanzando alguien por un lado: así nunca
+        van más de dos lado a lado. El líder no cuenta tampoco para quien es rebasado mientras el que
+        se le adelanta, más rápido, va a su lado o se aleja sin sacarle aún `gap_run` más un paso.
+
+        `beside` (se traslapa con su líder) y `side` (puede detenerse al lado de su líder) son los de
+        self.rows(occ) y self._side_slot(occ), ya calculados en el paso."""
+        me, lead = occ.veh, occ.leader
+        svt = self.vtype[me]
+        changing = self.lc_target[: self.n] >= 0
+        base = (
+            occ.has_leader
+            & self.pass_in_lane[svt]
+            & (self.vtype[lead] == svt)
+            & ~self.stopped[me] & ~self.stopped[lead]
+            & ~changing[me] & ~changing[lead]
+        )  # fmt: skip
+        if not base.any():
+            return base, base
+        lane_v = self.lane_vmax[occ.lane]
+        v_me = np.minimum(self.vmax[me], lane_v)
+        v_lead = np.minimum(self.vmax[lead], lane_v)
+        # El líder ya tiene a otro a su lado o va a detenerse al lado del suyo.
+        lead_beside = _next(beside | side)
+        behind_beside = _prev(beside)  # alguien lo alcanza por un lado
+        faster = v_me > v_lead + EPS
+        if self.any_dynamics:
+            # Con dinámica gradual además debe ir ya al menos tan rápido como él (no rebasa mientras acelera).
+            faster &= ~self.dyn_t[svt] | (self.v_last[me] >= self.v_last[lead] - EPS)
+        passing = base & faster & ~lead_beside & ~behind_beside
+        passing &= ~_next(passing)  # no rebasa a quien está rebasando: tres quedarían lado a lado
+        gap = self.x[lead] - self.vlen[lead] - occ.x
+        # Mientras están lado a lado y, después, mientras el que se adelanta de verdad se aleja (avanzó en el
+        # último paso al menos lo que él puede), hasta que el espacio le permita avanzar sin frenar.
+        # Con dinámica gradual se compara con su velocidad real (no puede acelerar de golpe a la deseada).
+        mine = np.where(self.dyn_t[svt], self.v_last[me], self.vcap_last[me]) if self.any_dynamics else self.vcap_last[me]
+        pulling_away = (self.v_last[lead] >= mine - EPS) & (gap < self.gap_run_t[svt] + v_me)
+        yielding = base & (v_lead > v_me + EPS) & ((gap < 0) | pulling_away)
+        return passing | yielding, passing
+
     def _lane_saturation(self, occ: Occupancy) -> np.ndarray:
         """Saturación de cada carril: largo de su cola de detenidos dentro del tramo
         (largo + gap detenido de cada uno) entre la longitud del tramo, acotada a 1.
@@ -674,24 +1001,6 @@ class Simulation:
         )
         return np.minimum(queue_m / self.L, 1.0)
 
-    def _congestion(self, occ: Occupancy) -> np.ndarray:
-        """Factor de velocidad por vehículo según la saturación de su carril.
-
-        La saturación de un carril es el largo de su cola de vehículos detenidos
-        (largo + gap detenido, dentro del tramo) entre la longitud del tramo. En un
-        carril con saturación s la velocidad se multiplica por 1 − factor del carril × s;
-        sin detenidos no hay reducción. Quien cambia de carril toma el menor factor
-        de sus dos carriles, y quien ya cruzó el semáforo no se ve afectado.
-        """
-        n = self.n
-        lane_factor = 1.0 - self.lane_cf * self._lane_saturation(occ)
-        factor = np.empty(occ.order.size)
-        factor[occ.order] = lane_factor[occ.lane]
-        per_vehicle = factor[:n].copy()
-        if occ.changing.size:
-            per_vehicle[occ.changing] = np.minimum(per_vehicle[occ.changing], factor[n:])
-        return np.where(self.crossed[:n], 1.0, per_vehicle)
-
     def _lane_changes(self) -> None:
         """Decisiones de cambio de carril de quienes circulan (no detenidos, sin maniobra ni
         enfriamiento), en orden aleatorio y con a lo más una entrada a cada carril por ronda.
@@ -703,7 +1012,7 @@ class Simulation:
         * Rebase: con un líder lento dentro de su `lookahead`, busca un carril adyacente donde
           avance más rápido y tenga `min_advantage` m más de espacio libre. Los tipos con
           `overtake` juzgan la lentitud por la velocidad real del último paso (líder en maniobra,
-          frenado por su cola o por congestión) y aceptan un carril de menor límite si ahí avanzan
+          frenado por su cola) y aceptan un carril de menor límite si ahí avanzan
           más que detrás del líder.
         * Subida: si no puede rebasar, pasa a un carril adyacente de mayor límite si hay lugar sin
           comprimir a nadie (`gap_run` adelante y atrás) y ahí no lo frena un líder dentro de su
@@ -722,12 +1031,12 @@ class Simulation:
             return
         occ = self.occupancy()
         svt = self.vtype[occ.veh]
-        lvt = self.vtype[occ.leader]
         gap = self.x[occ.leader] - self.vlen[occ.leader] - occ.x
-        # Velocidades efectivas en el carril de cada entrada (máxima del tipo, sin rebasar el límite).
+        # Velocidades efectivas en el carril de cada entrada (máxima del vehículo, sin rebasar el límite).
         lane_v = self.lane_vmax[occ.lane]
-        eff_self = np.minimum(self.v_step[svt], lane_v)
-        eff_lead = np.minimum(self.v_step[lvt], lane_v)
+        v_self = self.vmax[occ.veh]
+        eff_self = np.minimum(v_self, lane_v)
+        eff_lead = np.minimum(self.vmax[occ.leader], lane_v)
         lead_stopped = self.stopped[occ.leader]
         slow = occ.has_leader & ((eff_lead < eff_self) | lead_stopped)
         stuck_speed = np.where(lead_stopped, 0.0, eff_lead)  # a la que lo obliga su líder
@@ -739,7 +1048,7 @@ class Simulation:
             stuck_speed = np.where(over, v_lead, stuck_speed)
         # Condición común: líder cercano que va al menos `leader_slowdown` por debajo del límite del carril.
         b = self.cfg.behavior
-        lane_max = np.where(np.isfinite(lane_v), lane_v, self.v_step[svt])
+        lane_max = np.where(np.isfinite(lane_v), lane_v, v_self)
         v_ahead = np.where(lead_stopped, 0.0, self.v_last[occ.leader])
         blocked = (
             cand[occ.veh]
@@ -748,17 +1057,15 @@ class Simulation:
             & (v_ahead < (1.0 - b.leader_slowdown) * lane_max - EPS)
         )
         passing = blocked & slow
-        rising = blocked & self.can_rise[svt, occ.lane]
+        rising = blocked & self._can_rise(occ, eff_self) if self.any_rise else np.zeros_like(blocked)
         idx = np.flatnonzero(passing | rising)
         if idx.size == 0:
             return
 
-        # Factor de congestión de cada carril, para comparar con la velocidad real del líder.
-        lane_factor = 1.0 - self.lane_cf * self._lane_saturation(occ) if over.any() and self.lane_cf.any() else None
         bounds = np.searchsorted(occ.lane, np.arange(self.n_lanes + 1))
         used: set[int] = set()
         for k in self.rng_lane_change.permutation(idx):
-            best = self._pass_lane(occ, bounds, used, k, gap[k], stuck_speed[k], lane_factor) if passing[k] else -1
+            best = self._pass_lane(occ, bounds, used, k, gap[k], stuck_speed[k]) if passing[k] else -1
             if best < 0 and rising[k]:
                 best = self._rise_lane(occ, bounds, used, k)
             if best >= 0:
@@ -769,6 +1076,19 @@ class Simulation:
                 self.lane_changes += 1
                 self.lane_changes_t[self.vtype[i]] += 1
 
+    def _can_rise(self, occ: Occupancy, eff_self: np.ndarray) -> np.ndarray:
+        """Entradas con un carril adyacente permitido donde su velocidad máxima (acotada por el límite)
+        es mayor que en el propio: candidatos a subir."""
+        svt = self.vtype[occ.veh]
+        out = np.zeros(occ.order.size, np.bool_)
+        for d in (1, -1):
+            adj = occ.lane + d
+            ok = (adj >= 0) & (adj < self.n_lanes)
+            adj = np.clip(adj, 0, self.n_lanes - 1)
+            faster = np.minimum(self.vmax[occ.veh], self.lane_vmax[adj]) > eff_self + EPS
+            out |= ok & self.allowed[svt, adj] & faster
+        return out & self.can_change[svt]
+
     def _neighbors(self, occ: Occupancy, bounds: np.ndarray, lane: int, x: float) -> tuple[int, int]:
         """(líder, seguidor) que tendría en `lane` un vehículo con el frente en x; -1 si no hay."""
         lo, hi = bounds[lane], bounds[lane + 1]
@@ -776,8 +1096,7 @@ class Simulation:
         return (int(occ.veh[p]) if p < hi else -1), (int(occ.veh[p - 1]) if p > lo else -1)
 
     def _pass_lane(
-        self, occ: Occupancy, bounds: np.ndarray, used: set[int], k: int, gap: float, stuck_speed: float,
-        lane_factor: np.ndarray | None,
+        self, occ: Occupancy, bounds: np.ndarray, used: set[int], k: int, gap: float, stuck_speed: float
     ) -> int:  # fmt: skip
         """Carril adyacente para rebasar al líder lento de la entrada k; -1 si ninguno conviene."""
         i, xi, li = int(occ.veh[k]), occ.x[k], int(occ.lane[k])
@@ -788,23 +1107,21 @@ class Simulation:
         for tl in (li + 1, li - 1):  # prefiere rebasar por la izquierda
             if tl < 0 or tl >= self.n_lanes or tl in used or not self.allowed[vi, tl]:
                 continue
-            v_there = min(self.v_step[vi], self.lane_vmax[tl])
-            if over and lane_factor is not None:
-                v_there *= lane_factor[tl]
+            v_there = min(self.vmax[i], self.lane_vmax[tl])
             if v_there <= stuck_speed:  # ese carril no mejora la velocidad actual
                 continue
             j, f = self._neighbors(occ, bounds, tl, xi)
             score = look
             if j >= 0:  # líder en el carril destino
                 front = self.x[j] - self.vlen[j] - xi
-                if front < self.gap_stop_t[vi]:
+                if front < self.gap_stop_t[vi] or not self._can_brake_behind(i, j, front):
                     continue
-                v_j = self.v_last[j] + EPS if over else min(self.v_step[self.vtype[j]], self.lane_vmax[tl])
+                v_j = self.v_last[j] + EPS if over else min(self.vmax[j], self.lane_vmax[tl])
                 if v_j < v_there or self.stopped[j]:
                     score = min(front, look)
             if f >= 0:  # seguidor en el carril destino: se comprime, pero sin traslape
                 back = xi - self.vlen[i] - self.x[f]
-                if back < self.gap_stop_t[self.vtype[f]]:
+                if back < self.gap_stop_t[self.vtype[f]] or not self._can_brake_behind(f, i, back):
                     continue
             if score >= best_score:
                 best, best_score = tl, score
@@ -814,25 +1131,40 @@ class Simulation:
         """Carril adyacente de mayor límite al que la entrada k puede subir; -1 si no hay lugar."""
         i, xi, li = int(occ.veh[k]), occ.x[k], int(occ.lane[k])
         vi = self.vtype[i]
-        best, best_v = -1, min(self.v_step[vi], self.lane_vmax[li]) + EPS
+        best, best_v = -1, min(self.vmax[i], self.lane_vmax[li]) + EPS
         for tl in (li + 1, li - 1):
             if tl < 0 or tl >= self.n_lanes or tl in used or not self.allowed[vi, tl]:
                 continue
-            v_there = min(self.v_step[vi], self.lane_vmax[tl])
+            v_there = min(self.vmax[i], self.lane_vmax[tl])
             if v_there <= best_v:
                 continue
             j, f = self._neighbors(occ, bounds, tl, xi)
             if j >= 0:
                 front = self.x[j] - self.vlen[j] - xi
-                if front < self.gap_run_t[vi]:
+                if front < self.gap_run_t[vi] or not self._can_brake_behind(i, j, front):
                     continue
                 # Un líder cercano detenido o no más rápido que él le quita la ventaja.
                 if front < self.lookahead_t[vi] and (self.stopped[j] or self.v_last[j] <= self.v_last[i] + EPS):
                     continue
-            if f >= 0 and xi - self.vlen[i] - self.x[f] < self.gap_run_t[self.vtype[f]]:
-                continue
+            if f >= 0:
+                back = xi - self.vlen[i] - self.x[f]
+                if back < self.gap_run_t[self.vtype[f]] or not self._can_brake_behind(f, i, back):
+                    continue
             best, best_v = tl, v_there
         return best
+
+    def _can_brake_behind(self, i: int, j: int, gap: float) -> bool:
+        """Con frenado gradual, `i` puede quedar `gap` m detrás de `j` sin frenar más que su `decel`
+        (con un cambio de carril, sea quien cambia o el seguidor del carril destino). Sin frenado
+        gradual, siempre."""
+        dec = self.dec_t[self.vtype[i]]
+        if not math.isfinite(dec):
+            return True
+        stopped = self.stopped[j]
+        room = gap - (self.gap_stop_t if stopped else self.gap_run_t)[self.vtype[i]]
+        safe = _safe_speed_1(room, 0.0 if stopped else float(self.v_last[j]), dec, self.dec_t[self.vtype[j]])
+        # También el límite duro: en un paso no avanza más que `room` (medido desde donde está j ahora).
+        return self.v_last[i] - dec <= min(safe, room) + EPS
 
     def _sample(self) -> None:
         n = self.n
@@ -857,7 +1189,9 @@ class Simulation:
             ins = ~self.crossed[occ.veh] & (self.pax[occ.veh] > 0)
             footprint = np.bincount(svt[ins], weights=fp[ins], minlength=self.n_types)
             lane_sat = self._lane_saturation(occ)
-        self.recorder.record(self.cum_pax, self.pax_m, pax_on, footprint, lane_sat, self.lane_dist, self.lane_time)
+        self.recorder.record(self.cum_pax, self.pax_m, pax_on, footprint, lane_sat, self.lane_dist, self.lane_time,
+                             self.lane_cross, self.exit_q, [len(q) for q in self.queues])  # fmt: skip
+        self.lane_cross[:] = 0.0
         self.pax_m[:] = 0.0
         self.lane_dist[:] = 0.0
         self.lane_time[:] = 0.0
@@ -897,6 +1231,9 @@ class Simulation:
             "on_road": on_road,
             "lane_changes": np.array([float(self.lane_changes)]),
             "lane_changes_type": self.lane_changes_t.copy(),
+            "in_lane_passes": self.in_lane_passes.copy(),
+            "lane_crossed": self.lane_crossed.copy(),  # cruces de la línea por carril
+            "exit_blocked": self.exit_blocked_ticks / max(self.tick, 1),  # fracción del tiempo con la línea cerrada
             "stop_time": self.stop_time_ticks * DT / np.where(self.stops > 0, self.stops, np.nan),
             "bottleneck_stops": self.bn_stops.copy(),
             "bottleneck_time": self.bn_ticks * DT / np.where(self.bn_stops > 0, self.bn_stops, np.nan),

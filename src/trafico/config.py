@@ -21,7 +21,7 @@ class VehicleSpec:
 
     key: str  # clave en el archivo de configuración: [vehicles.<key>] y [demand] <key>_rate
     name: str  # etiqueta en gráficas, resumen y CSV
-    speed_kmh: float  # velocidad máxima que puede alcanzar el vehículo
+    speed_kmh: float  # velocidad máxima que puede alcanzar el vehículo (media, si es variable)
     length: float  # m
     gap_run: float  # m, distancia al líder cuando éste está en marcha
     gap_stop: float  # m, distancia al líder detenido (compresión)
@@ -40,6 +40,9 @@ class VehicleSpec:
     stop_time_std: float = 5.0
     # Al detenerse, cuántos vehículos de este tipo caben lado a lado en un carril (p. ej. 2 bicis).
     abreast: int = 1
+    # Rebase dentro del carril (p. ej. bicis): en marcha, quien es más rápido que el de adelante de su
+    # mismo tipo lo rebasa por un lado sin cambiar de carril. Requiere abreast ≥ 2.
+    pass_in_lane: bool = False
     # Rebase agresivo (p. ej. motos): detecta al líder lento por su velocidad real y acepta un carril
     # de menor límite si ahí avanza más que detrás de él.
     overtake: bool = False
@@ -47,6 +50,11 @@ class VehicleSpec:
     lookahead: float | None = None
     min_advantage: float | None = None
     lane_change_cooldown: float | None = None
+    # Aceleración y frenado graduales (m/s²). Sin ellos (None), el vehículo pasa de inmediato a su
+    # velocidad y se detiene en seco, como antes. Con `decel` además anticipa: no rebasa la velocidad a
+    # la que aún puede detenerse frenando a `decel` detrás del de adelante o antes de un alto.
+    accel: float | None = None
+    decel: float | None = None
     # Probabilidad de que un vehículo que llega lleve mercancía en vez de pasajeros: ocupa la vía,
     # pero no cuenta en las métricas de pasajeros (1 = el tipo solo lleva mercancía).
     cargo_prob: float = 0.0
@@ -56,6 +64,12 @@ class VehicleSpec:
     length_std: float = 0.0
     length_min: float | None = None
     length_max: float | None = None
+    # Velocidad máxima variable: normal(speed_kmh, speed_std) truncada a [speed_min, speed_max] (por
+    # defecto, speed_kmh ∓ 3·speed_std), sorteada para cada vehículo. Con speed_std = 0, todos van a
+    # speed_kmh. En el TOML, las cuatro van en [vehicles.<clave>] speed_kmh = {min, max, mean, std}.
+    speed_std: float = 0.0
+    speed_min: float | None = None
+    speed_max: float | None = None
     # Detenciones de [bottleneck]: probabilidad de que un vehículo del tipo se detenga una vez en el
     # tramo (0 = nunca) y duración normal(media, σ) en s, truncada a ≥ 0. Dónde ocurren (carriles y
     # zona) se define en [bottleneck].
@@ -65,8 +79,22 @@ class VehicleSpec:
 
     @property
     def speed(self) -> float:
-        """Velocidad constante en m/s."""
+        """Velocidad máxima media del tipo (el parámetro `mean`) en m/s."""
         return self.speed_kmh / 3.6
+
+    @property
+    def slowest_kmh(self) -> float:
+        """Velocidad máxima más baja que puede tener un vehículo del tipo (km/h)."""
+        if self.speed_std <= 0:
+            return self.speed_kmh
+        return self.speed_min if self.speed_min is not None else self.speed_kmh - 3 * self.speed_std
+
+    @property
+    def fastest_kmh(self) -> float:
+        """Velocidad máxima más alta que puede tener un vehículo del tipo (km/h)."""
+        if self.speed_std <= 0:
+            return self.speed_kmh
+        return self.speed_max if self.speed_max is not None else self.speed_kmh + 3 * self.speed_std
 
     @property
     def shortest(self) -> float:
@@ -139,12 +167,10 @@ class Behavior:
     # cruzado) avanza a `yellow_speed_factor` de su velocidad.
     yellow_approach: float = 50.0
     yellow_speed_factor: float = 0.5
-    # Reducción máx. de velocidad con el carril saturado de cola (0 = sin efecto): un número para
-    # todos los carriles o un valor por carril, empezando por el derecho (carril 0).
-    congestion_factor: float | tuple[float, ...] = 0.0
-
-    def congestion_by_lane(self, lanes: int) -> tuple[float, ...]:
-        return per_lane(self.congestion_factor, lanes)
+    # Cola de entrada detenida (la cola del tramo llega hasta la entrada y está detenida): cada vehículo
+    # que espera en ella arranca con su tiempo de reacción cuando se mueve el de adelante, en vez de
+    # entrar ya en marcha en cuanto hay lugar.
+    queue_reaction: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,12 +238,21 @@ class SimConfig:
     green: float = 30.0  # s
     yellow: float = 0.0  # s, entre el verde y el rojo; 0 = sin amarillo
     start_phase: str = "red"  # "red" | "green"
+    # Carriles sin semáforo (0 = derecho), p. ej. una vuelta continua. Solo aplica a los tipos con carril
+    # exclusivo (`lane` y `exclusive`) en uno de ellos: cruzan la línea aunque esté en rojo y no bajan la
+    # velocidad en amarillo.
+    free_lanes: tuple[int, ...] = ()
     run: float = 10.0  # s de proceso
     time_scale: float = 10.0  # s simulados por cada s de proceso
     sample: float = 1.0  # s simulados entre muestras
     # Condición inicial: fracción de cada carril ya ocupada al empezar por vehículos en marcha,
     # (largo + gap_run) / length; un número para todos o uno por carril. 0 = tramo vacío.
     initial_occupancy: float | tuple[float, ...] = 0.0
+    # Cola de salida después del semáforo, por carril (un número para todos o uno por carril): cuántos
+    # vehículos por minuto acepta (0 = sin cola de salida) y cuántos m mide (cada vehículo ocupa su largo +
+    # gap detenido). Quien no cabe no puede cruzar la línea aunque esté en verde.
+    exit_capacity: float | tuple[float, ...] = 0.0
+    exit_storage: float | tuple[float, ...] = 60.0
     specs: tuple[VehicleSpec, ...] = DEFAULT_SPECS
     behavior: Behavior = field(default_factory=Behavior)
     bottleneck: Bottleneck = field(default_factory=Bottleneck)
@@ -241,10 +276,6 @@ class SimConfig:
     @property
     def n_types(self) -> int:
         return len(self.specs)
-
-    @property
-    def lane_congestion(self) -> tuple[float, ...]:
-        return self.behavior.congestion_by_lane(self.lanes)
 
     def bottleneck_prob(self, k: int) -> float:
         """Probabilidad de que un vehículo del tipo k se detenga en un cuello de botella."""
@@ -272,6 +303,16 @@ class SimConfig:
         return per_lane(self.initial_occupancy, self.lanes)
 
     @property
+    def lane_exit_capacity(self) -> tuple[float, ...]:
+        """veh/min que acepta la cola de salida de cada carril (0 = sin cola de salida)."""
+        return per_lane(self.exit_capacity, self.lanes)
+
+    @property
+    def lane_exit_storage(self) -> tuple[float, ...]:
+        """m que mide la cola de salida de cada carril (cada vehículo ocupa su largo + gap detenido)."""
+        return per_lane(self.exit_storage, self.lanes)
+
+    @property
     def lane_max_kmh(self) -> tuple[float, ...]:
         """Límite de velocidad de cada carril (inf si no hay límite)."""
         if self.lane_speed_limit is None:
@@ -282,6 +323,11 @@ class SimConfig:
     def reserved_lanes(self) -> frozenset[int]:
         """Carriles exclusivos: los de los tipos con `exclusive` y carril fijo."""
         return frozenset(s.lane for s in self.specs if s.exclusive and s.lane is not None)
+
+    def ignores_light(self, k: int) -> bool:
+        """El tipo k no obedece el semáforo: tiene carril exclusivo y ese carril está en `free_lanes`."""
+        spec = self.specs[k]
+        return spec.exclusive and spec.lane is not None and spec.lane in self.free_lanes
 
     def allowed_lanes(self, k: int) -> tuple[int, ...]:
         """Carriles que puede usar el tipo k: su carril fijo o, si no tiene, los no reservados."""
@@ -301,9 +347,33 @@ class SimConfig:
         return allowed[:1]  # el carril libre más a la derecha
 
     def free_flow_kmh(self, k: int) -> float:
-        """Velocidad a flujo libre del tipo k: su máxima, sin rebasar el límite del mejor carril que puede usar."""
+        """Velocidad a flujo libre del tipo k: su máxima (la media, si es variable), sin rebasar el límite
+        del mejor carril que puede usar."""
+        return min(self.specs[k].speed_kmh, self._best_limit_kmh(k))
+
+    def free_flow_time(self, k: int) -> float:
+        """Tiempo medio (s) en recorrer el tramo a flujo libre para el tipo k, sin paradas. Con velocidad
+        variable es la media de length / min(v, límite) sobre la normal truncada de v, no length entre
+        la velocidad media."""
+        spec = self.specs[k]
+        limit = self._best_limit_kmh(k)
+        if spec.speed_std <= 0:
+            return self.length / (min(spec.speed_kmh, limit) / 3.6)
+        # Regla del punto medio sobre [slowest, fastest] con la densidad normal (la truncadura normaliza).
+        lo, hi, n = spec.slowest_kmh, spec.fastest_kmh, 2000
+        step = (hi - lo) / n
+        num = den = 0.0
+        for i in range(n):
+            v = lo + (i + 0.5) * step
+            w = math.exp(-0.5 * ((v - spec.speed_kmh) / spec.speed_std) ** 2)
+            num += w * self.length / (min(v, limit) / 3.6)
+            den += w
+        return num / den
+
+    def _best_limit_kmh(self, k: int) -> float:
+        """Límite del carril más rápido por el que entra el tipo k (inf si no hay límites)."""
         limits = self.lane_max_kmh
-        return min(self.specs[k].speed_kmh, max((limits[i] for i in self.entry_lanes(k)), default=math.inf))
+        return max((limits[i] for i in self.entry_lanes(k)), default=math.inf)
 
     @property
     def sim_seconds(self) -> float:

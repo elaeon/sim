@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from trafico.cli import CONFIG_NAME, _lights, latest_run_dir, variants
-from trafico.config import BUS, CAR, DEFAULT_SPECS, Behavior, Bottleneck, SimConfig
+from trafico.config import BUS, CAR, DEFAULT_SPECS, Bottleneck, SimConfig
 from trafico.settings import ConfigError
 from trafico.variants import (
     BASE_CONFIG_NAME, DATA_NAME, META_NAME, PLOT_NAME, QUEUE_CSV, SPEED_CSV, SUMMARY_NAME, Variants, light_name,
@@ -20,7 +20,7 @@ def _base() -> SimConfig:
         length=300, lanes=4, lane_speed_limit=(20.0, 30.0, 50.0, 80.0), rates=(18, 8, 1),
         specs=(replace(car, bottleneck_prob=0.3), replace(bike, lane=0, exclusive=True),
                replace(bus, lane=3, exclusive=True, stop_position=250.0)),
-        behavior=Behavior(congestion_factor=(0.05, 0.5, 0.4, 0.6)), initial_occupancy=(0.0, 0.3, 0.2, 0.0),
+        initial_occupancy=(0.0, 0.3, 0.2, 0.0),
         bottleneck=Bottleneck(stop_lanes=(1,)),
     )  # fmt: skip
 
@@ -28,13 +28,23 @@ def _base() -> SimConfig:
 def test_reduce_config_keeps_the_chosen_lanes():
     cfg = reduce_config(_base(), (1, 2), ("bike", "bus"))
     assert cfg.lanes == 2
-    assert cfg.lane_max_kmh == (30.0, 50.0) and cfg.lane_congestion == (0.5, 0.4)
+    assert cfg.lane_max_kmh == (30.0, 50.0)
     assert cfg.lane_initial_occupancy == (0.3, 0.2)
     assert cfg.bottleneck_lanes() == (0,)  # el carril 1 de la base es el 0
     assert cfg.rates == (18, 0.0, 0.0)
     # Los tipos que no participan no dejan carriles reservados ni paradas.
     assert cfg.reserved_lanes == frozenset() and cfg.specs[BUS].stop_position is None
     assert cfg.specs[CAR].bottleneck_prob == 0.3
+
+
+def test_reduce_config_keeps_exit_queue_and_free_lanes_of_the_chosen_lanes():
+    base = replace(_base(), exit_capacity=(0.0, 6.0, 8.0, 2.0), exit_storage=(10.0, 55.0, 60.0, 20.0),
+                   free_lanes=(0, 3))  # carriles exclusivos de bicis y autobuses  # fmt: skip
+    cfg = reduce_config(base, (3, 1), ("bike",))
+    assert cfg.lane_exit_capacity == (2.0, 6.0) and cfg.lane_exit_storage == (20.0, 55.0)
+    assert cfg.free_lanes == (0,)  # el 3 de la base (autobuses) es el 0; el de las bicis no quedó
+    # Sin los autobuses, su carril deja de ser exclusivo y deja de estar sin semáforo.
+    assert reduce_config(base, (3, 1), ("bike", "bus")).free_lanes == ()
 
 
 def test_reduce_config_errors():

@@ -11,7 +11,14 @@ LANE_SATURATION = "lane_saturation"
 """Serie con una columna por carril: fracción del tramo ocupada por la cola de detenidos."""
 LANE_SPEED = "lane_speed"
 """Serie con una columna por carril: velocidad media (km/h) de sus vehículos, con los detenidos."""
-LANE_SERIES = (LANE_SATURATION, LANE_SPEED)
+LANE_EXIT_FLOW = "lane_exit_flow"
+"""Serie con una columna por carril: vehículos por minuto que cruzan el semáforo (ventana de un ciclo)."""
+EXIT_QUEUE = "exit_queue"
+"""Serie con una columna por carril: m ocupados en la cola de salida después del semáforo."""
+ENTRY_QUEUE = "entry_queue"
+"""Serie con una columna por carril: vehículos en la cola de entrada (ya llegaron, aún no caben en el tramo)."""
+LANE_STATS = (LANE_SATURATION, LANE_EXIT_FLOW, LANE_SPEED, ENTRY_QUEUE, EXIT_QUEUE)
+"""Series por carril que se agregan entre réplicas."""
 SMOOTH_S = 10.0  # s de la media móvil de pax·km/h
 SPEED_BIN = 0.5  # km/h, ancho de los intervalos del histograma de velocidad por carril
 """Series derivadas que se agregan y grafican (una columna por tipo de vehículo)."""
@@ -29,9 +36,12 @@ class Recorder:
         self.lane_sat = np.zeros((n_samples, n_lanes), np.float32)  # saturación de cada carril
         self.lane_dist = np.zeros((n_samples, n_lanes), np.float32)  # m recorridos en el intervalo
         self.lane_time = np.zeros((n_samples, n_lanes), np.float32)  # vehículo·s en el intervalo
+        self.lane_cross = np.zeros((n_samples, n_lanes), np.float32)  # cruces de la línea en el intervalo
+        self.exit_q = np.zeros((n_samples, n_lanes), np.float32)  # m ocupados en la cola de salida
+        self.entry_q = np.zeros((n_samples, n_lanes), np.float32)  # vehículos en la cola de entrada
         self.count = 0
 
-    def record(self, cum_pax, pax_m, pax_on, footprint, lane_sat, lane_dist, lane_time) -> None:
+    def record(self, cum_pax, pax_m, pax_on, footprint, lane_sat, lane_dist, lane_time, lane_cross, exit_q, entry_q) -> None:
         i = self.count
         if i >= self.cum_pax.shape[0]:
             return
@@ -42,6 +52,9 @@ class Recorder:
         self.lane_sat[i] = lane_sat
         self.lane_dist[i] = lane_dist
         self.lane_time[i] = lane_time
+        self.lane_cross[i] = lane_cross
+        self.exit_q[i] = exit_q
+        self.entry_q[i] = entry_q
         self.count += 1
 
 
@@ -64,6 +77,7 @@ def derive_series(rec: Recorder, cfg: SimConfig) -> dict[str, np.ndarray]:
 
     # Flujo en ventana móvil de un ciclo de semáforo.
     flow = _window_rate(cum, round(cfg.cycle / dt), dt) * 60.0
+    lane_flow = _window_rate(np.cumsum(rec.lane_cross, axis=0, dtype=np.float64), round(cfg.cycle / dt), dt) * 60.0
     # pax·m del intervalo -> pax·km/h, suavizado con media móvil.
     pax_m_cum = np.cumsum(rec.pax_m, axis=0, dtype=np.float64)
     paxkm_h = _window_rate(pax_m_cum, round(SMOOTH_S / dt), dt) * 3600.0 / 1000.0
@@ -82,12 +96,15 @@ def derive_series(rec: Recorder, cfg: SimConfig) -> dict[str, np.ndarray]:
         "pax_per_m": per_m.astype(np.float32),
         LANE_SATURATION: rec.lane_sat.copy(),
         LANE_SPEED: lane_speed.astype(np.float32),
+        LANE_EXIT_FLOW: lane_flow.astype(np.float32),
+        EXIT_QUEUE: rec.exit_q.copy(),
+        ENTRY_QUEUE: rec.entry_q.copy(),
     }
 
 
 def speed_bin_count(cfg: SimConfig) -> int:
     """Intervalos de SPEED_BIN km/h desde 0 hasta la velocidad máxima de cualquier tipo."""
-    return int(np.ceil(max(s.speed_kmh for s in cfg.specs) / SPEED_BIN)) + 1
+    return int(np.ceil(max(s.fastest_kmh for s in cfg.specs) / SPEED_BIN)) + 1
 
 
 def lane_speed_histogram(rec: Recorder, cfg: SimConfig) -> np.ndarray:
