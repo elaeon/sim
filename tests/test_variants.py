@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from trafico.cli import CONFIG_NAME, _lights, latest_run_dir, variants
-from trafico.config import BUS, CAR, DEFAULT_SPECS, Bottleneck, SimConfig
+from trafico.config import BUS, CAR, DEFAULT_SPECS, Bottleneck, SimConfig, SpeedBump
 from trafico.settings import ConfigError
 from trafico.variants import (
     BASE_CONFIG_NAME, DATA_NAME, META_NAME, PLOT_NAME, QUEUE_CSV, SPEED_CSV, SUMMARY_NAME, Variants, light_name,
@@ -45,6 +45,14 @@ def test_reduce_config_keeps_exit_queue_and_free_lanes_of_the_chosen_lanes():
     assert cfg.free_lanes == (0,)  # el 3 de la base (autobuses) es el 0; el de las bicis no quedó
     # Sin los autobuses, su carril deja de ser exclusivo y deja de estar sin semáforo.
     assert reduce_config(base, (3, 1), ("bike", "bus")).free_lanes == ()
+
+
+def test_reduce_config_keeps_the_speed_bump_of_the_chosen_lanes():
+    base = replace(_base(), speed_bump=SpeedBump(position=100.0, lanes=(1, 2)))
+    assert reduce_config(base, (2, 3), ("bike",)).speed_bump == SpeedBump(position=100.0, lanes=(0,))
+    assert reduce_config(base, (0, 3), ("car",)).speed_bump_lanes() == ()  # ninguno de sus carriles: sin tope
+    everywhere = replace(_base(), speed_bump=SpeedBump(position=100.0))
+    assert reduce_config(everywhere, (1, 2), ("bike", "bus")).speed_bump_lanes() == (0, 1)
 
 
 def test_reduce_config_errors():

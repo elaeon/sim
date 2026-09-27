@@ -114,3 +114,46 @@ def test_lane_speed_histogram_counts_only_samples_with_vehicles():
     hist = lane_speed_histogram(rec, cfg)
     assert hist[0].sum() == 2 and hist[0, 0] == 1 and hist[0, int(36 / SPEED_BIN)] == 1
     assert hist[1].sum() == 1 and hist[1, int(18 / SPEED_BIN)] == 1
+
+
+def test_outputs_without_traffic_light(tmp_path):
+    """Sin semáforo se generan la gráfica, el CSV y el diagrama espacio-tiempo, sin fases ni textos de semáforo."""
+    from trafico.cli import write_csv
+    from trafico.movement import plot_space_time, record
+    from trafico.plotting import _titles, phase_handles, plot_mobility
+
+    cfg = SimConfig(length=150, lanes=2, rates=(20, 4, 1), run=10, traffic_light=False)
+    agg = run_parallel(cfg, 2, 1, 5)
+    plot_mobility(agg, tmp_path / "movilidad.png")
+    write_csv(agg, tmp_path / "series.csv")
+    plot_space_time(record(cfg, 5, 1, 0, 30), tmp_path / "espacio.png", "prueba")
+    assert (tmp_path / "movilidad.png").stat().st_size > 10_000 and (tmp_path / "espacio.png").exists()
+    assert phase_handles(cfg) == [] and "ventana de 60 s" in _titles(cfg)["pax_flow"]
+    assert "semáforo" not in " ".join(_titles(cfg).values())
+
+
+def test_emission_outputs(tmp_path):
+    """Con autos que emiten: filas del resumen, tabla al acelerar, columnas del CSV, CSV y figura por posición, y la
+    fila de emisiones en la gráfica. Sin tipos que emitan, nada de eso."""
+    from dataclasses import replace
+
+    from trafico.cli import format_summary, write_csv, write_emissions_csv
+    from trafico.config import DEFAULT_SPECS
+    from trafico.plotting import plot_emissions_by_position, plot_mobility
+
+    car = replace(DEFAULT_SPECS[0], accel=2.5, decel=4.5)
+    cfg = SimConfig(length=150, lanes=2, rates=(10, 2, 0), run=10, specs=(car, *DEFAULT_SPECS[1:]))
+    agg = run_parallel(cfg, 2, 1, 5)
+    text = format_summary(agg)
+    assert "CO2 (g/km)" in text and "NOx exceso vs flujo libre (%)" in text and "PM" not in text
+    assert "0→20 km/h en 2.2 s" in text
+    write_csv(agg, tmp_path / "series.csv")
+    assert "emis_co2_g_min_auto_media" in (tmp_path / "series.csv").read_text().splitlines()[0]
+    write_emissions_csv(agg, tmp_path / "pos.csv")
+    header = (tmp_path / "pos.csv").read_text().splitlines()[0]
+    assert header.startswith("x_inicio_m,x_fin_m,co2_g_m_h_carril0")
+    plot_emissions_by_position(agg, tmp_path / "pos.png")
+    plot_mobility(agg, tmp_path / "mov.png")
+    assert (tmp_path / "pos.png").stat().st_size > 10_000
+    quiet = run_parallel(SimConfig(length=150, lanes=2, rates=(10, 2, 0), run=10), 1, 1, 5)
+    assert "CO2" not in format_summary(quiet)

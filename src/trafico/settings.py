@@ -10,7 +10,10 @@ from datetime import datetime
 from pathlib import Path
 
 from trafico import __version__
-from trafico.config import DEFAULT_RATES, DEFAULT_SPECS, DT, MAX_TYPES, Behavior, Bottleneck, Rate, SimConfig, VehicleSpec
+from trafico.config import (
+    DEFAULT_RATES, DEFAULT_SPECS, DT, MAX_TYPES, POLLUTANTS, Behavior, Bottleneck, Rate, SimConfig, SpeedBump,
+    VehicleSpec,
+)
 
 CONFIG_NAME = "config.toml"
 DEFAULT_RUN_NAME = "corrida"
@@ -86,7 +89,7 @@ class AnimationOptions:
 
     def window(self, sim: SimConfig) -> tuple[float, float]:
         """(inicio, fin) en s simulados, sin pasar del final de la corrida."""
-        duration = self.duration if self.duration is not None else 2 * sim.cycle
+        duration = self.duration if self.duration is not None else 2 * sim.flow_window
         return self.start, min(self.start + duration, sim.sim_seconds)
 
 
@@ -197,6 +200,10 @@ def parse_settings(text: str, path: Path) -> Settings:
         stop_lanes=r.get(("bottleneck", "stop_lanes"), INTS, bn.stop_lanes),
         stop_zone=_zone(r.get(("bottleneck", "stop_zone"), FLOATS, bn.stop_zone)),
     )
+    speed_bump = SpeedBump(
+        position=r.get(("speed_bump", "position"), float, None),
+        lanes=r.get(("speed_bump", "lanes"), INTS, None),
+    )
 
     d = SimConfig()
     occupancy = r.get(("initial", "occupancy"), FLOATS, d.initial_occupancy)
@@ -228,6 +235,7 @@ def parse_settings(text: str, path: Path) -> Settings:
         green=r.get(("traffic_light", "green"), float, d.green),
         yellow=r.get(("traffic_light", "yellow"), float, d.yellow),
         start_phase=r.get(("traffic_light", "start_phase"), str, d.start_phase),
+        traffic_light=r.get(("traffic_light", "enabled"), bool, d.traffic_light),
         free_lanes=r.get(("traffic_light", "free_lanes"), INTS, d.free_lanes),
         # Solo con alguna tasa variable hace falta la distribución; si todas son fijas, basta su valor.
         **({"rate_dists": rates} if any(rate.variable for rate in rates) else {"rates": tuple(r.expected for r in rates)}),
@@ -241,6 +249,7 @@ def parse_settings(text: str, path: Path) -> Settings:
         specs=specs,
         behavior=behavior,
         bottleneck=bottleneck,
+        speed_bump=speed_bump,
     )
 
     o = RunOptions()
@@ -285,7 +294,40 @@ def parse_settings(text: str, path: Path) -> Settings:
         raise ConfigError(msg)
     validate_config(sim, opts)
     validate_animation(anim, sim, opts.replicas)
+    # Aviso solo para las emisiones escritas en el archivo (el auto y el autobús incorporados traen coeficientes).
+    written = {key for key, value in r.data.get("vehicles", {}).items() if isinstance(value, dict) and "emissions" in value}
+    silent = [sp.name for k, sp in enumerate(sim.specs)
+              if sp.key in written and sp.emissions and not sp.emits and sim.rates[k] > 0]  # fmt: skip
+    if silent:
+        notices += (f"Aviso: sin accel y decel no se calculan las emisiones de {', '.join(silent)} (el modelo usa la "
+                    "aceleración real)",)  # fmt: skip
     return Settings(sim=sim, run=opts, path=path, text=text, notices=notices, animation=anim)
+
+
+def _emissions(r: _Reader, key: str, default: tuple) -> tuple:
+    """[vehicles.<clave>.emissions]: por contaminante, los coeficientes [f1..f6] del modelo de Int Panis et al.
+    (2006) y, opcional, `<contaminante>_decel` para a < −0.5 m/s² (por defecto, los mismos). Si la sección está,
+    reemplaza a la del tipo incorporado; vacía, el tipo no emite."""
+    table = r.data.get("vehicles", {}).get(key, {}).get("emissions")
+    if table is None:
+        return default
+    label = f"[vehicles.{key}.emissions]"
+    if not isinstance(table, dict):
+        raise ConfigError(f"[vehicles.{key}] emissions debe ser una sección {label}")
+    out = []
+    for pol in POLLUTANTS:
+        coefs = {}
+        for name in (pol, f"{pol}_decel"):
+            value = r.get(("vehicles", key, "emissions", name), FLOATS, None)
+            if value is not None and (not isinstance(value, tuple) or len(value) != 6):
+                raise ConfigError(f"{label} {name} debe ser una lista de 6 números [f1, f2, f3, f4, f5, f6]")
+            coefs[name] = value
+        if coefs[pol] is None:
+            if coefs[f"{pol}_decel"] is not None:
+                raise ConfigError(f"{label} {pol}_decel requiere {pol} (los coeficientes para a ≥ −0.5 m/s²)")
+            continue
+        out.append((pol, coefs[pol], coefs[f"{pol}_decel"] or coefs[pol]))
+    return tuple(out)
 
 
 def _zone(value):
@@ -356,7 +398,8 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
     (`stop_position`, `stop_time_mean`, `stop_time_std`; por defecto, sin parada) y `abreast`
     (cuántos se detienen lado a lado en un carril; por defecto, 1) son opcionales, igual que el
     rebase dentro del carril (`pass_in_lane`; por defecto, false), la aceleración y el frenado
-    graduales (`accel`, `decel` en m/s²; por defecto, instantáneos), el rebase agresivo (`overtake`; por defecto, false), los umbrales de cambio de carril propios
+    graduales (`accel`, `decel` en m/s²; por defecto, instantáneos), la velocidad al pasar el tope
+    (`speed_bump_kmh`; por defecto, sin frenar), el rebase agresivo (`overtake`; por defecto, false), los umbrales de cambio de carril propios
     del tipo (`lookahead`, `min_advantage`, `lane_change_cooldown`; por defecto, los de [behavior]),
     la probabilidad de llevar mercancía (`cargo_prob`; por defecto, 0; con 1, `pax` es
     opcional). La velocidad máxima (`speed_kmh`) y el largo (`length`) son diccionarios {min, max, mean,
@@ -418,8 +461,10 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
                 overtake=r.get(section + ("overtake",), bool, base.overtake if base else False),
                 **{f: r.get(section + (f,), float, getattr(base, f) if base else None) for f in _LANE_CHANGE_FIELDS},
                 **{f: r.get(section + (f,), float, getattr(base, f) if base else None) for f in _DYNAMICS_FIELDS},
+                speed_bump_kmh=r.get(section + ("speed_bump_kmh",), float, base.speed_bump_kmh if base else None),
                 cargo_prob=cargo_prob,
                 **{f: r.get(section + (f,), float, getattr(base, f) if base else _SPEC_DEFAULTS[f]) for f in _BOTTLENECK_FIELDS},
+                emissions=_emissions(r, key, base.emissions if base else ()),
                 **values,
             )
         )
@@ -548,14 +593,18 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
     check(b.lane_change_interval >= DT, f"[behavior] lane_change_interval debe ser ≥ {DT} s")
 
     _validate_bottleneck(sim, check)
+    _validate_speed_bump(sim, check)
 
     longest = max(s.longest + s.gap_run for s in sim.specs)
     check(sim.length >= 2 * longest, f"[road] length debe ser al menos {2 * longest:g} m (dos veces el vehículo más largo con su gap)")
     check(1 <= sim.lanes <= 50, "se admiten entre 1 y 50 carriles (largo de las listas por carril)")
     check(all(v > 0 for v in sim.lane_max_kmh), "[road] max_line_speed: cada valor debe ser mayor que 0")
     check(sim.red >= 0, "[traffic_light] red no puede ser negativo")
-    check(sim.green > 0, "[traffic_light] green debe ser mayor que 0")
     check(sim.yellow >= 0, "[traffic_light] yellow no puede ser negativo")
+    # Con los tres en 0 no hay semáforo (como enabled = false); si no, hace falta verde.
+    check(not sim.has_light or sim.green > 0,
+          "[traffic_light] green debe ser mayor que 0 (o red, green y yellow en 0, o enabled = false, para no tener "
+          "semáforo)")  # fmt: skip
     check(sim.start_phase in ("red", "green"), '[traffic_light] start_phase debe ser "red" o "green"')
     for k, spec in enumerate(sim.specs):
         _check_rate(f"[demand] {spec.key}_rate", sim.rate(k))
@@ -580,6 +629,23 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
     check(opts.workers >= 0, "[execution] workers no puede ser negativo (0 = automático)")
     check(opts.seed is None or 0 <= opts.seed < 2**63, "[execution] seed debe ser un entero no negativo")
     check(bool(opts.output_dir.strip()), "[output] dir no puede estar vacío")
+
+
+def _validate_speed_bump(sim: SimConfig, check) -> None:
+    for spec in sim.specs:
+        check(spec.speed_bump_kmh is None or spec.speed_bump_kmh > 0,
+              f"[vehicles.{spec.key}] speed_bump_kmh debe ser mayor que 0 km/h")  # fmt: skip
+    bump = sim.speed_bump
+    if bump.position is None:
+        check(bump.lanes is None, "[speed_bump] lanes requiere position (dónde está el tope)")
+        return
+    check(0 < bump.position < sim.length,
+          f"[speed_bump] position debe estar entre 0 y {sim.length:g} m ([road] length), sin incluirlos")  # fmt: skip
+    lanes = bump.lanes or ()
+    for lane in lanes:
+        check(0 <= lane < sim.lanes, f"[speed_bump] lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
+    check(len(set(lanes)) == len(lanes), "[speed_bump] lanes: hay carriles repetidos")
+    check(bump.lanes is None or len(lanes) > 0, "[speed_bump] lanes no puede estar vacía (sin ella, todos los carriles)")
 
 
 def _validate_bottleneck(sim: SimConfig, check) -> None:

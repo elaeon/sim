@@ -176,6 +176,75 @@ def test_free_lanes_settings():
         _parse("[traffic_light]\nfree_lanes = [0, 0]\n")
 
 
+def test_traffic_light_can_be_disabled():
+    """enabled = false, o red, green y yellow en 0, quitan el semáforo; con fases, green debe ser > 0."""
+    assert _parse("").sim.has_light
+    off = _parse("[traffic_light]\nenabled = false\n").sim
+    assert not off.has_light and off.light_label == "sin semáforo" and off.line_name == "el final del tramo"
+    assert not _parse("[traffic_light]\nred = 0\ngreen = 0\nyellow = 0\n").sim.has_light
+    assert not _parse("[traffic_light]\nenabled = false\nred = 30\ngreen = 0\n").sim.has_light  # se ignoran
+    with pytest.raises(ConfigError, match="green debe ser mayor que 0"):
+        _parse("[traffic_light]\nred = 30\ngreen = 0\n")
+    with pytest.raises(ConfigError, match="enabled debe ser true o false"):
+        _parse("[traffic_light]\nenabled = 0\n")
+
+
+def test_emission_settings():
+    """El auto y el autobús traen coeficientes; una sección [vehicles.<clave>.emissions] los reemplaza (vacía, el
+    tipo no emite). Solo emiten con accel y decel; si se escriben emisiones sin ellos, hay aviso."""
+    s = _parse("")
+    assert [e[0] for e in s.sim.specs[0].emissions] == ["co2", "nox", "voc"] and not s.sim.specs[0].emits
+    assert [e[0] for e in s.sim.specs[2].emissions] == ["pm"]
+    text = ("[vehicles.car]\naccel = 2.5\ndecel = 4.5\n[vehicles.car.emissions]\n"
+            "co2 = [1, 2, 3, 4, 5, 6]\nnox = [1, 0, 0, 0, 0, 0]\nnox_decel = [0.5, 0, 0, 0, 0, 0]\n")  # fmt: skip
+    car = _parse(text).sim.specs[0]
+    assert car.emits and car.emission_coefs("co2") == ((1, 2, 3, 4, 5, 6), (1, 2, 3, 4, 5, 6))
+    assert car.emission_coefs("nox")[1] == (0.5, 0, 0, 0, 0, 0) and car.emission_coefs("voc") is None
+    assert _parse("[vehicles.car.emissions]\n").sim.specs[0].emissions == ()
+    s = _parse("[vehicles.car.emissions]\nco2 = [1, 2, 3, 4, 5, 6]\n")
+    assert any("sin accel y decel no se calculan las emisiones de auto" in n for n in s.notices)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("[vehicles.car.emissions]\nco2 = [1, 2, 3, 4, 5]\n", "co2 debe ser una lista de 6 números"),
+        ("[vehicles.car.emissions]\nco = [1, 2, 3, 4, 5, 6]\n", "claves desconocidas: [vehicles.car.emissions] co"),
+        ("[vehicles.car.emissions]\npm_decel = [1, 2, 3, 4, 5, 6]\n", "pm_decel requiere pm"),
+    ],
+)
+def test_invalid_emissions_are_rejected(text, message):
+    with pytest.raises(ConfigError, match=message.replace("[", r"\[").replace("]", r"\]")):
+        _parse(text)
+
+
+def test_speed_bump_settings():
+    sim = _parse("").sim
+    assert sim.speed_bump.position is None and sim.speed_bump_lanes() == ()
+    sim = _parse("[road]\nmax_line_speed = [20, 40, 50]\n[speed_bump]\nposition = 60\nlanes = [1, 2]\n"
+                 "[vehicles.car]\nspeed_bump_kmh = 10\n").sim  # fmt: skip
+    assert sim.speed_bump.position == 60.0 and sim.speed_bump_lanes() == (1, 2)
+    assert sim.specs[0].speed_bump_kmh == 10.0 and sim.specs[1].speed_bump_kmh is None
+    assert _parse("[speed_bump]\nposition = 60\n").sim.speed_bump_lanes() == (0, 1)  # sin lanes: todos
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("[speed_bump]\nposition = 0\n", "[speed_bump] position debe estar entre 0 y 200 m"),
+        ("[speed_bump]\nposition = 200\n", "[speed_bump] position debe estar entre 0 y 200 m"),
+        ("[speed_bump]\nposition = 60\nlanes = [2]\n", "[speed_bump] lanes: cada carril debe estar entre 0 y 1"),
+        ("[speed_bump]\nposition = 60\nlanes = [1, 1]\n", "[speed_bump] lanes: hay carriles repetidos"),
+        ("[speed_bump]\nposition = 60\nlanes = []\n", "[speed_bump] lanes no puede estar vacía"),
+        ("[speed_bump]\nlanes = [1]\n", "[speed_bump] lanes requiere position"),
+        ("[vehicles.car]\nspeed_bump_kmh = 0\n", "[vehicles.car] speed_bump_kmh debe ser mayor que 0"),
+    ],
+)
+def test_invalid_speed_bump_is_rejected(text, message):
+    with pytest.raises(ConfigError, match=message.replace("[", r"\[").replace("]", r"\]")):
+        _parse(text)
+
+
 def test_removed_congestion_factor_is_ignored_in_old_copies():
     """[behavior] congestion_factor se eliminó: se ignora con un aviso, pero una lista sigue dando el número de
     carriles para que las copias anteriores carguen igual."""

@@ -16,6 +16,7 @@ dependencies = [
 trafico = "trafico.cli:main"
 trafico-ver = "trafico.cli:view_main"
 trafico-variantes = "trafico.cli:variants_main"
+trafico-emisiones = "trafico.cli:emissions_main"
 
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]

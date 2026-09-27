@@ -11,6 +11,17 @@ DT = 0.1
 MAX_TYPES = 8
 """Máximo de tipos de vehículo en una corrida (tamaño de la paleta categórica de la gráfica)."""
 
+POLLUTANTS = ("co2", "nox", "voc", "pm")
+"""Contaminantes del modelo de emisiones instantáneas de Int Panis et al. (2006)."""
+
+POLLUTANT_LABELS = {"co2": "CO2", "nox": "NOx", "voc": "VOC", "pm": "PM"}
+
+EMISSION_DECEL = -0.5
+"""m/s²: por debajo de esta aceleración se usan los coeficientes de desaceleración (`<contaminante>_decel`)."""
+
+NO_LIGHT_WINDOW = 60.0
+"""Ventana (s) del flujo en la línea final cuando no hay semáforo (con él, un ciclo)."""
+
 RED, GREEN, YELLOW = 0, 1, 2
 """Fases del semáforo; el ciclo es verde → amarillo → rojo."""
 
@@ -55,6 +66,8 @@ class VehicleSpec:
     # la que aún puede detenerse frenando a `decel` detrás del de adelante o antes de un alto.
     accel: float | None = None
     decel: float | None = None
+    # Velocidad máxima (km/h) a la que pasa el tope de [speed_bump]; None = pasa sin frenar.
+    speed_bump_kmh: float | None = None
     # Probabilidad de que un vehículo que llega lleve mercancía en vez de pasajeros: ocupa la vía,
     # pero no cuenta en las métricas de pasajeros (1 = el tipo solo lleva mercancía).
     cargo_prob: float = 0.0
@@ -76,6 +89,19 @@ class VehicleSpec:
     bottleneck_prob: float = 0.0
     bottleneck_time_mean: float = 30.0
     bottleneck_time_std: float = 0.0
+    # Emisiones instantáneas (Int Panis et al., 2006): por contaminante, los coeficientes [f1..f6] de
+    # E = max(0, f1 + f2·v + f3·v² + f4·a + f5·a² + f6·v·a) en g/s (v en m/s, a en m/s²) para a ≥ −0.5 m/s² y
+    # para a < −0.5 m/s². Vacío = el tipo no emite. Solo se calculan con aceleración y frenado graduales.
+    emissions: tuple[tuple[str, tuple[float, ...], tuple[float, ...]], ...] = ()
+
+    @property
+    def emits(self) -> bool:
+        """El tipo tiene coeficientes de emisión y dinámica gradual (accel y decel), que el modelo necesita."""
+        return bool(self.emissions) and self.accel is not None and self.decel is not None
+
+    def emission_coefs(self, pollutant: str) -> tuple[tuple[float, ...], tuple[float, ...]] | None:
+        """(coeficientes para a ≥ −0.5, para a < −0.5) del contaminante; None si el tipo no lo emite."""
+        return next(((acc, dec) for name, acc, dec in self.emissions if name == pollutant), None)
 
     @property
     def speed(self) -> float:
@@ -129,13 +155,28 @@ class VehicleSpec:
         return mu + sigma * pdf / tail
 
 
+# Coeficientes de Int Panis, Broekx y Liu (2006), Sci. Total Environ. 371:270–285, verificados en
+# arXiv 2411.15238 (tabla 7) y 1912.05956 (auto a gasolina) y en arXiv 2008.02405 (PM de autobús).
+_ZERO6 = (0.0,) * 6
+PETROL_CAR_EMISSIONS = (
+    ("co2", (5.53e-1, 1.61e-1, -2.89e-3, 2.66e-1, 5.11e-1, 1.83e-1),
+            (5.53e-1, 1.61e-1, -2.89e-3, 2.66e-1, 5.11e-1, 1.83e-1)),
+    ("nox", (6.19e-4, 8.00e-5, -4.03e-6, -4.13e-4, 3.80e-4, 1.77e-4), (2.17e-4, *_ZERO6[1:])),
+    ("voc", (4.47e-3, 7.32e-7, -2.87e-8, -3.41e-6, 4.94e-6, 1.66e-6), (2.63e-3, *_ZERO6[1:])),
+)  # fmt: skip
+BUS_EMISSIONS = (
+    ("pm", (2.23e-4, 3.47e-4, -2.38e-5, 2.08e-3, 1.76e-3, 2.23e-4),
+           (2.23e-4, 3.47e-4, -2.38e-5, 2.08e-3, 1.76e-3, 2.23e-4)),
+)  # fmt: skip
+
 # Tipos incorporados: dan valores por defecto a [vehicles.car|bike|bus]. Cualquier otro tipo se
-# define completo en el archivo de configuración, sin tocar el código.
+# define completo en el archivo de configuración, sin tocar el código. El auto y el autobús traen
+# coeficientes de emisión, que solo se usan si el tipo tiene accel y decel.
 DEFAULT_SPECS: tuple[VehicleSpec, ...] = (
-    VehicleSpec("car", "auto", 50.0, 4.5, 3.0, 1.0, 1, 6, 1.5, 1.0, True),
+    VehicleSpec("car", "auto", 50.0, 4.5, 3.0, 1.0, 1, 6, 1.5, 1.0, True, emissions=PETROL_CAR_EMISSIONS),
     VehicleSpec("bike", "bici", 15.0, 1.8, 1.0, 0.5, 1, 1, 1.0, 0.0, False),
     # El gap en marcha del autobús no está especificado: se asume 4 m.
-    VehicleSpec("bus", "autobús", 40.0, 12.0, 4.0, 1.5, 1, 80, 40.0, 10.0, False),
+    VehicleSpec("bus", "autobús", 40.0, 12.0, 4.0, 1.5, 1, 80, 40.0, 10.0, False, emissions=BUS_EMISSIONS),
 )
 DEFAULT_RATES: tuple[float, ...] = (15.0, 4.0, 1.0)  # veh/min de los tipos incorporados
 CAR, BIKE, BUS = 0, 1, 2  # índices de los tipos incorporados (siempre van primero)
@@ -171,6 +212,15 @@ class Behavior:
     # que espera en ella arranca con su tiempo de reacción cuando se mueve el de adelante, en vez de
     # entrar ya en marcha en cuanto hay lugar.
     queue_reaction: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SpeedBump:
+    """Tope (reductor de velocidad) a `position` m del inicio del tramo, en los carriles `lanes`. Mientras un
+    vehículo lo pisa (del frente a la parte trasera) no rebasa el `speed_bump_kmh` de su tipo."""
+
+    position: float | None = None  # m desde el inicio del tramo; None = sin tope
+    lanes: tuple[int, ...] | None = None  # carriles (0 = derecho); None = todos
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +288,9 @@ class SimConfig:
     green: float = 30.0  # s
     yellow: float = 0.0  # s, entre el verde y el rojo; 0 = sin amarillo
     start_phase: str = "red"  # "red" | "green"
+    # Semáforo activado. Desactivado (o con red, green y yellow en 0) no hay semáforo: la línea al final
+    # del tramo siempre está abierta.
+    traffic_light: bool = True
     # Carriles sin semáforo (0 = derecho), p. ej. una vuelta continua. Solo aplica a los tipos con carril
     # exclusivo (`lane` y `exclusive`) en uno de ellos: cruzan la línea aunque esté en rojo y no bajan la
     # velocidad en amarillo.
@@ -256,6 +309,7 @@ class SimConfig:
     specs: tuple[VehicleSpec, ...] = DEFAULT_SPECS
     behavior: Behavior = field(default_factory=Behavior)
     bottleneck: Bottleneck = field(default_factory=Bottleneck)
+    speed_bump: SpeedBump = field(default_factory=SpeedBump)
 
     def __post_init__(self) -> None:
         if self.rate_dists:
@@ -292,6 +346,13 @@ class SimConfig:
 
     def bottleneck_lanes(self) -> tuple[int, ...]:
         lanes = self.bottleneck.stop_lanes
+        return tuple(range(self.lanes)) if lanes is None else lanes
+
+    def speed_bump_lanes(self) -> tuple[int, ...]:
+        """Carriles con tope (ninguno si no hay tope)."""
+        if self.speed_bump.position is None:
+            return ()
+        lanes = self.speed_bump.lanes
         return tuple(range(self.lanes)) if lanes is None else lanes
 
     def bottleneck_zone(self) -> tuple[float, float]:
@@ -396,14 +457,36 @@ class SimConfig:
         return round(self.yellow / DT)
 
     @property
+    def has_light(self) -> bool:
+        """Hay semáforo: está activado y alguna de sus fases dura más de 0 s."""
+        return self.traffic_light and self.red + self.green + self.yellow > 0
+
+    @property
     def light_label(self) -> str:
-        """Duración de las fases del semáforo, p. ej. «rojo 25 s / verde 35 s / amarillo 3 s»."""
+        """Duración de las fases del semáforo, p. ej. «rojo 25 s / verde 35 s / amarillo 3 s», o «sin semáforo»."""
+        if not self.has_light:
+            return "sin semáforo"
         label = f"rojo {self.red:g} s / verde {self.green:g} s"
         return label + (f" / amarillo {self.yellow:g} s" if self.yellow > 0 else "")
 
     @property
+    def line_name(self) -> str:
+        """Cómo se llama la línea al final del tramo en textos: «el semáforo» o, sin él, «el final del tramo»."""
+        return "el semáforo" if self.has_light else "el final del tramo"
+
+    @property
     def cycle(self) -> float:
-        return self.red + self.green + self.yellow
+        """Duración del ciclo del semáforo (s); 0 sin semáforo."""
+        return self.red + self.green + self.yellow if self.has_light else 0.0
+
+    @property
+    def flow_window(self) -> float:
+        """Ventana (s) del flujo en la línea: un ciclo del semáforo o, sin él, NO_LIGHT_WINDOW."""
+        return self.cycle if self.has_light else NO_LIGHT_WINDOW
+
+    @property
+    def flow_window_label(self) -> str:
+        return f"ventana de un ciclo, {self.cycle:g} s" if self.has_light else f"ventana de {NO_LIGHT_WINDOW:g} s"
 
     @property
     def sample_ticks(self) -> int:
@@ -414,7 +497,10 @@ class SimConfig:
         return self.n_ticks // self.sample_ticks
 
     def phase(self, tick: int) -> int:
-        """Fase del semáforo (RED, GREEN o YELLOW) en el paso `tick`: verde → amarillo → rojo."""
+        """Fase del semáforo (RED, GREEN o YELLOW) en el paso `tick`: verde → amarillo → rojo. Sin
+        semáforo, siempre verde."""
+        if not self.has_light:
+            return GREEN
         red, green, yellow = self.red_ticks, self.green_ticks, self.yellow_ticks
         pos = tick % (red + green + yellow)
         if self.start_phase == "red":
@@ -439,7 +525,7 @@ class SimConfig:
 
     def _intervals(self, offset: float, duration: float) -> list[tuple[float, float]]:
         """Intervalos de la fase que empieza `offset` s después del inicio del verde y dura `duration` s."""
-        if duration <= 0:
+        if duration <= 0 or not self.has_light:
             return []
         out = []
         # Un ciclo antes del primer verde (en t = red si empieza en rojo): cubre la fase ya en curso en t = 0.

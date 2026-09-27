@@ -124,10 +124,12 @@
   <a href="#demand">[demand]</a>
   <a href="#initial">[initial]</a>
   <a href="#exit">[exit]</a>
+  <a href="#speed_bump">[speed_bump]</a>
   <a href="#bottleneck">[bottleneck]</a>
   <a href="#execution">[execution]</a>
   <a href="#output">[output]</a>
   <a href="#vehicles">[vehicles.*]</a>
+  <a href="#emissions">Emisiones</a>
   <a href="#behavior">[behavior]</a>
   <a href="#animation">[animation]</a>
   <a href="#sample">Sobre sample</a>
@@ -141,7 +143,8 @@ uv run trafico hora_pico                    # config.toml de la raíz → result
 uv run trafico resultados/&lt;ID&gt;_hora_pico    # config.toml de esa carpeta (réplica de la corrida)
 uv run trafico-ver                          # movimiento de la corrida más reciente (ver [animation])
 uv run trafico-ver resultados/&lt;ID&gt;_hora_pico --inicio 300 --duracion 60
-uv run trafico-variantes --largos 50 150 300 --semaforos 40/20 30/30 20/40 --carriles 1 2 --sin bike bus</code></pre>
+uv run trafico-variantes --largos 50 150 300 --semaforos 40/20 30/30 20/40 --carriles 1 2 --sin bike bus
+uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 2 --sin bike motorbike carga</code></pre>
   <ul>
     <li>El archivo siempre se llama <code>config.toml</code>. El único argumento del comando es opcional:
       si es una carpeta existente, se lee su <code>config.toml</code>; si no, es el <strong>nombre</strong>
@@ -196,8 +199,20 @@ uv run trafico-variantes --largos 50 150 300 --semaforos 40/20 30/30 20/40 --car
       panel de saturación ya no muestra el factor, y el rebase compara solo velocidades reales.</li>
     <li>Nueva clave <a href="#traffic_light"><code>[traffic_light] free_lanes</code></a>: carriles sin semáforo (p. ej.
       una vuelta continua). Solo aplica a los tipos con carril exclusivo en ellos: siguen en rojo y no bajan la
-      velocidad en amarillo. La cabecera de la corrida lista esos tipos. <code>trafico-variantes --carriles</code> conserva también la cola de salida y los carriles
-      sin semáforo de los carriles elegidos.</li>
+      velocidad en amarillo. La cabecera de la corrida lista esos tipos. <code>trafico-variantes --carriles</code>
+      conserva también la cola de salida y los carriles sin semáforo de los carriles elegidos.</li>
+    <li>Nueva clave <a href="#traffic_light"><code>[traffic_light] enabled</code></a>: con <code>false</code> la calle
+      no tiene semáforo, igual que con <code>red</code>, <code>green</code> y <code>yellow</code> en 0.</li>
+    <li>Nuevo comando <a href="#trafico-emisiones"><code>trafico-emisiones</code></a>: compara las emisiones de una
+      calle sin tope, con topes en distintas posiciones y con o sin semáforo, con la misma semilla.</li>
+    <li>Nuevas <a href="#emissions">emisiones</a> (modelo de Int Panis et al., 2006): CO2, NOx, VOC y PM por tipo, en
+      <code>resumen.txt</code> (por km, por recorrido, exceso frente a flujo libre y tabla al acelerar de 0 a 80
+      km/h), en la gráfica y en <code>emisiones_posicion.png</code>/<code>.csv</code>. Requieren <code>accel</code> y
+      <code>decel</code>.</li>
+    <li>Nueva sección <a href="#speed_bump"><code>[speed_bump]</code></a> (tope en <code>position</code> m, en los
+      carriles <code>lanes</code>) y clave <code>[vehicles.&lt;clave&gt;] speed_bump_kmh</code>: la velocidad máxima
+      a la que cada tipo pasa el tope. <code>trafico-variantes --carriles</code> conserva el tope en los carriles
+      elegidos.</li>
     <li><code>[behavior] queue_reaction = true</code>: la cola de entrada detenida arranca con tiempo de reacción,
       como el resto de la cola, en vez de entrar ya en marcha. Corrige el flujo de más en tramos más cortos que la
       cola. Por defecto <code>false</code> (los resultados anteriores no cambian); la cabecera de la corrida indica
@@ -250,6 +265,50 @@ uv run trafico-variantes --redibujar resultados/&lt;ID&gt;_variantes_semaforo</c
     (datos de cada réplica), <code>variantes.json</code> (parámetros, semilla y comando) y
     <code>config_base.toml</code> (la configuración de partida). No tiene <code>config.toml</code>, así que no es una
     corrida de <code>trafico</code> ni la toma <code>trafico-ver</code>.</p>
+
+  <h3 id="trafico-emisiones">Comparar emisiones: <code>trafico-emisiones</code></h3>
+  <p>Corre la misma calle sin tope y con topes en las posiciones que se pidan (y, si se quiere, con y sin semáforo) y
+    compara las <a href="#emissions">emisiones</a>. Todos los escenarios usan la misma semilla: llegan los mismos
+    vehículos, con los mismos pasajeros y velocidades, así que las diferencias vienen del tope o del semáforo. Grafica
+    el flujo que sale del tramo en el tiempo, los vehículos por minuto de cada tipo, las emisiones por km de cada tipo
+    y contaminante (con el cambio frente al primer escenario) y las emisiones a lo largo de la calle.</p>
+  <pre><code>uv run trafico-emisiones [nombre | carpeta] [opciones]
+uv run trafico-emisiones calle200 --topes sin 100 --semaforo no --largo 200 --carriles 1 2 --sin bike motorbike carga
+uv run trafico-emisiones --topes sin 50 100 150            # dónde conviene poner el tope
+uv run trafico-emisiones --semaforo ambos                  # cada tope con y sin semáforo
+uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code></pre>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Opción</th><th>Descripción</th><th>Por defecto</th></tr></thead>
+    <tbody>
+      <tr><td><code>nombre | carpeta</code></td><td>Como en <code>trafico</code>: una carpeta de la que se lee su
+        <code>config.toml</code>, o el nombre de la comparación. Va antes de las opciones.</td>
+        <td><code>emisiones_topes</code> con el <code>config.toml</code> de la raíz</td></tr>
+      <tr><td><code>--topes M|sin …</code></td><td>Un escenario por valor: la posición del tope en m desde la entrada,
+        o <code>sin</code> para ninguno. El primero es la referencia de los cambios en %.</td>
+        <td><code>sin</code> y el de <code>[speed_bump] position</code> (si no hay, a la mitad del tramo)</td></tr>
+      <tr><td><code>--carriles-tope N …</code></td><td>Carriles con tope, en la numeración después de
+        <code>--carriles</code>.</td><td><code>[speed_bump] lanes</code>; sin ella, todos</td></tr>
+      <tr><td><code>--semaforo config|si|no|ambos</code></td><td>Semáforo de todos los escenarios: como en la
+        configuración, activado, desactivado o ambos (cada tope con y sin semáforo; hasta 8 escenarios).</td>
+        <td><code>config</code></td></tr>
+      <tr><td><code>--largo M</code></td><td>Largo del tramo en m.</td><td><code>[road] length</code></td></tr>
+      <tr><td><code>--carriles N …</code>, <code>--sin CLAVE …</code></td><td>Como en <code>trafico-variantes</code>:
+        carriles que se conservan y tipos que no participan.</td><td>Todos</td></tr>
+      <tr><td><code>--replicas N</code>, <code>--run S</code></td><td>Réplicas por escenario y s de proceso de cada
+        una (× <code>time_scale</code> = s simulados).</td><td><code>[execution] replicas</code> y
+        <code>run</code></td></tr>
+      <tr><td><code>--redibujar CARPETA</code></td><td>No simula: vuelve a dibujar la gráfica en un archivo nuevo.</td>
+        <td>—</td></tr>
+    </tbody>
+  </table></div>
+  <p>Hace falta al menos un tipo que participe con <code>[vehicles.&lt;clave&gt;.emissions]</code>, <code>accel</code> y
+    <code>decel</code>; los que frenan en el tope necesitan <code>speed_bump_kmh</code>. La carpeta
+    <code>resultados/&lt;AAAAMMDD-HHMMSS&gt;_&lt;nombre&gt;/</code> contiene <code>comparacion_emisiones.png</code>,
+    <code>resumen.txt</code> (vehículos por minuto, tiempo de recorrido y emisiones por km de cada tipo, con el cambio
+    frente al primer escenario), <code>comparacion_emisiones.csv</code> (lo mismo por escenario y tipo, con el exceso
+    frente a flujo libre), <code>emisiones_posicion.csv</code> (g/(m·h) por escenario y contaminante a lo largo de la
+    calle), <code>datos.npz</code>, <code>escenarios.json</code> (parámetros, semilla y comando) y
+    <code>config_base.toml</code>.</p>
 </section>
 
 <section id="road">
@@ -303,16 +362,27 @@ stop_time_std = 5.0</code></pre>
   <p class="lead">Ciclo fijo verde → amarillo → rojo. En amarillo la línea sigue abierta, pero quien se aproxima al
     semáforo baja la velocidad (ver <code>yellow_approach</code> y <code>yellow_speed_factor</code> en
     <a href="#behavior">[behavior]</a>). En rojo, ningún vehículo cuyo frente no haya cruzado puede pasar la línea,
-    salvo los tipos con carril exclusivo en un carril sin semáforo (<code>free_lanes</code>). Las gráficas sombrean el rojo y el amarillo, y el
-    video pinta el semáforo del color de la fase.</p>
+    salvo los tipos con carril exclusivo en un carril sin semáforo (<code>free_lanes</code>). Con
+    <code>enabled = false</code>, o con <code>red</code>, <code>green</code> y <code>yellow</code> en 0, la calle no
+    tiene semáforo. Las gráficas sombrean el rojo y el amarillo, y el video pinta el semáforo del color de la
+    fase.</p>
   <div class="table-scroll"><table>
     <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
     <tbody>
+      <tr><td><code>enabled</code></td><td>true/false</td><td class="num">true</td>
+        <td>Si la calle tiene semáforo. Con <code>false</code> no lo tiene: la línea al final del tramo siempre está
+          abierta y se ignoran las demás claves de la sección. Poner <code>red</code>, <code>green</code> y
+          <code>yellow</code> en 0 es equivalente (misma corrida). Sin semáforo, el flujo en la línea se mide en una
+          ventana de 60 s en vez de un ciclo, las gráficas no sombrean fases, los textos dicen «el final del tramo» en
+          vez de «el semáforo», el video no dibuja el semáforo y, si no se da <code>[animation] duration</code>, graba
+          120 s.</td>
+        <td>true/false.</td></tr>
       <tr><td><code>red</code></td><td>número</td><td class="num">30.0</td>
         <td>Duración de la luz roja en segundos simulados. Con 0, el semáforo siempre está en verde.</td>
         <td>≥ 0, múltiplo de 0.1.</td></tr>
       <tr><td><code>green</code></td><td>número</td><td class="num">30.0</td>
-        <td>Duración de la luz verde en segundos simulados.</td><td>&gt; 0, múltiplo de 0.1.</td></tr>
+        <td>Duración de la luz verde en segundos simulados.</td>
+        <td>&gt; 0 (salvo con los tres en 0: sin semáforo), múltiplo de 0.1.</td></tr>
       <tr><td><code>yellow</code></td><td>número</td><td class="num">0.0</td>
         <td>Duración de la luz amarilla en segundos simulados, entre el verde y el rojo. El ciclo dura
           <code>red + green + yellow</code>. Con 0 no hay amarillo: el verde pasa directo al rojo.</td>
@@ -470,6 +540,46 @@ bus_rate = {min = 0.25, max = 0.25, mean = 0.25, std = 0}  # fija: 1 cada 4 min<
     <code>storage = 55</code> (10 autos) los carriles 1 y 2 cruzan 6.1 y 8.1 veh/min, pegados a su capacidad, su línea
     está cerrada por la cola de salida el 23 % y el 16 % del tiempo, y los autos que cruzan bajan de 667 a 496. Con <code>[0, 12, 15, 0]</code> la salida nunca se llena:
     por esos carriles solo pasan 8.3 y 10.6 veh/min, así que el semáforo sigue siendo el que limita.</p>
+</section>
+
+<section id="speed_bump">
+  <h2><code>[speed_bump]</code> Tope</h2>
+  <p class="lead">Un tope (reductor de velocidad) a lo ancho de uno o varios carriles. Mientras un vehículo lo pisa
+    (desde que su frente llega al tope hasta que lo pasa su parte trasera) no rebasa la velocidad
+    <code>speed_bump_kmh</code> de su tipo (ver <a href="#vehicles">[vehicles.&lt;clave&gt;]</a>); los tipos sin ella
+    pasan sin frenar.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>position</code></td><td>número</td><td class="num">(sin tope)</td>
+        <td>Dónde está el tope, en metros desde el inicio del tramo (el semáforo está en <code>length</code>). Sin
+          ella no hay tope.</td>
+        <td>Entre 0 y <code>[road] length</code>, sin incluirlos.</td></tr>
+      <tr><td><code>lanes</code></td><td>lista de enteros</td><td class="num">(todos)</td>
+        <td>Carriles donde está instalado, empezando por el derecho (carril 0), p. ej. <code>[1, 2]</code>. Sin
+          ella, en todos los carriles.</td>
+        <td>Cada carril entre 0 y el número de carriles − 1, sin repetir; requiere <code>position</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Cómo funciona:</p>
+  <ul>
+    <li>Sin <code>decel</code>, el vehículo baja de golpe a la velocidad del tope en el paso en que lo alcanzaría y
+      vuelve a su velocidad en cuanto lo pasa entero, como los demás cambios instantáneos del modelo.</li>
+    <li>Con <code>decel</code> frena antes, sin rebasar <code>decel</code>, para llegar al tope a su velocidad, y
+      después acelera a lo más <code>accel</code>. Quien viene detrás lo trata como a cualquier líder más lento.</li>
+    <li>Un vehículo que está cambiando de carril respeta el tope si está en su carril de origen o en el destino.
+      Quien va detrás de uno que frena por el tope puede cambiarse a un carril sin tope si le conviene.</li>
+    <li>La cabecera de la corrida indica la posición, los carriles y la velocidad de cada tipo; en el video el tope es
+      una franja rayada y en el diagrama espacio-tiempo, una línea «tope» en sus carriles.</li>
+  </ul>
+  <pre><code>[speed_bump]
+position = 60.0      # m desde el inicio del tramo
+lanes = [1, 2]       # sin ella, todos los carriles
+
+[vehicles.car]
+speed_bump_kmh = 10.0
+[vehicles.motorbike]
+speed_bump_kmh = 15.0</code></pre>
 </section>
 
 <section id="bottleneck">
@@ -700,6 +810,16 @@ bottleneck_time_std = 30.0</code></pre>
           Opcionales; por defecto, instantáneos. Valores típicos: auto 2.5 / 4.5, moto 3 / 5, autobús 1.2 / 3.5,
           bici y carga 1 / 3.</td>
         <td>En (0, 20].</td></tr>
+      <tr><td><code>speed_bump_kmh</code></td><td>número</td>
+        <td>Velocidad máxima (km/h) a la que el tipo pasa el tope de <a href="#speed_bump">[speed_bump]</a>: no la
+          rebasa mientras lo pisa. Opcional; sin ella, pasa sin frenar (p. ej. las bicis). Sin tope configurado no tiene
+          efecto.</td>
+        <td>&gt; 0.</td></tr>
+      <tr><td><code>[vehicles.&lt;clave&gt;.emissions]</code></td><td>sección</td>
+        <td>Coeficientes del modelo de emisiones del tipo (ver <a href="#emissions">Emisiones</a>). El auto y el
+          autobús incorporados traen valores por defecto; escribir la sección los reemplaza, y vacía el tipo no emite.
+          Solo se calculan si el tipo tiene <code>accel</code> y <code>decel</code>.</td>
+        <td>Listas de 6 números.</td></tr>
       <tr><td><code>lookahead</code>, <code>min_advantage</code>, <code>lane_change_cooldown</code></td><td>número</td>
         <td>Umbrales de cambio de carril propios del tipo: distancia (m) a la que un líder lento motiva cambiar,
           espacio libre extra (m) que hace que valga la pena y tiempo (s) sin volver a cambiar. Con valores más
@@ -774,6 +894,73 @@ gap_stop = 1.0
 pax = {min = 1, max = 2, mean = 1.2, std = 0.2}</code></pre>
   <p>El color de cada tipo en la gráfica depende de su posición: primero los incorporados y después los nuevos, en el
     orden del archivo.</p>
+</section>
+
+<section id="emissions">
+  <h2>Emisiones</h2>
+  <p class="lead">Estimación de CO2, NOx, VOC (compuestos orgánicos volátiles) y PM (partículas) con el modelo de
+    emisiones instantáneas de Int Panis, Broekx y Liu (2006), <em>Modelling instantaneous traffic emission and the
+    influence of traffic speed limits</em>, Sci. Total Environ. 371:270–285, el mismo que usa Aimsun. En cada paso,
+    cada vehículo emite
+    <code>E = max(0, f1 + f2·v + f3·v² + f4·a + f5·a² + f6·v·a)</code> g/s, con su velocidad v (m/s) y su aceleración
+    a (m/s²). Sirve para <strong>comparar escenarios</strong> (con y sin tope, con y sin semáforo, más o menos demanda):
+    el modelo se ajustó con una flota europea de principios de los 2000, no incluye CO ni el arranque en frío, y sus
+    valores absolutos son una aproximación.</p>
+  <p>Cada tipo lleva sus coeficientes en <code>[vehicles.&lt;clave&gt;.emissions]</code>, una lista
+    <code>[f1, f2, f3, f4, f5, f6]</code> por contaminante (<code>co2</code>, <code>nox</code>, <code>voc</code>,
+    <code>pm</code>). Con <code>&lt;contaminante&gt;_decel</code> se dan los de a &lt; −0.5 m/s² (por defecto, los
+    mismos). Un tipo sin la sección, o sin <code>accel</code> y <code>decel</code>, no emite: sin dinámica gradual la
+    aceleración es instantánea (de 0 a 50 km/h en un paso) y el modelo no aplica. Para que un frenado de emergencia no
+    dispare el término a², la aceleración que entra al modelo se acota a [−<code>decel</code>, <code>accel</code>].</p>
+  <p>Coeficientes verificados, que traen por defecto el auto (gasolina) y el autobús (solo PM):</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Tipo</th><th>Contaminante</th><th>f1</th><th>f2</th><th>f3</th><th>f4</th><th>f5</th><th>f6</th></tr></thead>
+    <tbody>
+      <tr><td>auto gasolina</td><td>CO2</td><td>5.53e-1</td><td>1.61e-1</td><td>-2.89e-3</td><td>2.66e-1</td><td>5.11e-1</td><td>1.83e-1</td></tr>
+      <tr><td>auto gasolina</td><td>NOx</td><td>6.19e-4</td><td>8.00e-5</td><td>-4.03e-6</td><td>-4.13e-4</td><td>3.80e-4</td><td>1.77e-4</td></tr>
+      <tr><td>auto gasolina</td><td>NOx, a &lt; −0.5</td><td>2.17e-4</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+      <tr><td>auto gasolina</td><td>VOC</td><td>4.47e-3</td><td>7.32e-7</td><td>-2.87e-8</td><td>-3.41e-6</td><td>4.94e-6</td><td>1.66e-6</td></tr>
+      <tr><td>auto gasolina</td><td>VOC, a &lt; −0.5</td><td>2.63e-3</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+      <tr><td>auto diésel</td><td>PM</td><td>0</td><td>3.13e-4</td><td>-1.84e-5</td><td>0</td><td>7.50e-4</td><td>3.78e-4</td></tr>
+      <tr><td>autobús</td><td>PM</td><td>2.23e-4</td><td>3.47e-4</td><td>-2.38e-5</td><td>2.08e-3</td><td>1.76e-3</td><td>2.23e-4</td></tr>
+    </tbody>
+  </table></div>
+  <p>Fuentes: arXiv <a href="https://arxiv.org/abs/2411.15238">2411.15238</a> (tabla 7) y
+    <a href="https://arxiv.org/abs/1912.05956">1912.05956</a> para el auto a gasolina, y
+    <a href="https://arxiv.org/abs/2008.02405">2008.02405</a> para el PM. El CO2 y el NOx del auto diésel, del
+    autobús y de los camiones (HGV) están en el artículo original, que no es de acceso libre: hay que cargarlos a mano.
+    El modelo no tiene motos.</p>
+  <p>Salidas, cuando algún tipo que participa emite:</p>
+  <ul>
+    <li><code>resumen.txt</code>, por tipo y contaminante: por km recorrido, por recorrido completo del tramo y
+      <strong>exceso frente a flujo libre</strong>: cuánto más emite que si recorriera lo mismo a velocidad constante
+      (su máxima dentro del límite del carril). Mide el costo de las paradas, los arranques, el tope, la cola y los
+      cambios de velocidad.</li>
+    <li><code>resumen.txt</code>, «Emisiones al acelerar»: la tabla de referencia de 0→20, 20→40, 40→60 y 60→80 km/h a
+      la <code>accel</code> de cada tipo, con lo que emitiría a velocidad constante en el mismo tiempo y distancia. Los
+      escalones que pasan la velocidad máxima del tipo van marcados con «*»: fuera de su rango, el polinomio puede
+      dar valores sin sentido (el PM del autobús cae a 0 a 70 km/h).</li>
+    <li><code>movilidad_pasajeros.png</code>: una fila con CO2 y NOx por minuto por tipo.</li>
+    <li><code>emisiones_posicion.png</code> y <code>.csv</code>: g/(m·h) (mg para los que no son CO2) en intervalos
+      de 5 m a lo largo del tramo, por carril, con el tope, las paradas y el semáforo marcados. Muestra dónde se
+      concentran: después del tope, al salir de la parada y al arrancar en el semáforo.</li>
+    <li><code>series.csv</code>: columnas <code>emis_&lt;contaminante&gt;_g_min_&lt;tipo&gt;</code>.</li>
+  </ul>
+  <p>Con el auto a gasolina y <code>accel = 2.5</code> m/s², la tabla de referencia queda así (entre paréntesis, a
+    velocidad constante en el mismo tiempo y distancia):</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Escalón</th><th>Tiempo</th><th>Distancia</th><th>CO2 (g)</th><th>NOx (mg)</th><th>VOC (mg)</th></tr></thead>
+    <tbody>
+      <tr><td>0 → 20 km/h</td><td class="num">2.2 s</td><td class="num">6 m</td><td class="num">13.56 (2.17)</td><td class="num">7.49 (1.80)</td><td class="num">10.01 (9.94)</td></tr>
+      <tr><td>20 → 40 km/h</td><td class="num">2.2 s</td><td class="num">19 m</td><td class="num">20.80 (3.76)</td><td class="num">13.39 (2.24)</td><td class="num">10.07 (9.94)</td></tr>
+      <tr><td>40 → 60 km/h</td><td class="num">2.2 s</td><td class="num">31 m</td><td class="num">27.64 (4.96)</td><td class="num">18.73 (2.12)</td><td class="num">10.12 (9.94)</td></tr>
+      <tr><td>60 → 80 km/h</td><td class="num">2.2 s</td><td class="num">43 m</td><td class="num">34.08 (5.76)</td><td class="num">23.53 (1.45)</td><td class="num">10.17 (9.94)</td></tr>
+    </tbody>
+  </table></div>
+  <p>Ejemplo (configuración de Insurgentes en un tramo de 200 m con autos a 6 veh/min): sin semáforo, un auto emite
+    42 g de CO2 por recorrido (19 % sobre flujo libre, por los cambios de carril, las detenciones y los vehículos
+    lentos); con semáforo, 65 g (82 %); con semáforo y un tope a 80 m, 98 g (174 %). El tope suma ~51 % de CO2 y de NOx,
+    del orden de lo que reportan los estudios de topes (+52 % de CO2).</p>
 </section>
 
 <section id="behavior">

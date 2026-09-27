@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from trafico.config import (
-    BIKE, BUS, CAR, DEFAULT_SPECS, DT, GREEN, RED, YELLOW, Behavior, Bottleneck, Rate, SimConfig, VehicleSpec,
+    BIKE, BUS, CAR, DEFAULT_SPECS, DT, GREEN, POLLUTANTS, RED, YELLOW, Behavior, Bottleneck, Rate, SimConfig,
+    SpeedBump, VehicleSpec,
 )  # fmt: skip
 from trafico.engine import Simulation
 
@@ -87,7 +88,8 @@ def test_invariants_every_step(lanes, extra, separate, bus_stop, abreast, overta
     if overtake:  # motos que rebasan, carriles con límites distintos (hay subidas) y detenciones
         specs = tuple(replace(s, overtake=True, lookahead=50.0, min_advantage=1.0, lane_change_cooldown=1.0)
                       if s.key == "motorbike" else s for s in specs)  # fmt: skip
-        specs = tuple(replace(s, bottleneck_prob=0.3, bottleneck_time_mean=8.0, bottleneck_time_std=3.0)
+        specs = tuple(replace(s, bottleneck_prob=0.3, bottleneck_time_mean=8.0, bottleneck_time_std=3.0,
+                              speed_bump_kmh=15.0)
                       if s.key == "car" else s for s in specs)  # fmt: skip
         limits = (30.0, 50.0, 40.0, 80.0)[:lanes]
         specs, rates = specs + (CARGA,), rates + (4,)  # largo variable y solo mercancía
@@ -105,6 +107,7 @@ def test_invariants_every_step(lanes, extra, separate, bus_stop, abreast, overta
         initial_occupancy=0.4 if overtake else 0.0,
         bottleneck=Bottleneck(stop_lanes=(1, 2)) if overtake else Bottleneck(),
         free_lanes=(0,) if overtake and lanes == 4 else (),  # carril sin semáforo
+        speed_bump=SpeedBump(position=80.0, lanes=(1, 2)) if overtake else SpeedBump(),  # tope para los autos
         run=30, specs=specs,
     )  # fmt: skip
     sim = Simulation(cfg, np.random.default_rng(7))
@@ -323,6 +326,104 @@ def test_free_lane_only_frees_the_exclusive_type():
         sim.step()
     assert sim.lane_crossed[0] == 0
     assert sim.stopped[: sim.n].all() and sim.x[: sim.n].max() <= sim.L + 1e-9
+
+
+def _bump_run(gradual: bool, lanes: int = 1, bump_lanes=None, lane: int = 0, vt: int = CAR) -> tuple[list, Simulation]:
+    """Un vehículo solo, siempre en verde, con un tope a 60 m en `bump_lanes` (auto a 10 km/h en él). Devuelve,
+    por paso, (x antes, x después, velocidad en m/paso) y la simulación."""
+    car = replace(DEFAULT_SPECS[CAR], speed_bump_kmh=10.0)
+    specs = (car, *DEFAULT_SPECS[1:])
+    if gradual:
+        specs = tuple(_gradual(s) for s in specs)
+    sim = _empty_sim(length=150, lanes=lanes, red=0, green=60, run=10, specs=specs,
+                     speed_bump=SpeedBump(position=60.0, lanes=bump_lanes))  # fmt: skip
+    i = _place(sim, vt, 20.0, lane=lane)
+    vid = sim.vid[i]
+    steps = []
+    while sim.n and sim.vid[0] == vid and sim.tick < 400:
+        x0 = float(sim.x[0])
+        sim.step()
+        if sim.n and sim.vid[0] == vid:
+            steps.append((x0, float(sim.x[0]), float(sim.x[0] - x0)))
+    return steps, sim
+
+
+@pytest.mark.parametrize("gradual", [False, True])
+def test_speed_bump_limits_speed_while_on_it(gradual):
+    """Mientras el auto pisa el tope (frente pasado, trasera no) avanza a lo más 10 km/h; antes y después, a su
+    velocidad. Con frenado gradual, nunca frena más que decel en un paso."""
+    steps, sim = _bump_run(gradual)
+    vb, vlen = 10 / 3.6 * DT, sim.cfg.specs[CAR].length
+    on = [adv for x0, x1, adv in steps if x0 - vlen < 60.0 and x1 > 60.0]
+    assert on and max(on) <= vb + 1e-9
+    assert len(on) >= vlen / vb - 1  # lo pasa a esa velocidad: ~1.6 s para 4.5 m
+    after = [adv for x0, x1, adv in steps if x0 - vlen > 60.0]
+    assert max(after) == pytest.approx(sim.v_step[CAR])  # después recupera su velocidad
+    if gradual:
+        advs = [adv for *_, adv in steps]
+        dec = sim.dec_t[CAR]
+        assert all(b >= a - dec - 1e-9 for a, b in zip(advs, advs[1:])), "frenado brusco antes del tope"
+        assert min(adv for x0, x1, adv in steps if x0 < 60.0) >= vb - dec - 1e-9  # no se detiene antes
+
+
+def test_speed_bump_only_in_its_lanes_and_for_types_with_speed():
+    """El tope del carril 1 no frena al auto del carril 0, ni a una bici (sin speed_bump_kmh) en el carril 1."""
+    other_lane, sim = _bump_run(False, lanes=2, bump_lanes=(1,), lane=0)
+    assert min(adv for *_, adv in other_lane) == pytest.approx(sim.v_step[CAR])
+    bike, sim = _bump_run(False, lanes=2, bump_lanes=(1,), lane=1, vt=BIKE)
+    assert min(adv for *_, adv in bike) == pytest.approx(sim.v_step[BIKE])
+    car, _ = _bump_run(False, lanes=2, bump_lanes=(1,), lane=1)
+    assert min(adv for *_, adv in car) == pytest.approx(10 / 3.6 * DT)
+
+
+def test_no_traffic_light_is_the_same_with_enabled_false_or_all_phases_zero():
+    """Sin semáforo (enabled = false, o red, green y yellow en 0) la línea siempre está abierta: las dos formas dan
+    la misma corrida, igual que un verde permanente, y nadie se detiene frente a la línea."""
+    base = dict(length=150, lanes=2, rates=(20, 4, 1), run=20)
+    configs = [
+        SimConfig(red=30, green=30, yellow=3, traffic_light=False, **base),
+        SimConfig(red=0, green=0, yellow=0, **base),
+        SimConfig(red=0, green=60, **base),
+    ]
+    assert not configs[0].has_light and not configs[1].has_light and configs[2].has_light
+    assert configs[0].red_intervals() == [] and configs[0].cycle == 0 and configs[0].flow_window == 60.0
+    results = []
+    for cfg in configs:
+        sim = Simulation(cfg, np.random.default_rng(3))
+        assert all(cfg.phase(t) == GREEN for t in range(0, cfg.n_ticks, 97))
+        sim.run()
+        s = sim.summary()
+        results.append((s["crossed_veh"].tolist(), s["travel_time"].tolist()))
+    assert results[0] == results[1] == results[2]
+    assert sum(results[0][0]) > 0
+
+
+def _emission_run(**kw) -> dict:
+    """Un auto con aceleración y frenado graduales (emite CO2, NOx y VOC) solo en su carril de un tramo de 200 m."""
+    car = replace(DEFAULT_SPECS[CAR], accel=2.5, decel=4.5, speed_bump_kmh=10.0)
+    base = dict(length=200, lanes=2, rates=(0, 0, 0), red=0, green=60, run=6, specs=(car, *DEFAULT_SPECS[1:]))
+    base.update(kw)
+    sim = Simulation(SimConfig(**base), np.random.default_rng(0))
+    _place(sim, BIKE, 50.0, lane=0)  # una bici en el otro carril: no emite
+    sim._add(CAR, 1, 1)
+    sim.run()
+    return sim.summary()
+
+
+def test_emissions_excess_over_free_flow():
+    """A flujo libre el auto emite lo mismo que a velocidad constante (exceso 0); un tope y un alto en rojo lo
+    hacen emitir más. Lo emitido por posición suma el total, y la bici no emite."""
+    free = _emission_run()
+    co2 = POLLUTANTS.index("co2")
+    assert free["emissions"][CAR, co2] > 0 and free["emissions"][BIKE].sum() == 0
+    assert free["emissions"][CAR, co2] == pytest.approx(free["emissions_free"][CAR, co2], rel=1e-6)
+    np.testing.assert_allclose(free["emissions_pos"].sum(axis=(1, 2)), free["emissions"].sum(axis=0))
+    excess = {}
+    for name, kw in (("tope", dict(speed_bump=SpeedBump(position=100.0))), ("rojo", dict(red=20, green=40))):
+        s = _emission_run(**kw)
+        excess[name] = s["emissions"][CAR, co2] / s["emissions_free"][CAR, co2] - 1
+    assert excess["tope"] > 0.3 and excess["rojo"] > 0.3
+    assert free["veh_km"][CAR] == pytest.approx(0.2 - 0.0045, abs=0.01)  # entra con la trasera en 0
 
 
 def test_lane_speed_series():
