@@ -14,6 +14,8 @@ max_line_speed = [20, 30, 50, 80]   # km/h, límite de cada carril (0 = derecho)
                                 # carril ([initial] occupancy, [exit] capacity y storage), que deben coincidir.
 
 [traffic_light]
+enabled = true          # false = esta calle no tiene semáforo (la línea final siempre está abierta); igual que
+                        # red, green y yellow en 0
 red = 25.0              # s (múltiplo de 0.1)
 green = 35.0            # s (múltiplo de 0.1)
 yellow = 3.0            # s (múltiplo de 0.1) entre el verde y el rojo: verde → amarillo → rojo; 0 = sin amarillo
@@ -45,6 +47,10 @@ capacity = 0            # veh/min que acepta cada carril: un número para todos 
 storage = 60            # m que mide la cola de salida de cada carril (número o lista por carril); cada vehículo ocupa su largo + gap_stop
                         # (60 m ≈ 11 autos de 4.5 m + 1 m). Si el siguiente no cabe, la línea de su carril se
                         # cierra para él; una cola vacía acepta a cualquiera.
+
+[speed_bump]            # tope (reductor de velocidad): quien lo pisa no rebasa el speed_bump_kmh de su tipo
+# position = 60.0       # m desde el inicio del tramo; sin ella, no hay tope
+# lanes = [1, 2]        # carriles con tope (0 = derecho); sin ella, todos
 
 [bottleneck]            # cuellos de botella: dónde ocurren las detenciones. Quién se detiene, con qué
                         # probabilidad y cuánto tiempo va en cada [vehicles.<clave>] (bottleneck_prob,
@@ -87,11 +93,22 @@ gap_run = 3.0           # m al líder en marcha
 gap_stop = 1.0          # m al líder detenido (compresión)
 accel = 2.5             # m/s², aceleración gradual (sin ella, instantánea)
 decel = 4.5             # m/s², frenado gradual con anticipación (sin ella, en seco)
+speed_bump_kmh = 10.0   # km/h máx. al pasar el tope de [speed_bump] (sin ella, pasa sin frenar)
 pax = {min = 1, max = 6, mean = 1.3, std = 1}   # pasajeros: normal(mean, std) redondeada y truncada a [min, max]
 cargo_prob = 0.1        # probabilidad de que lleve mercancía: ocupa la vía, pero no cuenta en los pasajeros
 # bottleneck_prob = 0.4     # [bottleneck]: probabilidad de detenerse una vez en el tramo …
 # bottleneck_time_mean = 50.0  # … y duración (s): media y desviación estándar
 # bottleneck_time_std = 10.0
+
+[vehicles.car.emissions]  # emisiones instantáneas (Int Panis, Broekx y Liu, 2006, Sci. Total Environ. 371:270–285):
+                        # E = max(0, f1 + f2·v + f3·v² + f4·a + f5·a² + f6·v·a) en g/s, v en m/s, a en m/s²;
+                        # cada clave es [f1, f2, f3, f4, f5, f6]; <clave>_decel, para a < −0.5 m/s².
+                        # Auto a gasolina (verificados en arXiv 2411.15238 y 1912.05956). Requiere accel y decel.
+co2 = [5.53e-1, 1.61e-1, -2.89e-3, 2.66e-1, 5.11e-1, 1.83e-1]
+nox = [6.19e-4, 8.00e-5, -4.03e-6, -4.13e-4, 3.80e-4, 1.77e-4]
+nox_decel = [2.17e-4, 0, 0, 0, 0, 0]
+voc = [4.47e-3, 7.32e-7, -2.87e-8, -3.41e-6, 4.94e-6, 1.66e-6]
+voc_decel = [2.63e-3, 0, 0, 0, 0, 0]
 
 [vehicles.bike]         # bicicleta: un solo carril
 speed_kmh = {min = 20, max = 20, mean = 20, std = 0}   # km/h
@@ -114,12 +131,16 @@ gap_run = 4.0           # supuesto: el enunciado no lo especifica
 gap_stop = 1.5
 accel = 1.2
 decel = 3.5
+speed_bump_kmh = 8.0
 pax = {min = 1, max = 120, mean = 80, std = 15}
 lane = 3              # p. ej. separa autobuses (carril 1) de bicis (carril 0)
 exclusive = true        # carril exclusivo de autobuses
 stop_position = 400.0   # m desde el inicio del tramo donde se detiene (frente del autobús); quítala para no parar
 stop_time_mean = 25.0   # s de descenso y ascenso de pasajeros: media …
 stop_time_std = 5.0     # … y desviación estándar (normal truncada a ≥ 0)
+
+[vehicles.bus.emissions]  # autobús: solo PM verificado (arXiv 2008.02405); CO2 y NOx, del artículo original
+pm = [2.23e-4, 3.47e-4, -2.38e-5, 2.08e-3, 1.76e-3, 2.23e-4]
 
 [vehicles.motorbike]
 speed_kmh = {min = 70, max = 70, mean = 70, std = 0}   # km/h
@@ -128,6 +149,7 @@ gap_run = 2.0
 gap_stop = 1
 accel = 3.0
 decel = 5.0
+speed_bump_kmh = 15.0
 pax = {min = 1, max = 2, mean = 1.2, std = 0.2}
 cargo_prob = 0.3        # motos de reparto: probabilidad de que lleve mercancía en vez de pasajeros
 overtake = true         # rebasa a quien va más lento que ella (por su velocidad real) y baja incluso
@@ -136,6 +158,9 @@ lookahead = 50.0        # m; sin estas tres claves se usan las de [behavior]
 min_advantage = 1.0     # m de espacio libre extra que le basta para cambiar
 lane_change_cooldown = 1.0  # s sin volver a cambiar tras una maniobra
 
+# [vehicles.motorbike.emissions]  # Int Panis et al. (2006) no tiene motos: sin coeficientes, no emite
+# co2 = [f1, f2, f3, f4, f5, f6]
+
 [vehicles.carga]        # vehículo de carga: solo mercancía, no cuenta en los pasajeros
 speed_kmh = {min = 40, max = 40, mean = 40, std = 0}   # km/h
 length = {min = 8, max = 16, mean = 10, std = 2}   # m, normal truncada a [min, max], sorteada para cada vehículo
@@ -143,10 +168,15 @@ gap_run = 4.0           # supuesto: como el autobús
 gap_stop = 1.5
 accel = 1.0
 decel = 3.0
+speed_bump_kmh = 8.0
 cargo_prob = 1.0        # siempre lleva mercancía (con 1, pax es opcional)
 # bottleneck_prob = 0.6     # [bottleneck]: se detiene más seguido …
 # bottleneck_time_mean = 120.0  # … y por más tiempo (s) que un auto
 # bottleneck_time_std = 30.0
+
+# [vehicles.carga.emissions]  # camión (HGV): cargar del artículo original (tabla de coeficientes); sin ellos,
+# co2 = [f1, f2, f3, f4, f5, f6]  # no emite
+# nox = [f1, f2, f3, f4, f5, f6]
 
 [behavior]
 reaction = {min = 2.0, max = 5.0, mean = 3.0, std = 1.0}

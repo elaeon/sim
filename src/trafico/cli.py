@@ -11,8 +11,11 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import DT, MAX_TYPES
-from trafico.metrics import ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, LANE_SPEED, SERIES
+from trafico.config import DT, MAX_TYPES, POLLUTANT_LABELS, POLLUTANTS
+from trafico.emissions import EMIS_BIN, acceleration_table, emissions_label, emitted, unit
+from trafico.metrics import (
+    EMIS_SERIES, ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, LANE_SPEED, SERIES,
+)
 from trafico.runner import Aggregate, run_parallel
 from trafico.settings import (
     CONFIG_NAME,
@@ -29,6 +32,8 @@ from trafico.settings import (
 PLOT_NAME = "movilidad_pasajeros.png"
 PAX_PLOT_NAME = "distribucion_pasajeros.png"
 CSV_NAME = "series.csv"
+EMIS_PLOT_NAME = "emisiones_posicion.png"
+EMIS_CSV_NAME = "emisiones_posicion.csv"
 SUMMARY_NAME = "resumen.txt"
 
 
@@ -110,6 +115,7 @@ def format_summary(agg: Aggregate) -> str:
         cargo = np.divide(100.0 * s["arrived_cargo"], s["arrived_veh"], out=np.full(cfg.n_types, np.nan),
                           where=s["arrived_veh"] > 0)  # fmt: skip
         rows.insert(1, ("Con mercancía (%)", cargo, 1))
+    rows += _emission_rows(cfg, s)
     w0 = max(len(r[0]) for r in rows) + 2
     widths = {k: max(10, len(cfg.specs[k].name) + 2) for k in active}
     speed = cfg.sim_seconds / agg.replica_wall.mean
@@ -117,12 +123,13 @@ def format_summary(agg: Aggregate) -> str:
     for label, values, digits in rows:
         lines.append(f"{label:<{w0}}" + "".join(f"{_fmt(values[k], digits):>{widths[k]}}" for k in active))
     minutes_run = cfg.sim_seconds / 60.0
-    lines += ["", "Cruzan el semáforo por carril (veh/min): " + " · ".join(
+    lines += ["", f"Cruzan {cfg.line_name} por carril (veh/min): " + " · ".join(
         f"{lane}: {_fmt(v / minutes_run)}" for lane, v in enumerate(s["lane_crossed"]))]  # fmt: skip
     if any(c > 0 for c in cfg.lane_exit_capacity):
         lines.append("Línea cerrada por la cola de salida (% del tiempo, el siguiente no cabe): " + " · ".join(
             f"{lane}: {_fmt(100 * v)}" for lane, v in enumerate(s["exit_blocked"])
             if cfg.lane_exit_capacity[lane] > 0))  # fmt: skip
+    lines += _acceleration_lines(cfg)
     lines += [
         f"Cambios de carril por réplica: {_fmt(s['lane_changes'][0])}",
         f"Tiempo de proceso nominal: {cfg.run:g} s ≙ {cfg.sim_seconds:g} s simulados "
@@ -132,6 +139,72 @@ def format_summary(agg: Aggregate) -> str:
         f"Memoria máxima (RSS) por proceso: {agg.max_rss_kb / 1024:.1f} MiB",
     ]
     return "\n".join(lines)
+
+
+def _emission_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int]]:
+    """Por contaminante emitido: por km recorrido, por recorrido completo del tramo y el exceso frente al mismo
+    recorrido a velocidad constante (paradas, arranques, tope, cola). «—» en los tipos que no lo emiten."""
+    pols, types = emitted(cfg)
+    rows = []
+    km = s["veh_km"]
+    for p in pols:
+        pol = POLLUTANTS[p]
+        name, scale = unit(pol)
+        emits = np.array([k in types and cfg.specs[k].emission_coefs(pol) is not None for k in range(cfg.n_types)])
+        grams = s["emissions"][:, p]
+        free = s["emissions_free"][:, p]
+        per_km = np.divide(grams * scale, km, out=np.full(cfg.n_types, np.nan), where=emits & (km > 0))
+        excess = np.divide(100.0 * grams, free, out=np.full(cfg.n_types, np.nan), where=emits & (free > 0)) - 100.0
+        label = POLLUTANT_LABELS[pol]
+        rows += [
+            (f"{label} ({name}/km)", per_km, 1 if scale == 1 else 0),
+            (f"{label} ({name} por recorrido del tramo)", per_km * cfg.length / 1000.0, 2 if scale == 1 else 1),
+            (f"{label} exceso vs flujo libre (%)", excess, 1),
+        ]
+    return rows
+
+
+def _acceleration_lines(cfg) -> list[str]:
+    """Tabla de referencia: lo que emite cada tipo al acelerar de 0 a 20, 20 a 40, 40 a 60 y 60 a 80 km/h a su
+    accel, y, entre paréntesis, a velocidad constante en el mismo tiempo y distancia."""
+    _, types = emitted(cfg)
+    if not types:
+        return []
+    lines = ["", "Emisiones al acelerar (modelo de Int Panis et al., 2006, a la accel de cada tipo; entre "
+             "paréntesis, a velocidad constante en el mismo tiempo y distancia):"]  # fmt: skip
+    over = False
+    for k in types:
+        spec = cfg.specs[k]
+        lines.append(f"  {spec.name} ({spec.accel:g} m/s², velocidad máxima {spec.fastest_kmh:g} km/h):")
+        for row in acceleration_table(spec):
+            parts = []
+            for pol, grams in row.grams.items():
+                name, scale = unit(pol)
+                parts.append(f"{POLLUTANT_LABELS[pol]} {grams * scale:,.2f} ({row.cruise[pol] * scale:,.2f}) {name}")
+            mark = " *" if row.v2 > spec.fastest_kmh else ""
+            over |= bool(mark)
+            lines.append(f"    {row.v1:g}→{row.v2:g} km/h{mark} en {row.seconds:.1f} s y {row.meters:.0f} m: "
+                         + " · ".join(parts))  # fmt: skip
+    if over:
+        lines.append("  * pasa la velocidad máxima del tipo: fuera del rango en que circula (y en que se ajustó el "
+                     "modelo); tómese con reserva")  # fmt: skip
+    return lines
+
+
+def write_emissions_csv(agg: Aggregate, path: Path) -> None:
+    """g/(m·h) de cada contaminante emitido, por carril, en intervalos de EMIS_BIN m a lo largo del tramo (media
+    entre réplicas)."""
+    cfg = agg.cfg
+    pols, _ = emitted(cfg)
+    pos = agg.summary["emissions_pos"].mean / EMIS_BIN / (cfg.sim_seconds / 3600.0)
+    edges = np.arange(pos.shape[2] + 1) * EMIS_BIN
+    cols = [edges[:-1], np.minimum(edges[1:], cfg.length)]
+    header = ["x_inicio_m", "x_fin_m"]
+    for p in pols:
+        for lane in range(cfg.lanes):
+            cols.append(pos[p, lane])
+            header.append(f"{POLLUTANTS[p]}_g_m_h_carril{lane}")
+    np.savetxt(path, np.column_stack(cols), delimiter=",", header=",".join(header), comments="", fmt="%.6g")
 
 
 def write_csv(agg: Aggregate, path: Path) -> None:
@@ -144,6 +217,13 @@ def write_csv(agg: Aggregate, path: Path) -> None:
         for k, sp in enumerate(cfg.specs):
             cols += [mean[:, k], std[:, k]]
             header += [f"{key}_{sp.name}_media", f"{key}_{sp.name}_sd"]
+    pols, types = emitted(cfg)
+    for p in pols:  # g/min de cada contaminante emitido, por tipo que lo emite
+        stats = agg.series[EMIS_SERIES[p]]
+        for k in types:
+            if cfg.specs[k].emission_coefs(POLLUTANTS[p]) is not None:
+                cols += [stats.mean[:, k], stats.std[:, k]]
+                header += [f"{EMIS_SERIES[p]}_g_min_{cfg.specs[k].name}_media", f"{EMIS_SERIES[p]}_g_min_{cfg.specs[k].name}_sd"]
     lane_series = [
         (LANE_SATURATION, "saturacion"), (LANE_SPEED, "velocidad_kmh"), (LANE_EXIT_FLOW, "cruzan_veh_min"),
         (ENTRY_QUEUE, "cola_entrada_veh"),
@@ -164,15 +244,24 @@ def _lane_lines(cfg) -> list[str]:
     if cfg.lane_speed_limit is not None:
         limits = " · ".join(f"{i}: {v:g}" for i, v in enumerate(cfg.lane_max_kmh))
         lines.append(f"Límite de velocidad por carril (km/h, 0 = derecho): {limits}")
+    bump_lanes = cfg.speed_bump_lanes()
+    if bump_lanes:
+        slow = [f"{sp.name} ≤ {sp.speed_bump_kmh:g}" for k, sp in enumerate(cfg.specs)
+                if sp.speed_bump_kmh is not None and cfg.rates[k] > 0]  # fmt: skip
+        where = "todos los carriles" if len(bump_lanes) == cfg.lanes else (
+            ("carril " if len(bump_lanes) == 1 else "carriles ") + ", ".join(map(str, bump_lanes)))
+        lines.append(f"Tope a {cfg.speed_bump.position:g} m ({where}), km/h al pasarlo: "
+                     + (" · ".join(slow) if slow else "ningún tipo frena (sin speed_bump_kmh)"))  # fmt: skip
     free = [f"{sp.name} (carril {sp.lane})" for k, sp in enumerate(cfg.specs) if cfg.ignores_light(k) and cfg.rates[k] > 0]
-    if free:
+    if free and cfg.has_light:
         lines.append("Sin semáforo, siguen en rojo y en amarillo (carril exclusivo en free_lanes): " + ", ".join(free))
     stops = [
         f"{sp.name} a {sp.stop_position:g} m, {sp.stop_time_mean:g} ± {sp.stop_time_std:g} s"
         for k, sp in enumerate(cfg.specs) if sp.stop_position is not None and cfg.rates[k] > 0
     ]  # fmt: skip
     if stops:
-        lines.append("Parada antes del semáforo (descenso y ascenso): " + " · ".join(stops))
+        where = "antes del semáforo" if cfg.has_light else "en el tramo"
+        lines.append(f"Parada {where} (descenso y ascenso): " + " · ".join(stops))
     variable = [(sp.name, cfg.rate(k)) for k, sp in enumerate(cfg.specs) if cfg.rate(k).variable]
     if variable:
         lines.append(f"Demanda variable (veh/min, nueva tasa cada {cfg.rate_interval:g} s): " + " · ".join(
@@ -209,6 +298,9 @@ def _lane_lines(cfg) -> list[str]:
             for lane, (c, st) in enumerate(zip(cfg.lane_exit_capacity, cfg.lane_exit_storage))))  # fmt: skip
     if cfg.behavior.queue_reaction:
         lines.append("Cola de entrada detenida: cada vehículo arranca con su tiempo de reacción ([behavior] queue_reaction)")
+    emis = emissions_label(cfg)
+    if emis:
+        lines.append(emis)
     return lines
 
 
@@ -235,7 +327,8 @@ def run(argv: list[str] | None = None) -> Path:
     header = "\n".join(
         [
             f"Corrida {run_dir.name} · configuración {target.config}",
-            f"Tramo {cfg.length:g} m · {cfg.lanes} carril(es) · semáforo {cfg.light_label}",
+            f"Tramo {cfg.length:g} m · {cfg.lanes} carril(es) · "
+            + (f"semáforo {cfg.light_label}" if cfg.has_light else "sin semáforo"),
             f"run {cfg.run:g} s de proceso × {cfg.time_scale:g} = {cfg.sim_seconds:g} s simulados · "
             f"{opts.replicas} réplicas en {workers} proceso(s) · semilla {seed}",
             *_lane_lines(cfg),
@@ -257,6 +350,11 @@ def run(argv: list[str] | None = None) -> Path:
     if any(rate > 0 and sp.carries_passengers for sp, rate in zip(cfg.specs, cfg.rates)):
         plot_passenger_distribution(agg, run_dir / PAX_PLOT_NAME, footer=footer)
     plot_mobility(agg, run_dir / PLOT_NAME, show=opts.show, footer=footer)
+    if emitted(cfg)[0]:
+        from trafico.plotting import plot_emissions_by_position
+
+        write_emissions_csv(agg, run_dir / EMIS_CSV_NAME)
+        plot_emissions_by_position(agg, run_dir / EMIS_PLOT_NAME, footer=footer)
     if opts.animation:
         from trafico.movement import visualize
 
@@ -474,3 +572,135 @@ def variants(argv: list[str] | None = None) -> Path:
 
 def variants_main(argv: list[str] | None = None) -> None:
     variants(argv)
+
+
+EMISSIONS_NAME = "emisiones_topes"
+
+
+def build_emissions_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="trafico-emisiones",
+        description=(
+            f"Compara las emisiones de una calle en varios escenarios: corre la configuración ({CONFIG_NAME}) sin "
+            "tope y con topes en las posiciones dadas y, si se pide, con y sin semáforo, con la misma semilla. "
+            "Grafica el flujo, los vehículos por minuto, las emisiones por km de cada tipo y a lo largo de la calle. "
+            "Guarda la gráfica, tablas CSV, un resumen, los datos crudos y los parámetros en "
+            "<output.dir>/<fecha-hora>_<nombre>/. Las emisiones requieren [vehicles.<clave>.emissions], accel y decel."
+        ),
+    )
+    p.add_argument(
+        "target", nargs="?", default=None, metavar="nombre | carpeta",
+        help=f"como en `trafico`: una carpeta de la que se lee su {CONFIG_NAME}, o el nombre de la comparación "
+             f"(por defecto, {EMISSIONS_NAME}) con {default_config_path()}",
+    )  # fmt: skip
+    p.add_argument("--topes", nargs="+", metavar="M|sin",
+                   help="posición del tope (m desde la entrada) de cada escenario, o «sin» (por defecto, sin tope y "
+                        "con el de [speed_bump]; si no hay, a la mitad del tramo)")  # fmt: skip
+    p.add_argument("--carriles-tope", type=int, nargs="+", metavar="N",
+                   help="carriles con tope, en la numeración después de --carriles (por defecto, los de "
+                        "[speed_bump] lanes; sin ella, todos)")  # fmt: skip
+    p.add_argument("--semaforo", choices=("config", "si", "no", "ambos"), default="config",
+                   help="semáforo en todos los escenarios: como en la configuración, activado, desactivado o ambos "
+                        "(cada tope con y sin semáforo)")  # fmt: skip
+    p.add_argument("--largo", type=float, metavar="M", help="largo del tramo en m (por defecto, [road] length)")
+    p.add_argument("--carriles", type=int, nargs="+", metavar="N",
+                   help="carriles de la configuración que se conservan, renumerados desde 0 en ese orden (por "
+                        "defecto, todos)")  # fmt: skip
+    p.add_argument("--sin", nargs="+", default=[], metavar="CLAVE",
+                   help="tipos de vehículo que no participan, p. ej. bike motorbike")  # fmt: skip
+    p.add_argument("--replicas", type=int, help="réplicas por escenario (por defecto, [execution] replicas)")
+    p.add_argument("--run", type=float, help="s de proceso de cada réplica (por defecto, [execution] run)")
+    p.add_argument("--redibujar", metavar="CARPETA",
+                   help="no simula: vuelve a dibujar la gráfica de una comparación ya corrida (sin sobrescribir)")  # fmt: skip
+    return p
+
+
+def _bumps(values: list[str] | None, config_bump: float | None, length: float) -> tuple[float | None, ...]:
+    if values is None:
+        return (None, config_bump if config_bump is not None else length / 2)
+    out: list[float | None] = []
+    for text in values:
+        if text.lower() == "sin":
+            out.append(None)
+            continue
+        try:
+            out.append(float(text))
+        except ValueError:
+            raise ConfigError(f"--topes: {text!r} debe ser una posición en m o «sin»") from None
+    return tuple(out)
+
+
+def emissions(argv: list[str] | None = None) -> Path:
+    """Corre una comparación de emisiones entre escenarios (o la redibuja) y devuelve su carpeta."""
+    from trafico.emission_scenarios import (
+        BASE_CONFIG_NAME, PLOT_NAME as EMIS_PLOT, SUMMARY_NAME as EMIS_SUMMARY, Scenarios, build_configs, load,
+        metadata, run_scenarios, write_outputs,
+    )  # fmt: skip
+    from trafico.movement import _free_path
+    from trafico.plotting import plot_emission_comparison
+    from trafico.settings import _set_key
+    from trafico.variants import reduce_config
+
+    argv = sys.argv[1:] if argv is None else argv
+    parser = build_emissions_parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.redibujar:
+            folder = Path(args.redibujar).expanduser()
+            meta, data = load(folder)
+            path = _free_path(folder / EMIS_PLOT)
+            plot_emission_comparison(path, meta, data)
+            print(f"Gráfica en {path}")
+            return folder
+        target = resolve_target(args.target)
+        settings = load_settings(target.config)
+        base, opts = settings.sim, settings.run
+        lanes = tuple(args.carriles) if args.carriles else None
+        reduced = reduce_config(base, lanes, tuple(args.sin))
+        length = args.largo if args.largo is not None else reduced.length
+        lights = {"config": (None,), "si": (True,), "no": (False,), "ambos": (True, False)}[args.semaforo]
+        s = Scenarios(
+            bumps=_bumps(args.topes, reduced.speed_bump.position, length),
+            bump_lanes=tuple(args.carriles_tope) if args.carriles_tope else reduced.speed_bump.lanes,
+            lights=lights, length=args.largo, lanes=lanes, without=tuple(args.sin),
+            replicas=args.replicas if args.replicas is not None else opts.replicas,
+            run=args.run if args.run is not None else base.run,
+        )  # fmt: skip
+        if s.replicas < 1:
+            raise ConfigError("--replicas debe ser al menos 1")
+        if len(s.bumps) * len(s.lights) > MAX_TYPES:
+            raise ConfigError(f"se admiten hasta {MAX_TYPES} escenarios (colores de la gráfica)")
+        configs = build_configs(base, s)  # valida todos los escenarios antes de correr
+        seed = opts.seed if opts.seed is not None else secrets.randbelow(2**32)
+        meta = metadata(base, s, configs, seed, argv)
+    except ConfigError as exc:
+        parser.error(str(exc))
+
+    print(f"Comparación de emisiones · configuración {target.config}")
+    print(f"{len(configs)} escenarios × {s.replicas} réplicas · run {s.run:g} s × {base.time_scale:g} = "
+          f"{s.run * base.time_scale:g} s simulados · semilla {seed}")  # fmt: skip
+    if not any(v for v in meta["velocidad_tope_kmh"].values()) and any(b is not None for b in s.bumps):
+        print("Aviso: ningún tipo que participa tiene speed_bump_kmh: el tope no frena a nadie")
+
+    def progress(name: str, done: int, total: int) -> None:
+        if done == 1:
+            sys.stderr.write(f"  {name}\n")
+        _progress(done, total)
+
+    data = run_scenarios(configs, s.replicas, seed, opts.workers, progress=progress if opts.progress else None)
+    now = datetime.now()
+    folder = make_run_dir(resolve_output_dir(opts.output_dir), safe_name(target.name or EMISSIONS_NAME), now)
+    text = settings.text if opts.seed is not None else _set_key(settings.text, "execution", "seed", seed, "semilla usada")
+    (folder / BASE_CONFIG_NAME).write_text(
+        f"# Configuración base de la comparación {folder.name}\n# {meta['comando']}\n\n{text}", encoding="utf-8"
+    )
+    summary = write_outputs(folder, meta, data)
+    print("\n" + summary)
+    (folder / EMIS_SUMMARY).write_text(f"{meta['comando']}\n\n{summary}\n", encoding="utf-8")
+    plot_emission_comparison(folder / EMIS_PLOT, meta, data)
+    print(f"\nResultados en {folder}")
+    return folder
+
+
+def emissions_main(argv: list[str] | None = None) -> None:
+    emissions(argv)

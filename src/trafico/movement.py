@@ -161,12 +161,17 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
     axes = fig.subplots(lanes, 1, sharex=True, squeeze=False, gridspec_kw={"hspace": 0.35})[:, 0]
     assigned = _lane_assignments(cfg, _active(cfg))
     spans = _phase_spans(traj)
+    bump_lanes = cfg.speed_bump_lanes()
     for lane in range(lanes):
         ax = axes[lanes - 1 - lane]  # carril izquierdo arriba, como en una vista desde arriba
         _style_axis(ax, "{:,.0f}")
         if lane not in cfg.free_lanes:  # sin semáforo, las fases no lo afectan
             shade_phases(ax, spans)
         ax.axhline(cfg.length, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
+        if lane in bump_lanes:
+            ax.axhline(cfg.speed_bump.position, color=MUTED, linewidth=1.5, linestyle=(0, (6, 2, 1, 2)), zorder=1)
+            ax.annotate("tope", (0, cfg.speed_bump.position), xycoords=("axes fraction", "data"), xytext=(4, 3),
+                        textcoords="offset points", ha="left", fontsize=8, color=INK_2)  # fmt: skip
         for k, pos in _stops(cfg, lane):
             ax.axhline(pos, color=TYPE_COLORS[k], linewidth=1, linestyle=(0, (1, 2)), zorder=1)
             ax.annotate(f"parada {cfg.specs[k].name}", (1, pos), xycoords=("axes fraction", "data"),
@@ -196,7 +201,7 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
     fig.text(
         0.075, 1 - 0.56 / fh,
         f"{title_note} · pendiente = velocidad, tramo horizontal = detenido, "
-        f"línea punteada = semáforo ({cfg.length:g} m)",
+        f"línea punteada = {'semáforo' if cfg.has_light else 'final del tramo'} ({cfg.length:g} m)",
         ha="left", fontsize=9, color=INK_2,
     )  # fmt: skip
     _type_legend(fig, cfg, 1 - 0.7 / fh, [*phase_handles(cfg),
@@ -274,6 +279,14 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     ax.tick_params(colors=MUTED, labelcolor=INK_2, labelsize=8, length=0)
     ax.set_yticks(range(lanes), labels)
     ax.set_xlabel("posición (m)", color=INK_2, fontsize=9)
+    bump_lanes = cfg.speed_bump_lanes()
+    for lane in bump_lanes:  # tope: franja rayada a lo ancho del carril
+        pos = cfg.speed_bump.position
+        ax.add_patch(Rectangle((pos - 0.4, lane - 0.45), 0.8, 0.9, facecolor=YELLOW_PHASE, edgecolor=INK_2,
+                               hatch="////", linewidth=0.6, zorder=1))  # fmt: skip
+    if bump_lanes:  # una sola etiqueta, sobre el carril con tope de más arriba
+        ax.annotate("tope", (cfg.speed_bump.position, max(bump_lanes) + 0.45), xytext=(0, 1),
+                    textcoords="offset points", ha="center", va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
     for lane in range(lanes):
         for k, pos in _stops(cfg, lane):
             ax.plot([pos, pos], [lane - 0.45, lane + 0.45], color=TYPE_COLORS[k], linewidth=2, zorder=1,
@@ -301,9 +314,10 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
         ax.annotate("salida: m ocupados/mide\nen rojo, no cabe el siguiente: línea cerrada", (exit_x, -0.5), xytext=(0, -20),
                     textcoords="offset points", ha="right", va="top", fontsize=7, color=INK_2)  # fmt: skip
     storage = cfg.lane_exit_storage
-    # Semáforo: un tramo por carril; los carriles sin semáforo siempre en verde.
+    # Semáforo: un tramo por carril; los carriles sin semáforo siempre en verde. Sin semáforo no se dibuja.
     light_w = max(1.5, cfg.length * 0.006)
-    lights = [Rectangle((cfg.length, lane - 0.5), light_w, 1, zorder=3, animated=True) for lane in range(lanes)]
+    lights = [Rectangle((cfg.length, lane - 0.5), light_w, 1, zorder=3, animated=True)
+              for lane in (range(lanes) if cfg.has_light else ())]  # fmt: skip
     for light in lights:
         ax.add_patch(light)
     cars = PolyCollection([], linewidths=0.9, zorder=2, animated=True)
@@ -421,7 +435,7 @@ def _crossing_counters(fig, traj: Trajectories, width_in: float, y: float) -> li
 
     fh = fig.get_figheight()
     square = 0.12  # pulgadas
-    title = "Cruzaron el semáforo en el video:"
+    title = f"Cruzaron {traj.cfg.line_name} en el video:"
     fig.text(0.02, y, title, ha="left", va="center", fontsize=9, color=INK_2)
     x = 0.02 + (0.075 * len(title) + 0.15) / width_in
     counters = []

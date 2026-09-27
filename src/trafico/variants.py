@@ -54,8 +54,8 @@ def light_name(red: float, green: float) -> str:
 
 def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple[str, ...]) -> SimConfig:
     """La configuración base con solo los carriles `lanes` (renumerados desde 0 en ese orden, con sus
-    límites, ocupación inicial, cola de salida, carriles sin semáforo y de cuello de botella) y sin los
-    tipos `without`.
+    límites, ocupación inicial, cola de salida, carriles sin semáforo, con tope y de cuello de botella) y
+    sin los tipos `without`.
 
     Los tipos que no participan (en `without` o con tasa 0) no pesan en la validación: pierden su
     carril fijo, su exclusividad, su parada y sus detenciones. Un tipo que participa con carril fijo
@@ -88,6 +88,12 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
         raise ConfigError("no queda ningún tipo con tasa > 0 (revisa --sin y [demand])")
 
     bn_lanes = base.bottleneck.stop_lanes
+    bump_lanes = base.speed_bump.lanes
+    if bump_lanes is not None:  # si no queda ninguno de sus carriles, no hay tope
+        bump_lanes = tuple(new_of[ln] for ln in bump_lanes if ln in new_of)
+        if not bump_lanes:
+            base = replace(base, speed_bump=replace(base.speed_bump, position=None))
+            bump_lanes = None
     if bn_lanes is not None:
         bn_lanes = tuple(new_of[ln] for ln in bn_lanes if ln in new_of)  # () = en ninguno
     return replace(
@@ -100,12 +106,13 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
         free_lanes=tuple(new_of[ln] for ln in base.free_lanes
                          if ln in new_of and any(s.exclusive and s.lane == new_of[ln] for s in specs)),  # fmt: skip
         bottleneck=replace(base.bottleneck, stop_lanes=bn_lanes),
+        speed_bump=replace(base.speed_bump, lanes=bump_lanes),
     )  # fmt: skip
 
 
 def scenario(reduced: SimConfig, v: Variants, length: float, red: float, green: float) -> SimConfig:
     """Un escenario validado: la configuración reducida con ese largo, semáforo y duración."""
-    cfg = replace(reduced, length=length, red=red, green=green, run=v.run)
+    cfg = replace(reduced, length=length, red=red, green=green, traffic_light=True, run=v.run)
     try:
         validate_config(cfg, RunOptions(replicas=v.replicas))
     except ConfigError as exc:

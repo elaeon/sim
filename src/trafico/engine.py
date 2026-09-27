@@ -37,6 +37,10 @@ Modelo por paso de DT segundos (actualización paralela con posiciones previas):
     (aunque esté en verde): se detiene en ella y arranca con su reacción cuando
     hay lugar; si llegan más de los que acepta, el carril se satura. Una cola
     vacía acepta a cualquiera.
+  * Tope (opcional, [speed_bump]): en los carriles `lanes`, a `position` m del
+    inicio, quien lo pisa (del frente a la parte trasera) no rebasa el
+    `speed_bump_kmh` de su tipo; sin `decel` baja de golpe, con `decel` frena
+    antes para llegar a esa velocidad. Los tipos sin `speed_bump_kmh` no frenan.
   * Cola de entrada: los vehículos que no caben esperan fuera del tramo y entran
     en marcha en cuanto hay lugar. Con `queue_reaction`, si la cola del tramo
     llega detenida hasta la entrada, la cola de entrada también está detenida:
@@ -77,6 +81,7 @@ from trafico.distributions import (
     normal_ticks, reaction_ticks, sample_lengths, sample_passengers, sample_rates, sample_speeds, stop_ticks,
     uniform_ticks,
 )  # fmt: skip
+from trafico.emissions import EMIS_BIN, coefficient_table, emission_rate
 from trafico.metrics import Recorder
 
 EPS = 1e-6
@@ -231,6 +236,25 @@ class Simulation:
         self.dec_t = np.array([INF if s.decel is None else s.decel * DT * DT for s in specs])
         self.dyn_t = np.isfinite(self.acc_t) | np.isfinite(self.dec_t)  # tipos con dinámica gradual
         self.any_dynamics = bool(self.dyn_t.any())
+        # Tope ([speed_bump]): posición, carriles donde está y velocidad máxima de cada tipo al pisarlo (m/paso).
+        self.bump_x = INF if cfg.speed_bump.position is None else float(cfg.speed_bump.position)
+        self.bump_lane = np.zeros(cfg.lanes, np.bool_)
+        self.bump_lane[list(cfg.speed_bump_lanes())] = True
+        self.bump_v_t = np.array([INF if s.speed_bump_kmh is None else s.speed_bump_kmh / 3.6 * DT for s in specs])
+        self.any_bump = bool(self.bump_lane.any() and np.isfinite(self.bump_v_t).any())
+        # Emisiones (Int Panis et al., 2006): coeficientes por tipo y contaminante, límites de la aceleración que
+        # entra al modelo (m/s²) y gramos acumulados: en la corrida, a flujo libre (mismo recorrido a velocidad
+        # constante), en el intervalo de muestreo y por posición (contaminante × carril × intervalo de EMIS_BIN m).
+        self.emis_coef, self.emis_on = coefficient_table(specs)
+        self.any_emissions = bool(self.emis_on.any())
+        self.emis_amax = np.array([s.accel or 0.0 for s in specs])
+        self.emis_dmax = np.array([s.decel or 0.0 for s in specs])
+        n_pol = self.emis_on.shape[1]
+        self.emis_g = np.zeros((self.n_types, n_pol))
+        self.emis_free_g = np.zeros((self.n_types, n_pol))
+        self.emis_interval = np.zeros((self.n_types, n_pol))
+        self.emis_pos = np.zeros((n_pol, cfg.lanes, max(1, math.ceil(cfg.length / EMIS_BIN))))
+        self.veh_m = np.zeros(self.n_types)  # m recorridos dentro del tramo, por tipo
         # Sin límites distintos entre carriles no hay a dónde subir.
         self.any_rise = len(set(cfg.lane_max_kmh)) > 1
         self._key_stride = self.L + 1e4  # separa los carriles en la clave de orden
@@ -437,6 +461,7 @@ class Simulation:
                         v_ahead, dec_ahead = 0.0, INF
                     if np.isfinite(room):
                         self.v_last[i] = min(self.v_last[i], _safe_speed_1(room, v_ahead, self.dec_t[k], dec_ahead))
+                    self.v_last[i] = min(self.v_last[i], self._bump_speed_1(k, lane, self.x[i], self.x[i] - length))
                 ahead = i
                 rear = self.x[i] - length
 
@@ -565,6 +590,9 @@ class Simulation:
                 v0 = None
                 if self.any_dynamics:
                     v0 = self._entry_speed(vt, speed, from_stop, rear_min[ln] - length - gap, tail[ln])
+                    bump = self._bump_speed_1(vt, ln, length, 0.0) if self.dyn_t[vt] else INF
+                    if np.isfinite(bump):  # entra a lo más a la velocidad con la que aún llega al tope
+                        v0 = min(speed / 3.6 * DT if v0 is None else v0, bump)
                 self._add(vt, pax, ln, length, bottleneck_at=at, speed_kmh=speed, v0=v0)
                 self.queue_react[ln] = -1
                 # Quien sigue esperaba detrás de un detenido: también arranca con reacción.
@@ -583,6 +611,18 @@ class Simulation:
         v_lead = 0.0 if self.stopped[tail] else float(self.v_last[tail])
         safe = _safe_speed_1(space, v_lead, self.dec_t[vt], self.dec_t[self.vtype[tail]])
         return min(speed_kmh / 3.6 * DT, safe)
+
+    def _bump_speed_1(self, k: int, lane: int, front: float, rear: float) -> float:
+        """Velocidad máxima (m/paso) de un vehículo del tipo k en `lane` por el tope: la del tipo si lo pisa;
+        antes de él, con frenado gradual, la que aún le permite llegar a ella frenando a `decel`; INF si no
+        aplica (sin tope en el carril, ya lo pasó o el tipo pasa sin frenar)."""
+        vb = self.bump_v_t[k]
+        if not (np.isfinite(vb) and self.bump_lane[lane]) or rear >= self.bump_x:
+            return INF
+        if front >= self.bump_x:
+            return float(vb)
+        dec = self.dec_t[k]
+        return _safe_speed_1(self.bump_x - front, vb, dec, dec) if np.isfinite(dec) else INF
 
     def _queue_ready(self, ln: int, vt: int, fits: bool, tail_stopped: bool) -> bool:
         """El primero de la cola de entrada detenida del carril `ln` ya reaccionó y puede entrar.
@@ -764,6 +804,19 @@ class Simulation:
             tgt_lane = self.lc_target[:n][lane_changing]
             vcap[lane_changing] = np.minimum(vcap[lane_changing], self.lane_vmax[tgt_lane])
         vcap = vcap * np.where(lane_changing, b.lane_change_speed_factor, 1.0)
+        if self.any_bump:
+            # Tope: quien lo pisa, o lo alcanzaría en este paso, no rebasa la velocidad de su tipo. Con frenado
+            # gradual, además frena antes a decel: con la distancia al tope, la velocidad segura (Gipps, un paso de
+            # reacción) solo deja alcanzarlo en un paso a la velocidad del tope o menos. Cuenta el carril de origen
+            # y el destino si está cambiando.
+            vb = self.bump_v_t[vt]
+            tgt = self.lc_target[:n]
+            in_lane = self.bump_lane[self.lane[:n]] | ((tgt >= 0) & self.bump_lane[np.maximum(tgt, 0)])
+            before = in_lane & np.isfinite(vb) & (x - self.vlen[:n] < self.bump_x)  # aún no lo pasa entero
+            vcap = np.where(before & (x + vcap > self.bump_x), np.minimum(vcap, vb), vcap)
+            if dynamics:
+                ahead = before & (x < self.bump_x)
+                vsafe = np.minimum(vsafe, np.where(ahead, _safe_speed(self.bump_x - x, vb, dec_v, dec_v), INF))
         if phase == YELLOW:  # quien se aproxima a la línea de alto baja la velocidad
             near = ~ruled_out & (self.L - x <= b.yellow_approach)
             if dynamics:
@@ -779,12 +832,15 @@ class Simulation:
             v_new = vcap
         adv = np.where(moving, np.maximum(np.minimum(v_new, space), 0.0), 0.0)
         stopped[moving & (adv < EPS) & binding_stop] = True
+        if self.any_emissions:
+            self._emit(vt, x, adv, crossed)  # antes de actualizar v_last: la aceleración usa la del paso anterior
         self.v_last[:n] = adv
         self.vcap_last[:n] = vcap
 
         pax = self.pax[:n]
         inside = np.minimum(adv, np.maximum(self.L - x, 0.0))
         self.pax_m += np.bincount(vt, weights=pax * inside, minlength=self.n_types)
+        self.veh_m += np.bincount(vt, weights=inside, minlength=self.n_types)
         # Velocidad media por carril: distancia y tiempo de los vehículos dentro del tramo (con los
         # detenidos), asignados a su carril actual.
         present = ~crossed
@@ -865,6 +921,32 @@ class Simulation:
         gone = x - self.vlen[:n] > self.L
         if gone.any():
             self._compact(~gone)
+
+    def _emit(self, vt: np.ndarray, x: np.ndarray, adv: np.ndarray, crossed: np.ndarray) -> None:
+        """Gramos que emite en el paso cada vehículo que aún no cruza y cuyo tipo emite, con su velocidad (adv) y
+        su aceleración respecto al paso anterior, acotada a [−decel, accel] de su tipo (un frenado de emergencia
+        no dispara el término a²). También lo que emitiría recorriendo lo mismo a flujo libre (a velocidad
+        constante: su máxima dentro del límite del carril) y dónde lo emite."""
+        idx = np.flatnonzero(~crossed & self.emis_on[vt].any(axis=1))
+        if idx.size == 0:
+            return
+        t = vt[idx]
+        step = adv[idx]
+        v = step / DT
+        a = np.clip((step - self.v_last[idx]) / (DT * DT), -self.emis_dmax[t], self.emis_amax[t])
+        on = self.emis_on[t]
+        coef = self.emis_coef[t]
+        grams = emission_rate(coef, v[:, None], a[:, None]) * DT * on
+        vf = np.minimum(self.vmax[idx], self.lane_vmax[self.lane[idx]])  # m/paso
+        free = emission_rate(coef, (vf / DT)[:, None], 0.0) * DT * (step / vf)[:, None] * on
+        lanes = self.lane[idx].astype(np.int64)
+        bins = np.clip((x[idx] / EMIS_BIN).astype(np.int64), 0, self.emis_pos.shape[2] - 1)
+        for p in range(grams.shape[1]):
+            by_type = np.bincount(t, weights=grams[:, p], minlength=self.n_types)
+            self.emis_g[:, p] += by_type
+            self.emis_interval[:, p] += by_type
+            self.emis_free_g[:, p] += np.bincount(t, weights=free[:, p], minlength=self.n_types)
+            np.add.at(self.emis_pos[p], (lanes, bins), grams[:, p])
 
     def _drain_exit(self) -> None:
         """Salen de cada cola de salida los vehículos que acepta su capacidad en este paso. Sin cola, la
@@ -1190,7 +1272,8 @@ class Simulation:
             footprint = np.bincount(svt[ins], weights=fp[ins], minlength=self.n_types)
             lane_sat = self._lane_saturation(occ)
         self.recorder.record(self.cum_pax, self.pax_m, pax_on, footprint, lane_sat, self.lane_dist, self.lane_time,
-                             self.lane_cross, self.exit_q, [len(q) for q in self.queues])  # fmt: skip
+                             self.lane_cross, self.exit_q, [len(q) for q in self.queues], self.emis_interval)  # fmt: skip
+        self.emis_interval[:] = 0.0
         self.lane_cross[:] = 0.0
         self.pax_m[:] = 0.0
         self.lane_dist[:] = 0.0
@@ -1237,4 +1320,8 @@ class Simulation:
             "stop_time": self.stop_time_ticks * DT / np.where(self.stops > 0, self.stops, np.nan),
             "bottleneck_stops": self.bn_stops.copy(),
             "bottleneck_time": self.bn_ticks * DT / np.where(self.bn_stops > 0, self.bn_stops, np.nan),
+            "veh_km": self.veh_m / 1000.0,  # km recorridos dentro del tramo, por tipo
+            "emissions": self.emis_g.copy(),  # g por tipo y contaminante (POLLUTANTS)
+            "emissions_free": self.emis_free_g.copy(),  # g del mismo recorrido a velocidad constante
+            "emissions_pos": self.emis_pos.copy(),  # g por contaminante, carril e intervalo de EMIS_BIN m
         }

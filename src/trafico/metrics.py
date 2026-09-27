@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from trafico.config import DT, SimConfig
+from trafico.config import DT, POLLUTANTS, SimConfig
 
 SERIES = ("cum_pax", "pax_flow", "paxkm_h", "pax_per_m")
 LANE_SATURATION = "lane_saturation"
@@ -12,12 +12,16 @@ LANE_SATURATION = "lane_saturation"
 LANE_SPEED = "lane_speed"
 """Serie con una columna por carril: velocidad media (km/h) de sus vehículos, con los detenidos."""
 LANE_EXIT_FLOW = "lane_exit_flow"
-"""Serie con una columna por carril: vehículos por minuto que cruzan el semáforo (ventana de un ciclo)."""
+"""Serie con una columna por carril: vehículos por minuto que cruzan el semáforo (ventana de un ciclo; sin
+semáforo, de NO_LIGHT_WINDOW s)."""
 EXIT_QUEUE = "exit_queue"
 """Serie con una columna por carril: m ocupados en la cola de salida después del semáforo."""
 ENTRY_QUEUE = "entry_queue"
 """Serie con una columna por carril: vehículos en la cola de entrada (ya llegaron, aún no caben en el tramo)."""
 LANE_STATS = (LANE_SATURATION, LANE_EXIT_FLOW, LANE_SPEED, ENTRY_QUEUE, EXIT_QUEUE)
+EMIS_SERIES = tuple(f"emis_{pol}" for pol in POLLUTANTS)
+"""Series con una columna por tipo: g/min de cada contaminante (ventana de un ciclo; sin semáforo, de
+NO_LIGHT_WINDOW s)."""
 """Series por carril que se agregan entre réplicas."""
 SMOOTH_S = 10.0  # s de la media móvil de pax·km/h
 SPEED_BIN = 0.5  # km/h, ancho de los intervalos del histograma de velocidad por carril
@@ -39,9 +43,11 @@ class Recorder:
         self.lane_cross = np.zeros((n_samples, n_lanes), np.float32)  # cruces de la línea en el intervalo
         self.exit_q = np.zeros((n_samples, n_lanes), np.float32)  # m ocupados en la cola de salida
         self.entry_q = np.zeros((n_samples, n_lanes), np.float32)  # vehículos en la cola de entrada
+        self.emis = np.zeros((n_samples, n_types, len(POLLUTANTS)), np.float32)  # g emitidos en el intervalo
         self.count = 0
 
-    def record(self, cum_pax, pax_m, pax_on, footprint, lane_sat, lane_dist, lane_time, lane_cross, exit_q, entry_q) -> None:
+    def record(self, cum_pax, pax_m, pax_on, footprint, lane_sat, lane_dist, lane_time, lane_cross, exit_q, entry_q,
+               emis=None) -> None:
         i = self.count
         if i >= self.cum_pax.shape[0]:
             return
@@ -55,6 +61,8 @@ class Recorder:
         self.lane_cross[i] = lane_cross
         self.exit_q[i] = exit_q
         self.entry_q[i] = entry_q
+        if emis is not None:
+            self.emis[i] = emis
         self.count += 1
 
 
@@ -75,9 +83,10 @@ def derive_series(rec: Recorder, cfg: SimConfig) -> dict[str, np.ndarray]:
     dt = cfg.sample_ticks * DT
     cum = rec.cum_pax.astype(np.float64)
 
-    # Flujo en ventana móvil de un ciclo de semáforo.
-    flow = _window_rate(cum, round(cfg.cycle / dt), dt) * 60.0
-    lane_flow = _window_rate(np.cumsum(rec.lane_cross, axis=0, dtype=np.float64), round(cfg.cycle / dt), dt) * 60.0
+    # Flujo en ventana móvil de un ciclo de semáforo (sin semáforo, de NO_LIGHT_WINDOW s).
+    window = round(cfg.flow_window / dt)
+    flow = _window_rate(cum, window, dt) * 60.0
+    lane_flow = _window_rate(np.cumsum(rec.lane_cross, axis=0, dtype=np.float64), window, dt) * 60.0
     # pax·m del intervalo -> pax·km/h, suavizado con media móvil.
     pax_m_cum = np.cumsum(rec.pax_m, axis=0, dtype=np.float64)
     paxkm_h = _window_rate(pax_m_cum, round(SMOOTH_S / dt), dt) * 3600.0 / 1000.0
@@ -89,7 +98,13 @@ def derive_series(rec: Recorder, cfg: SimConfig) -> dict[str, np.ndarray]:
         per_m = np.where(rec.footprint > 0, rec.pax_on / rec.footprint, np.nan)
         lane_speed = np.where(veh_time > 0, dist / veh_time * 3.6, np.nan)
 
+    emis_cum = np.cumsum(rec.emis, axis=0, dtype=np.float64)
+    emis = {
+        name: (_window_rate(emis_cum[:, :, p], window, dt) * 60.0).astype(np.float32)
+        for p, name in enumerate(EMIS_SERIES)
+    }
     return {
+        **emis,
         "cum_pax": cum.astype(np.float32),
         "pax_flow": flow.astype(np.float32),
         "paxkm_h": paxkm_h.astype(np.float32),
