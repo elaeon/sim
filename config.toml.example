@@ -19,13 +19,15 @@ green = 35.0            # s (múltiplo de 0.1)
 yellow = 3.0            # s (múltiplo de 0.1) entre el verde y el rojo: verde → amarillo → rojo; 0 = sin amarillo
 start_phase = "red"     # "red" | "green"
 
-[demand]                # llegadas Poisson en veh/min; 0 = ese tipo no participa
-car_rate = 18.0
-bike_rate = 8.0
-bus_rate = 0.25
-motorbike_rate = 8.0
-carga_rate = 1.0        # vehículos de carga (ver [vehicles.carga])
-slow_lane = "right"     # carril fijo de los tipos con lane_change = false: "right" | "random"
+[demand]                # llegadas Poisson en veh/min, un diccionario por tipo: {min, max, mean, std}.
+                        # La tasa es una normal(mean, std) truncada a [min, max] que se vuelve a sortear
+                        # cada rate_interval s; con std = 0 es fija. Todo en 0 = ese tipo no participa.
+rate_interval = 60.0    # s simulados entre sorteos de la tasa (múltiplo de 0.1)
+car_rate = {min = 5, max = 30, mean = 18, std = 6}
+bike_rate = {min = 2, max = 12, mean = 8, std = 3}
+bus_rate = {min = 0.25, max = 0.25, mean = 0.25, std = 0}
+motorbike_rate = {min = 2, max = 14, mean = 8, std = 3}
+carga_rate = {min = 1, max = 1, mean = 1, std = 0}   # vehículos de carga (ver [vehicles.carga])
 
 [initial]               # condición inicial: los carriles ya tienen vehículos al empezar (no espera el llenado)
 occupancy = 0.0         # fracción de cada carril ocupada: Σ(largo + gap_stop) / length; 1 = cola compacta.
@@ -68,13 +70,10 @@ format = "webm"         # "webm" (VP9) | "mp4" (H.264) | "gif"
 
 [vehicles.car]          # automóvil: puede cambiar de carril
 speed_kmh = 80.0        # velocidad máxima del vehículo
-length = 4.5            # m
+length = {min = 4.5, max = 4.5, mean = 4.5, std = 0}   # m
 gap_run = 3.0           # m al líder en marcha
 gap_stop = 1.0          # m al líder detenido (compresión)
-pax_min = 1
-pax_max = 6
-pax_mean = 1.3          # normal truncada a [pax_min, pax_max]
-pax_std = 1.0
+pax = {min = 1, max = 6, mean = 1.3, std = 1}   # pasajeros: normal(mean, std) redondeada y truncada a [min, max]
 cargo_prob = 0.1        # probabilidad de que lleve mercancía: ocupa la vía, pero no cuenta en los pasajeros
 # bottleneck_prob = 0.4     # [bottleneck]: probabilidad de detenerse una vez en el tramo …
 # bottleneck_time_mean = 50.0  # … y duración (s): media y desviación estándar
@@ -82,26 +81,20 @@ cargo_prob = 0.1        # probabilidad de que lleve mercancía: ocupa la vía, p
 
 [vehicles.bike]         # bicicleta: un solo carril
 speed_kmh = 20.0        # velocidad máxima del vehículo
-length = 1.8
+length = {min = 1.8, max = 1.8, mean = 1.8, std = 0}
 gap_run = 1.0
 gap_stop = 0.5
-pax_min = 1
-pax_max = 1
-pax_mean = 1.0
-pax_std = 0.0
-lane = 0              # carril fijo (0 = derecho); sin él se usa [demand] slow_lane
+pax = {min = 1, max = 1, mean = 1, std = 0}
+lane = 0              # carril fijo (0 = derecho); sin él, el derecho libre
 exclusive = true        # reserva el carril: solo lo usan los tipos con este lane (autos y motos no)
 abreast = 2             # al detenerse, hasta 2 bicis lado a lado en el carril (1 = en fila)
 
 [vehicles.bus]          # autobús: un solo carril
 speed_kmh = 60.0        # velocidad máxima del vehículo
-length = 15.0
+length = {min = 15, max = 15, mean = 15, std = 0}
 gap_run = 4.0           # supuesto: el enunciado no lo especifica
 gap_stop = 1.5
-pax_min = 1
-pax_max = 120
-pax_mean = 80.0
-pax_std = 15.0
+pax = {min = 1, max = 120, mean = 80, std = 15}
 lane = 3              # p. ej. separa autobuses (carril 1) de bicis (carril 0)
 exclusive = true        # carril exclusivo de autobuses
 stop_position = 400.0   # m desde el inicio del tramo donde se detiene (frente del autobús); quítala para no parar
@@ -110,13 +103,10 @@ stop_time_std = 5.0     # … y desviación estándar (normal truncada a ≥ 0)
 
 [vehicles.motorbike]
 speed_kmh = 70.0        # velocidad máxima del vehículo
-length = 2.0
+length = {min = 2, max = 2, mean = 2, std = 0}
 gap_run = 2.0
 gap_stop = 1
-pax_min = 1
-pax_max = 2
-pax_mean = 1.2
-pax_std = 0.2
+pax = {min = 1, max = 2, mean = 1.2, std = 0.2}
 cargo_prob = 0.3        # motos de reparto: probabilidad de que lleve mercancía en vez de pasajeros
 overtake = true         # rebasa a quien va más lento que ella (por su velocidad real) y baja incluso
                         # a un carril de menor límite si ahí avanza más; luego sube a uno más rápido
@@ -126,21 +116,18 @@ lane_change_cooldown = 1.0  # s sin volver a cambiar tras una maniobra
 
 [vehicles.carga]        # vehículo de carga: solo mercancía, no cuenta en los pasajeros
 speed_kmh = 40.0        # velocidad máxima del vehículo
-length = 10.0           # m, largo medio de una normal …
-length_std = 2.0        # … con esta desviación estándar, sorteada para cada vehículo …
-length_min = 8.0        # … truncada a ≥ 8 m; sin length_max, a ≤ length + 3·length_std (16 m)
+length = {min = 8, max = 16, mean = 10, std = 2}   # m, normal truncada a [min, max], sorteada para cada vehículo
 gap_run = 4.0           # supuesto: como el autobús
 gap_stop = 1.5
-cargo_prob = 1.0        # siempre lleva mercancía (con 1, pax_min … pax_std son opcionales)
+cargo_prob = 1.0        # siempre lleva mercancía (con 1, pax es opcional)
 # bottleneck_prob = 0.6     # [bottleneck]: se detiene más seguido …
 # bottleneck_time_mean = 120.0  # … y por más tiempo (s) que un auto
 # bottleneck_time_std = 30.0
 
 [behavior]
-reaction_min = 2.0              # s, reacción al poder avanzar (verde o arranque del líder): mínimo …
-reaction_max = 5.0              # … y máximo
-reaction_mean = 3.0             # s, media y desviación estándar de una normal truncada a [min, max];
-reaction_std = 1.0              # sin reaction_std, la reacción es uniforme en [min, max]
+reaction = {min = 2.0, max = 5.0, mean = 3.0, std = 1.0}
+                                # s, reacción al poder avanzar (verde o arranque del líder): normal(mean, std)
+                                # truncada a [min, max]; sin mean y std, uniforme en [min, max]
 lane_change_min = 1.5           # s, duración de la maniobra de cambio de carril
 lane_change_max = 4.0
 lane_change_speed_factor = 0.5  # fracción de la velocidad durante la maniobra

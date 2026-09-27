@@ -30,7 +30,7 @@ class VehicleSpec:
     pax_mean: float
     pax_std: float
     can_change_lane: bool
-    lane: int | None = None  # carril fijo (0 = derecho) de un tipo que no cambia de carril; None = slow_lane
+    lane: int | None = None  # carril fijo (0 = derecho) de un tipo que no cambia de carril; None = el derecho libre
     exclusive: bool = False  # su carril fijo queda reservado: solo lo usan los tipos con ese `lane`
     # Parada antes del semáforo (descenso y ascenso de pasajeros): posición del frente del
     # vehículo, en m desde el inicio del tramo (None = sin parada), y duración normal(μ, σ) en s,
@@ -52,6 +52,7 @@ class VehicleSpec:
     cargo_prob: float = 0.0
     # Largo variable: normal(length, length_std) truncada a [length_min, length_max] (por defecto,
     # length ∓ 3·length_std), sorteada para cada vehículo. Con length_std = 0, todos miden `length`.
+    # En el TOML, las cuatro van en [vehicles.<clave>] length = {min, max, mean, std}.
     length_std: float = 0.0
     length_min: float | None = None
     length_max: float | None = None
@@ -119,7 +120,8 @@ class Behavior:
     reaction_min: float = 1.0  # s, reacción al poder avanzar (verde o arranque del líder)
     reaction_max: float = 5.0
     # Con reaction_std, la reacción es normal(reaction_mean, reaction_std) truncada a [min, max]
-    # (media por defecto: el punto medio); sin ella, uniforme en [min, max].
+    # (media por defecto: el punto medio); sin ella, uniforme en [min, max]. En el TOML, las cuatro
+    # van en [behavior] reaction = {min, max, mean, std}.
     reaction_mean: float | None = None
     reaction_std: float | None = None
     lane_change_min: float = 1.0  # s, duración de la maniobra de cambio de carril
@@ -164,13 +166,48 @@ def per_lane(value: float | tuple[float, ...], lanes: int) -> tuple[float, ...]:
 
 
 @dataclass(frozen=True, slots=True)
+class Rate:
+    """Tasa de llegada (veh/min) de un tipo: normal(mean, std) truncada a [min, max], que se vuelve a
+    sortear en cada intervalo de [demand] rate_interval. Con std = 0 o min = max es fija."""
+
+    min: float
+    max: float
+    mean: float
+    std: float
+
+    @classmethod
+    def fixed(cls, value: float) -> Rate:
+        return cls(value, value, value, 0.0)
+
+    @property
+    def variable(self) -> bool:
+        return self.std > 0 and self.min < self.max
+
+    @property
+    def expected(self) -> float:
+        """Tasa media real: la media de la normal truncada a [min, max]."""
+        if not self.variable:
+            return min(max(self.mean, self.min), self.max)
+        mu, sigma = self.mean, self.std
+        a, b = (self.min - mu) / sigma, (self.max - mu) / sigma
+        # E[X | a ≤ Z ≤ b] = μ + σ·(φ(a) − φ(b)) / (Φ(b) − Φ(a)), con Z = (X − μ) / σ
+        mass = 0.5 * (math.erf(b / math.sqrt(2)) - math.erf(a / math.sqrt(2)))
+        if mass <= 0:  # media muy lejos de [min, max] (la validación lo rechaza): el extremo más cercano
+            return self.min if mu < self.min else self.max
+        return mu + sigma * (math.exp(-a * a / 2) - math.exp(-b * b / 2)) / math.sqrt(2 * math.pi) / mass
+
+
+@dataclass(frozen=True, slots=True)
 class SimConfig:
     """Configuración completa de una corrida."""
 
     length: float = 200.0  # m del tramo; el semáforo está en x = length
     lanes: int = 2
     lane_speed_limit: float | tuple[float, ...] | None = None  # km/h por carril (0 = derecho); None = sin límite
-    rates: tuple[float, ...] = DEFAULT_RATES  # veh/min, alineadas con `specs`
+    rates: tuple[float, ...] = DEFAULT_RATES  # veh/min medias, alineadas con `specs`
+    # Tasas variables, una por tipo; si se dan, `rates` se calcula de ellas (su media real). Vacía = fijas.
+    rate_dists: tuple[Rate, ...] = ()
+    rate_interval: float = 60.0  # s simulados entre sorteos de las tasas variables
     red: float = 30.0  # s
     green: float = 30.0  # s
     yellow: float = 0.0  # s, entre el verde y el rojo; 0 = sin amarillo
@@ -178,7 +215,6 @@ class SimConfig:
     run: float = 10.0  # s de proceso
     time_scale: float = 10.0  # s simulados por cada s de proceso
     sample: float = 1.0  # s simulados entre muestras
-    slow_lane: str = "right"  # carril de los tipos que no cambian de carril: "right" | "random"
     # Condición inicial: fracción de cada carril ya ocupada al empezar por vehículos en marcha,
     # (largo + gap_run) / length; un número para todos o uno por carril. 0 = tramo vacío.
     initial_occupancy: float | tuple[float, ...] = 0.0
@@ -187,8 +223,20 @@ class SimConfig:
     bottleneck: Bottleneck = field(default_factory=Bottleneck)
 
     def __post_init__(self) -> None:
+        if self.rate_dists:
+            if len(self.rate_dists) != len(self.specs):
+                raise ValueError(f"se esperaban {len(self.specs)} tasas de llegada, una por tipo; hay {len(self.rate_dists)}")
+            object.__setattr__(self, "rates", tuple(d.expected for d in self.rate_dists))
         if len(self.rates) != len(self.specs):
             raise ValueError(f"se esperaban {len(self.specs)} tasas de llegada, una por tipo; hay {len(self.rates)}")
+
+    def rate(self, k: int) -> Rate:
+        """Tasa de llegada del tipo k (fija si no hay `rate_dists`)."""
+        return self.rate_dists[k] if self.rate_dists else Rate.fixed(self.rates[k])
+
+    @property
+    def rate_ticks(self) -> int:
+        return max(1, round(self.rate_interval / DT))
 
     @property
     def n_types(self) -> int:
@@ -244,10 +292,11 @@ class SimConfig:
         return tuple(i for i in range(self.lanes) if i not in reserved)
 
     def entry_lanes(self, k: int) -> tuple[int, ...]:
-        """Carriles por los que entra el tipo k (uno fijo si no cambia de carril y slow_lane = "right")."""
+        """Carriles por los que entra el tipo k. Uno que no cambia de carril y no tiene `lane` va por el
+        carril libre más a la derecha (sin los exclusivos de otros tipos)."""
         allowed = self.allowed_lanes(k)
         spec = self.specs[k]
-        if spec.can_change_lane or spec.lane is not None or self.slow_lane == "random":
+        if spec.can_change_lane or spec.lane is not None:
             return allowed
         return allowed[:1]  # el carril libre más a la derecha
 

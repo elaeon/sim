@@ -86,6 +86,7 @@ def format_summary(agg: Aggregate) -> str:
         ("T. medio en cola de entrada (s)", s["queue_wait"], 1),
         ("T. a flujo libre (s)", np.array([cfg.length / (cfg.free_flow_kmh(k) / 3.6) + sp.expected_stop_time
                                            for k, sp in enumerate(cfg.specs)]), 1),
+        ("Velocidad media (km/h)", s["mean_speed"], 1),
         ("En el tramo al final", s["on_road"], 1),
         ("En cola de entrada al final", s["queued"], 1),
         *([("En el tramo al inicio", s["initial_veh"], 1)] if any(cfg.lane_initial_occupancy) else []),
@@ -151,6 +152,10 @@ def _lane_lines(cfg) -> list[str]:
     ]  # fmt: skip
     if stops:
         lines.append("Parada antes del semáforo (descenso y ascenso): " + " · ".join(stops))
+    variable = [(sp.name, cfg.rate(k)) for k, sp in enumerate(cfg.specs) if cfg.rate(k).variable]
+    if variable:
+        lines.append(f"Demanda variable (veh/min, nueva tasa cada {cfg.rate_interval:g} s): " + " · ".join(
+            f"{name} {r.mean:g} ± {r.std:g} en [{r.min:g}, {r.max:g}], media {r.expected:.3g}" for name, r in variable))
     reserved = sorted(cfg.reserved_lanes)
     if reserved:
         owners = {ln: [s.name for s in cfg.specs if s.lane == ln] for ln in reserved}

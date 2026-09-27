@@ -9,7 +9,7 @@ import numpy as np
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-from trafico.metrics import LANE_SATURATION, LANE_SERIES, LANE_SPEED, SMOOTH_S
+from trafico.metrics import LANE_SATURATION, LANE_SERIES, SPEED_BIN
 from trafico.runner import Aggregate
 
 # Paleta categórica validada, en orden fijo: el color sigue al tipo (su posición en la
@@ -24,6 +24,10 @@ BASELINE = "#c3c2b7"
 RED_PHASE = "#d03b3b"
 YELLOW_PHASE = "#e0a800"
 LEGEND_COLS = 5  # entradas por fila de la leyenda
+VIOLIN_WIDTH = 0.8  # ancho máximo de un violín (en carriles)
+VIOLIN_SMOOTH = 1.0  # km/h, desviación del núcleo gaussiano que suaviza el histograma del violín
+VIOLIN_GAP = 0.2  # alto (en paneles) del espacio antes del panel de violines, para el eje de tiempo
+LEGEND_CHARS = 150  # caracteres que caben en una fila de la leyenda a lo ancho de la figura
 LEGEND_ROW = 0.017  # alto de una fila de leyenda (fracción de la figura)
 MAX_END_LABELS = 4  # con más tipos, las etiquetas finales convergen: la leyenda basta
 # Color fijo de cada carril (0 = derecho): la misma paleta empezando por los colores que los tipos
@@ -32,11 +36,11 @@ MAX_END_LABELS = 4  # con más tipos, las etiquetas finales convergen: la leyend
 LANE_COLORS = tuple(TYPE_COLORS[k] for k in (4, 5, 6, 7, 3, 2, 1, 0))
 LANE_COLORMAP = "viridis"
 BASE_HEIGHT = 13.0  # alto (pulgadas) para el que están ajustadas las posiciones de la cabecera
+BASE_PANELS = 4  # paneles que caben en BASE_HEIGHT; cada panel extra agrega su parte proporcional
 
 PANELS = (
     ("cum_pax", "pasajeros", "{:,.0f}"),
     ("pax_flow", "pax/min", "{:,.0f}"),
-    ("paxkm_h", "pax·km/h", "{:,.0f}"),
     ("pax_per_m", "pax/m", "{:,.2f}"),
 )
 
@@ -45,7 +49,6 @@ def _titles(cfg) -> dict[str, str]:
     return {
         "cum_pax": "Pasajeros acumulados que cruzan el semáforo",
         "pax_flow": f"Flujo de pasajeros en el semáforo (ventana de un ciclo, {cfg.cycle:g} s)",
-        "paxkm_h": f"Movilidad dentro del tramo (media móvil de {SMOOTH_S:g} s)",
         "pax_per_m": "Pasajeros por metro de carril ocupado (largo + gap real al líder)",
     }
 
@@ -145,23 +148,62 @@ def _lane_panels(axes, agg: Aggregate, t: np.ndarray, red_spans, active: list[in
         "Saturación de cada carril (cola de detenidos / largo del tramo) y su factor de congestión",
         "% del carril", "{:,.0f} %", 100.0, sat_labels, "upper left", colors,
     )  # fmt: skip
-    limits = cfg.lane_max_kmh
-    speed_labels = [f"{n} · límite {v:g}" for n, v in zip(names, limits)] if cfg.lane_speed_limit is not None else names
-    _lane_panel(
-        axes[1], agg, t, red_spans, LANE_SPEED,
-        f"Velocidad media en cada carril, con los detenidos (media móvil de {SMOOTH_S:g} s)",
-        "km/h", "{:,.0f}", 1.0, speed_labels, "upper right", colors,
+    _speed_violins(axes[1], agg, active, names, colors)
+
+
+def _speed_violins(ax, agg: Aggregate, active: list[int], names: list[str], colors: list[str]) -> None:
+    """Un violín por carril con la distribución de su velocidad media: todas las muestras de todas las
+    réplicas en que el carril tenía vehículos. Adentro, el rango intercuartil y la mediana."""
+    cfg = agg.cfg
+    _style_axis(ax, "{:,.0f}")
+    hist = agg.lane_speed_hist
+    edges = np.arange(hist.shape[1] + 1) * SPEED_BIN
+    y = edges[:-1] + SPEED_BIN / 2
+    k = np.arange(-4 * VIOLIN_SMOOTH, 4 * VIOLIN_SMOOTH + SPEED_BIN / 2, SPEED_BIN) / VIOLIN_SMOOTH
+    kernel = np.exp(-0.5 * k * k)
+    samples = agg.replicas * cfg.n_samples
+    ticks = []
+    for lane in range(cfg.lanes):
+        counts = hist[lane]
+        total = int(counts.sum())
+        limit = f"\nlímite {cfg.lane_max_kmh[lane]:g}" if cfg.lane_speed_limit is not None else ""
+        present = f"con vehículos {100 * total / samples:.0f} % del tiempo"
+        if total == 0:
+            ticks.append(f"{names[lane]}{limit}\n{present}")
+            ax.text(lane, 0.5, "sin vehículos", transform=ax.get_xaxis_transform(), ha="center", fontsize=8,
+                    color=MUTED)  # fmt: skip
+            continue
+        # Densidad suavizada, recortada al rango observado (como violinplot con cut = 0).
+        density = np.convolve(counts, kernel, mode="same")
+        seen = np.flatnonzero(counts)
+        keep = slice(seen[0], seen[-1] + 1)
+        half = VIOLIN_WIDTH / 2 * density[keep] / density[keep].max()
+        ys = y[keep]
+        ax.fill_betweenx(ys, lane - half, lane + half, color=colors[lane], alpha=0.35, linewidth=0)
+        for side in (-1, 1):
+            ax.plot(lane + side * half, ys, color=colors[lane], linewidth=1)
+        cum = np.concatenate(([0], np.cumsum(counts)))
+        q1, median, q3 = np.interp(np.array([0.25, 0.5, 0.75]) * total, cum, edges)
+        ax.plot([lane, lane], [q1, q3], color=INK_2, linewidth=4, solid_capstyle="round", zorder=3)
+        ax.scatter([lane], [median], s=40, color=SURFACE, edgecolors=INK, linewidths=1.5, zorder=4)
+        ticks.append(f"{names[lane]}{limit}\n{present}\nmediana {median:.1f} · intercuartil {q1:.1f}–{q3:.1f}")
+    ax.set_xticks(range(cfg.lanes), ticks, fontsize=8, color=INK_2)
+    ax.set_xlim(-0.6, cfg.lanes - 0.4)
+    ax.set_title(
+        f"Velocidad media de cada carril, con los detenidos: distribución de las muestras de {cfg.sample:g} s "
+        f"con vehículos (todas las réplicas)", loc="left", fontsize=11, color=INK, pad=8,
     )  # fmt: skip
+    ax.set_ylabel("km/h", color=INK_2, fontsize=9)
     # Referencia: velocidad a flujo libre de los tipos que participan (una línea por velocidad).
     for v, label in _speed_refs(cfg, active).items():
-        axes[1].axhline(v, color=BASELINE, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
-        axes[1].annotate(
+        ax.axhline(v, color=BASELINE, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
+        ax.annotate(
             label, (1.0, v), xycoords=("axes fraction", "data"),
             xytext=(4, 0), textcoords="offset points", va="center", fontsize=8, color=MUTED,
             annotation_clip=False,
         )  # fmt: skip
     top = max((cfg.specs[k].speed_kmh for k in active), default=0)
-    axes[1].set_ylim(0, top * 1.1 if top else None)
+    ax.set_ylim(0, top * 1.1 if top else None)
 
 
 def _style_axis(ax, fmt: str) -> None:
@@ -221,7 +263,7 @@ def _rate_label(rate: float) -> str:
     """Tasa de llegada legible: 20 -> '20/min'; menos de 1 veh/min -> '1 cada x min' con x = 1/rate
     redondeado (0.15 -> '1 cada 7 min')."""
     if rate >= 1:
-        return f"{rate:g}/min"
+        return f"{rate:.3g}/min"
     return f"1 cada {max(1, round(1 / rate))} min"
 
 
@@ -257,7 +299,9 @@ def _end_labels(ax, t_end: float, ends: list[tuple[float, str]], fmt: str) -> No
         )
 
 
-def plot_mobility(agg: Aggregate, path: Path | None, show: bool = False, footer: str | None = None) -> None:
+def plot_mobility(
+    agg: Aggregate, path: Path | None, show: bool = False, footer: str | None = None
+) -> None:
     import matplotlib
 
     if not show:
@@ -269,17 +313,20 @@ def plot_mobility(agg: Aggregate, path: Path | None, show: bool = False, footer:
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0]
     passengers = [k for k in active if cfg.specs[k].carries_passengers]  # los que solo llevan mercancía no se grafican
 
-    n_panels = len(PANELS) + len(LANE_SERIES)
-    height = BASE_HEIGHT * n_panels / len(PANELS)
+    n_panels = len(PANELS) + len(LANE_SERIES)  # el último (velocidad por carril) no es una serie de tiempo
+    height = BASE_HEIGHT * (n_panels + VIOLIN_GAP) / BASE_PANELS
 
     def fy(y: float) -> float:
         """Posición vertical de la cabecera: misma distancia en pulgadas al borde superior."""
         return 1 - (1 - y) * BASE_HEIGHT / height
 
-    fig, axes = plt.subplots(
-        n_panels, 1, figsize=(11, height), sharex=True, facecolor=SURFACE,
-        gridspec_kw={"hspace": 0.42},
-    )  # fmt: skip
+    fig = plt.figure(figsize=(11, height), facecolor=SURFACE)
+    grid = fig.add_gridspec(n_panels + 1, 1, hspace=0.42, height_ratios=[1] * (n_panels - 1) + [VIOLIN_GAP, 1])
+    axes = [fig.add_subplot(grid[0])]
+    for i in range(1, n_panels - 1):
+        axes.append(fig.add_subplot(grid[i], sharex=axes[0]))
+        axes[i - 1].tick_params(labelbottom=False)
+    axes.append(fig.add_subplot(grid[n_panels]))  # violines: eje x propio (carriles)
     red_spans = phase_spans(cfg)
     titles = _titles(cfg)
     for ax, (key, unit, fmt) in zip(axes, PANELS):
@@ -303,7 +350,7 @@ def plot_mobility(agg: Aggregate, path: Path | None, show: bool = False, footer:
             _crossed_vehicles(ax, agg, active)
     _lane_panels(axes[-2:], agg, t, red_spans, active)
 
-    bottom = axes[-1]
+    bottom = axes[-2]  # último panel de tiempo
     bottom.set_xlabel("Tiempo simulado (s)", color=INK_2, fontsize=9)
     bottom.set_xlim(0, cfg.sim_seconds)
     proc = bottom.secondary_xaxis(
@@ -317,7 +364,9 @@ def plot_mobility(agg: Aggregate, path: Path | None, show: bool = False, footer:
     handles = [
         Patch(facecolor=TYPE_COLORS[k], label=_type_label(cfg.specs[k], cfg.rates[k])) for k in active
     ] + phase_handles(cfg)
-    ncol = min(len(handles), LEGEND_COLS)
+    # Columnas del mismo ancho (la etiqueta más larga): tantas como quepan en una fila, hasta LEGEND_COLS.
+    widest = max(len(h.get_label()) for h in handles) + 6  # + recuadro de color y separación
+    ncol = max(1, min(len(handles), LEGEND_COLS, LEGEND_CHARS // widest))
     rows = math.ceil(len(handles) / ncol)
     fig.legend(
         handles=_row_major(handles, ncol), loc="upper left", bbox_to_anchor=(0.068, fy(0.935)),

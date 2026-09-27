@@ -46,6 +46,7 @@ def test_rate_label():
 
     assert _rate_label(20) == "20/min"
     assert _rate_label(1) == "1/min"
+    assert _rate_label(21.1482) == "21.1/min"  # media real de una tasa variable
     assert _rate_label(0.15) == "1 cada 7 min"
     assert _rate_label(0.2) == "1 cada 5 min"
     assert _rate_label(0.9) == "1 cada 1 min"
@@ -99,3 +100,17 @@ def test_passenger_histogram_bins():
     values = np.arange(1, 13)
     lo, hi, total = _pax_bins(values, np.ones(12), 5)
     assert lo.tolist() == [1, 6, 11] and hi.tolist() == [5, 10, 12] and total.tolist() == [5, 5, 2]
+
+
+def test_lane_speed_histogram_counts_only_samples_with_vehicles():
+    from trafico.metrics import SPEED_BIN, Recorder, lane_speed_histogram
+
+    cfg = SimConfig(lanes=2)
+    rec = Recorder(4, cfg.n_types, cfg.lanes)
+    zeros = np.zeros(cfg.n_types)
+    # Carril 0: 10 m en 1 vehículo·s = 36 km/h, luego detenidos (0 km/h). Carril 1: vacío salvo una muestra.
+    for dist, time in (([10, 0], [1, 0]), ([0, 0], [2, 0]), ([0, 5], [0, 1]), ([0, 0], [0, 0])):
+        rec.record(zeros, zeros, zeros, zeros, np.zeros(2), np.array(dist, float), np.array(time, float))
+    hist = lane_speed_histogram(rec, cfg)
+    assert hist[0].sum() == 2 and hist[0, 0] == 1 and hist[0, int(36 / SPEED_BIN)] == 1
+    assert hist[1].sum() == 1 and hist[1, int(18 / SPEED_BIN)] == 1

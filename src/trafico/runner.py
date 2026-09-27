@@ -12,7 +12,7 @@ import numpy as np
 
 from trafico.config import DT, SimConfig
 from trafico.engine import Simulation
-from trafico.metrics import LANE_SERIES, SERIES, RunningStats, derive_series
+from trafico.metrics import LANE_SERIES, SERIES, RunningStats, derive_series, lane_speed_histogram
 
 
 @dataclass(slots=True)
@@ -22,6 +22,7 @@ class ReplicaResult:
     wall: float  # s reales que tardó la réplica
     max_rss_kb: int  # memoria residente máxima del proceso que la corrió
     pax_hist: np.ndarray  # (tipos, pasajeros) vehículos llegados con cada número de pasajeros
+    lane_speed_hist: np.ndarray  # (carriles, intervalos de velocidad) muestras con vehículos en el carril
 
 
 def run_replica(cfg: SimConfig, seed: np.random.SeedSequence) -> ReplicaResult:
@@ -35,6 +36,7 @@ def run_replica(cfg: SimConfig, seed: np.random.SeedSequence) -> ReplicaResult:
         wall=time.perf_counter() - t0,
         max_rss_kb=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
         pax_hist=sim.pax_hist,
+        lane_speed_hist=lane_speed_histogram(sim.recorder, cfg),
     )
 
 
@@ -51,6 +53,7 @@ class Aggregate:
     wall: float = 0.0
     max_rss_kb: int = 0
     pax_hist: np.ndarray | None = None  # suma entre réplicas de los histogramas de pasajeros
+    lane_speed_hist: np.ndarray | None = None  # suma entre réplicas de los histogramas de velocidad por carril
 
     @classmethod
     def empty(cls, cfg: SimConfig) -> Aggregate:
@@ -69,6 +72,8 @@ class Aggregate:
         self.replica_wall.push(res.wall)
         self.max_rss_kb = max(self.max_rss_kb, res.max_rss_kb)
         self.pax_hist = res.pax_hist.copy() if self.pax_hist is None else self.pax_hist + res.pax_hist
+        hist = res.lane_speed_hist
+        self.lane_speed_hist = hist.copy() if self.lane_speed_hist is None else self.lane_speed_hist + hist
         self.replicas += 1
 
     @property

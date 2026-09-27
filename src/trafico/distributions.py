@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 
-from trafico.config import DT, Behavior, VehicleSpec
+from trafico.config import DT, Behavior, Rate, VehicleSpec
 
 
 def sample_passengers(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np.ndarray:
@@ -34,11 +34,22 @@ def sample_lengths(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np
     remuestreo. Sin desviación, todos miden `length` y no se consume el generador."""
     if spec.length_std <= 0:
         return np.full(size, spec.length)
-    lo, hi = spec.shortest, spec.longest
+    return truncated_normal(rng, spec.length, spec.length_std, spec.shortest, spec.longest, size)
+
+
+def sample_rates(rng: np.random.Generator, rate: Rate, size: int) -> np.ndarray:
+    """Tasa de llegada (veh/min) de cada intervalo: normal(mean, std) truncada a [min, max]."""
+    if not rate.variable:
+        return np.full(size, rate.expected)
+    return truncated_normal(rng, rate.mean, rate.std, rate.min, rate.max, size)
+
+
+def truncated_normal(rng: np.random.Generator, mean: float, std: float, lo: float, hi: float, size: int) -> np.ndarray:
+    """normal(mean, std) truncada a [lo, hi] por remuestreo."""
     out = np.empty(size, dtype=np.float64)
     filled = 0
     while filled < size:
-        draw = rng.normal(spec.length, spec.length_std, size=2 * (size - filled) + 8)
+        draw = rng.normal(mean, std, size=2 * (size - filled) + 8)
         draw = draw[(draw >= lo) & (draw <= hi)]
         take = min(draw.size, size - filled)
         out[filled : filled + take] = draw[:take]

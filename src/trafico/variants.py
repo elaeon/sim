@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import DT, SimConfig
+from trafico.config import DT, Rate, SimConfig
 from trafico.engine import Simulation
 from trafico.settings import ConfigError, RunOptions, validate_config
 
@@ -72,10 +72,9 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
     new_of = {ln: i for i, ln in enumerate(old)}
 
     specs, rates = [], []
-    for spec, rate in zip(base.specs, base.rates):
-        if spec.key in without:
-            rate = 0.0
-        if rate == 0:
+    for k, spec in enumerate(base.specs):
+        rate = Rate.fixed(0.0) if spec.key in without else base.rate(k)
+        if rate.expected == 0:
             spec = replace(spec, lane=None, exclusive=False, stop_position=None, bottleneck_prob=0.0)
         elif spec.lane is not None:
             if spec.lane not in new_of:
@@ -84,14 +83,14 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
             spec = replace(spec, lane=new_of[spec.lane])
         specs.append(spec)
         rates.append(rate)
-    if not any(rates):
+    if not any(rate.expected > 0 for rate in rates):
         raise ConfigError("no queda ningún tipo con tasa > 0 (revisa --sin y [demand])")
 
     bn_lanes = base.bottleneck.stop_lanes
     if bn_lanes is not None:
         bn_lanes = tuple(new_of[ln] for ln in bn_lanes if ln in new_of)  # () = en ninguno
     return replace(
-        base, lanes=len(old), specs=tuple(specs), rates=tuple(rates),
+        base, lanes=len(old), specs=tuple(specs), rate_dists=tuple(rates),
         lane_speed_limit=None if base.lane_speed_limit is None else tuple(base.lane_max_kmh[i] for i in old),
         behavior=replace(base.behavior, congestion_factor=tuple(base.lane_congestion[i] for i in old)),
         initial_occupancy=tuple(base.lane_initial_occupancy[i] for i in old),
