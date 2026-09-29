@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from trafico.config import EMISSION_DECEL, POLLUTANT_LABELS, POLLUTANTS, SimConfig, VehicleSpec
+from trafico.emission_sets import SET_LABELS
 
 EMIS_BIN = 5.0
 """m: ancho de los intervalos de posición en que se acumulan las emisiones a lo largo del tramo."""
@@ -55,12 +56,16 @@ def emissions_label(cfg: SimConfig) -> str | None:
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0]
     if not any(cfg.specs[k].emits for k in active):
         return None
+    def source(spec) -> str:
+        return f" ({SET_LABELS.get(spec.emission_source, spec.emission_source)})" if spec.emission_source else ""
+
     parts = [
-        f"{cfg.specs[k].name} " + ", ".join(POLLUTANT_LABELS[p] for p in POLLUTANTS if cfg.specs[k].emission_coefs(p))
+        f"{cfg.specs[k].name}{source(cfg.specs[k])} "
+        + ", ".join(POLLUTANT_LABELS[p] for p in POLLUTANTS if cfg.specs[k].emission_coefs(p))
         for k in active if cfg.specs[k].emits
     ]  # fmt: skip
     silent = [cfg.specs[k].name for k in active if not cfg.specs[k].emits]
-    return "Emisiones (Int Panis et al., 2006): " + " · ".join(parts) + (
+    return "Emisiones (modelo de Int Panis et al., 2006): " + " · ".join(parts) + (
         f" · sin emisiones (sin coeficientes o sin accel/decel): {', '.join(silent)}" if silent else "")
 
 

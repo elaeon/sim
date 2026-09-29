@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from trafico.emission_sets import BUS_EMISSIONS, PETROL_CAR_EMISSIONS
+
 DT = 0.1
 """Resolución temporal: segundos simulados por paso."""
 
@@ -18,6 +20,19 @@ POLLUTANT_LABELS = {"co2": "CO2", "nox": "NOx", "voc": "VOC", "pm": "PM"}
 
 EMISSION_DECEL = -0.5
 """m/s²: por debajo de esta aceleración se usan los coeficientes de desaceleración (`<contaminante>_decel`)."""
+
+FUELS = ("gasolina", "diesel", "glp")
+"""Combustibles que puede usar un tipo de vehículo (`fuel`)."""
+
+FUEL_LABELS = {"gasolina": "gasolina", "diesel": "diésel", "glp": "gas LP"}
+
+FUEL_CO2_G_PER_L = {"gasolina": 8887 / 3.78541, "diesel": 10180 / 3.78541, "glp": 5720 / 3.78541}
+"""g de CO2 por litro de combustible quemado (EPA-420-F-18-008; el gas LP como propano, EPA, Emission Factors for
+Greenhouse Gas Inventories): el consumo se obtiene del CO2 del modelo de emisiones."""
+
+FUEL_MJ_PER_L = {"gasolina": 32.3, "diesel": 35.8, "glp": 23.7}
+"""Poder calorífico inferior (MJ/L): gasolina 43.4 MJ/kg × 0.745 kg/L, diésel 43.0 × 0.832, gas LP (propano)
+46.4 × 0.51. Solo para la curva física de referencia del rendimiento."""
 
 NO_LIGHT_WINDOW = 60.0
 """Ventana (s) del flujo en la línea final cuando no hay semáforo (con él, un ciclo)."""
@@ -93,6 +108,17 @@ class VehicleSpec:
     # E = max(0, f1 + f2·v + f3·v² + f4·a + f5·a² + f6·v·a) en g/s (v en m/s, a en m/s²) para a ≥ −0.5 m/s² y
     # para a < −0.5 m/s². Vacío = el tipo no emite. Solo se calculan con aceleración y frenado graduales.
     emissions: tuple[tuple[str, tuple[float, ...], tuple[float, ...]], ...] = ()
+    # Conjunto de coeficientes del que salen (`EMISSION_SETS`); "" si se escribieron a mano.
+    emission_source: str = ""
+    # Combustible (uno de FUELS; None = no quema combustible): el consumo sale del CO2 emitido. La masa (kg)
+    # solo se usa en la curva física de referencia del rendimiento a velocidad constante.
+    fuel: str | None = None
+    mass_kg: float | None = None
+
+    @property
+    def burns(self) -> bool:
+        """Se calcula su consumo: tiene combustible y emite CO2."""
+        return self.fuel is not None and self.emits and self.emission_coefs("co2") is not None
 
     @property
     def emits(self) -> bool:
@@ -155,28 +181,16 @@ class VehicleSpec:
         return mu + sigma * pdf / tail
 
 
-# Coeficientes de Int Panis, Broekx y Liu (2006), Sci. Total Environ. 371:270–285, verificados en
-# arXiv 2411.15238 (tabla 7) y 1912.05956 (auto a gasolina) y en arXiv 2008.02405 (PM de autobús).
-_ZERO6 = (0.0,) * 6
-PETROL_CAR_EMISSIONS = (
-    ("co2", (5.53e-1, 1.61e-1, -2.89e-3, 2.66e-1, 5.11e-1, 1.83e-1),
-            (5.53e-1, 1.61e-1, -2.89e-3, 2.66e-1, 5.11e-1, 1.83e-1)),
-    ("nox", (6.19e-4, 8.00e-5, -4.03e-6, -4.13e-4, 3.80e-4, 1.77e-4), (2.17e-4, *_ZERO6[1:])),
-    ("voc", (4.47e-3, 7.32e-7, -2.87e-8, -3.41e-6, 4.94e-6, 1.66e-6), (2.63e-3, *_ZERO6[1:])),
-)  # fmt: skip
-BUS_EMISSIONS = (
-    ("pm", (2.23e-4, 3.47e-4, -2.38e-5, 2.08e-3, 1.76e-3, 2.23e-4),
-           (2.23e-4, 3.47e-4, -2.38e-5, 2.08e-3, 1.76e-3, 2.23e-4)),
-)  # fmt: skip
-
 # Tipos incorporados: dan valores por defecto a [vehicles.car|bike|bus]. Cualquier otro tipo se
 # define completo en el archivo de configuración, sin tocar el código. El auto y el autobús traen
 # coeficientes de emisión, que solo se usan si el tipo tiene accel y decel.
 DEFAULT_SPECS: tuple[VehicleSpec, ...] = (
-    VehicleSpec("car", "auto", 50.0, 4.5, 3.0, 1.0, 1, 6, 1.5, 1.0, True, emissions=PETROL_CAR_EMISSIONS),
+    VehicleSpec("car", "auto", 50.0, 4.5, 3.0, 1.0, 1, 6, 1.5, 1.0, True, emissions=PETROL_CAR_EMISSIONS,
+                emission_source="int_panis_2006", fuel="gasolina", mass_kg=1250.0),
     VehicleSpec("bike", "bici", 15.0, 1.8, 1.0, 0.5, 1, 1, 1.0, 0.0, False),
     # El gap en marcha del autobús no está especificado: se asume 4 m.
-    VehicleSpec("bus", "autobús", 40.0, 12.0, 4.0, 1.5, 1, 80, 40.0, 10.0, False, emissions=BUS_EMISSIONS),
+    VehicleSpec("bus", "autobús", 40.0, 12.0, 4.0, 1.5, 1, 80, 40.0, 10.0, False, emissions=BUS_EMISSIONS,
+                emission_source="int_panis_2006", fuel="diesel", mass_kg=12000.0),
 )
 DEFAULT_RATES: tuple[float, ...] = (15.0, 4.0, 1.0)  # veh/min de los tipos incorporados
 CAR, BIKE, BUS = 0, 1, 2  # índices de los tipos incorporados (siempre van primero)
@@ -310,6 +324,9 @@ class SimConfig:
     behavior: Behavior = field(default_factory=Behavior)
     bottleneck: Bottleneck = field(default_factory=Bottleneck)
     speed_bump: SpeedBump = field(default_factory=SpeedBump)
+    # Precio de cada combustible por litro, en `currency`; sin precio, el consumo solo se da en litros.
+    fuel_price: tuple[tuple[str, float], ...] = ()
+    currency: str = "MXN"
 
     def __post_init__(self) -> None:
         if self.rate_dists:
@@ -318,6 +335,10 @@ class SimConfig:
             object.__setattr__(self, "rates", tuple(d.expected for d in self.rate_dists))
         if len(self.rates) != len(self.specs):
             raise ValueError(f"se esperaban {len(self.specs)} tasas de llegada, una por tipo; hay {len(self.rates)}")
+
+    def price(self, fuel: str | None) -> float | None:
+        """Precio por litro del combustible (None si no tiene)."""
+        return next((p for f, p in self.fuel_price if f == fuel), None)
 
     def rate(self, k: int) -> Rate:
         """Tasa de llegada del tipo k (fija si no hay `rate_dists`)."""

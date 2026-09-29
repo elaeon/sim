@@ -130,6 +130,7 @@
   <a href="#output">[output]</a>
   <a href="#vehicles">[vehicles.*]</a>
   <a href="#emissions">Emisiones</a>
+  <a href="#fuel">[fuel]</a>
   <a href="#behavior">[behavior]</a>
   <a href="#animation">[animation]</a>
   <a href="#sample">Sobre sample</a>
@@ -205,6 +206,15 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       no tiene semáforo, igual que con <code>red</code>, <code>green</code> y <code>yellow</code> en 0.</li>
     <li>Nuevo comando <a href="#trafico-emisiones"><code>trafico-emisiones</code></a>: compara las emisiones de una
       calle sin tope, con topes en distintas posiciones y con o sin semáforo, con la misma semilla.</li>
+    <li>Nuevos <a href="#emission-sets">conjuntos de coeficientes</a> con nombre, que se eligen con
+      <code>[vehicles.&lt;clave&gt;.emissions] source</code>: <code>int_panis_2006</code> (los originales) y
+      <code>sedema_cdmx_2018</code> (recalibrados con la verificación vehicular de la CDMX: auto, taxi, pickup y
+      colectivo a gas LP). <code>config.toml</code> usa ahora los de SEDEMA para el auto y trae los tipos
+      <code>taxi</code>, <code>carga_ligera</code> y <code>colectivo</code> sin demanda.</li>
+    <li>Nuevo <a href="#fuel">consumo y costo de combustible</a>: <code>[vehicles.&lt;clave&gt;] fuel</code> y
+      <code>mass_kg</code>, sección <code>[fuel]</code> con el precio por litro. El resumen da L/100 km, mL y costo por
+      recorrido, lo que se gasta de más frente a flujo libre, el total de la corrida y el rendimiento a velocidad
+      constante; <code>series.csv</code>, los L/min por tipo.</li>
     <li>Nuevas <a href="#emissions">emisiones</a> (modelo de Int Panis et al., 2006): CO2, NOx, VOC y PM por tipo, en
       <code>resumen.txt</code> (por km, por recorrido, exceso frente a flujo libre y tabla al acelerar de 0 a 80
       km/h), en la gráfica y en <code>emisiones_posicion.png</code>/<code>.csv</code>. Requieren <code>accel</code> y
@@ -816,10 +826,21 @@ bottleneck_time_std = 30.0</code></pre>
           efecto.</td>
         <td>&gt; 0.</td></tr>
       <tr><td><code>[vehicles.&lt;clave&gt;.emissions]</code></td><td>sección</td>
-        <td>Coeficientes del modelo de emisiones del tipo (ver <a href="#emissions">Emisiones</a>). El auto y el
-          autobús incorporados traen valores por defecto; escribir la sección los reemplaza, y vacía el tipo no emite.
-          Solo se calculan si el tipo tiene <code>accel</code> y <code>decel</code>.</td>
-        <td>Listas de 6 números.</td></tr>
+        <td>Coeficientes del modelo de emisiones del tipo (ver <a href="#emissions">Emisiones</a>): un
+          <a href="#emission-sets">conjunto con nombre</a> (<code>source</code>) y/o listas escritas a mano. El auto y el
+          autobús incorporados traen los de <code>int_panis_2006</code>; escribir la sección los reemplaza, y vacía el
+          tipo no emite. Solo se calculan si el tipo tiene <code>accel</code> y <code>decel</code>.</td>
+        <td>Listas de 6 números; <code>source</code> de <code>int_panis_2006</code> o
+          <code>sedema_cdmx_2018</code>.</td></tr>
+      <tr><td><code>fuel</code></td><td>texto</td>
+        <td>Combustible del tipo: <code>"gasolina"</code>, <code>"diesel"</code> o <code>"glp"</code> (gas LP). El
+          consumo sale de su CO2 (ver <a href="#fuel">[fuel]</a>): sin coeficientes de CO2 no se calcula. Opcional; por
+          defecto, gasolina el auto, diésel el autobús y ninguno los demás.</td>
+        <td>Uno de los tres.</td></tr>
+      <tr><td><code>mass_kg</code></td><td>número</td>
+        <td>Masa del vehículo (kg). Solo se usa en la curva física de referencia del rendimiento a velocidad constante;
+          no cambia la simulación ni las emisiones. Opcional; por defecto 1250 el auto y 12000 el autobús.</td>
+        <td>&gt; 0.</td></tr>
       <tr><td><code>lookahead</code>, <code>min_advantage</code>, <code>lane_change_cooldown</code></td><td>número</td>
         <td>Umbrales de cambio de carril propios del tipo: distancia (m) a la que un líder lento motiva cambiar,
           espacio libre extra (m) que hace que valga la pena y tiempo (s) sin volver a cambiar. Con valores más
@@ -961,6 +982,112 @@ pax = {min = 1, max = 2, mean = 1.2, std = 0.2}</code></pre>
     42 g de CO2 por recorrido (19 % sobre flujo libre, por los cambios de carril, las detenciones y los vehículos
     lentos); con semáforo, 65 g (82 %); con semáforo y un tope a 80 m, 98 g (174 %). El tope suma ~51 % de CO2 y de NOx,
     del orden de lo que reportan los estudios de topes (+52 % de CO2).</p>
+
+  <h3 id="emission-sets">Conjuntos de coeficientes</h3>
+  <p>En lugar de escribir los coeficientes, un tipo puede tomarlos de un conjunto con nombre:</p>
+  <pre><code>[vehicles.car.emissions]
+source = "sedema_cdmx_2018"   # la entrada con la clave del tipo (car)
+
+[vehicles.micro.emissions]
+source = "sedema_cdmx_2018"
+source_type = "colectivo"     # la entrada de otro tipo del conjunto
+pm = [2.23e-4, 3.47e-4, -2.38e-5, 2.08e-3, 1.76e-3, 2.23e-4]   # las escritas a mano se agregan o reemplazan</code></pre>
+  <p>Los coeficientes escritos a mano reemplazan a los del conjunto contaminante por contaminante (también solo
+    <code>&lt;contaminante&gt;_decel</code>, p. ej. <code>co2_decel</code> para corregir el frenado de
+    <code>int_panis_2006</code>). La cabecera de la corrida indica el conjunto de cada tipo.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th><code>source</code></th><th>Tipos</th><th>Origen</th></tr></thead>
+    <tbody>
+      <tr><td><code>int_panis_2006</code></td><td><code>car</code> (CO2, NOx, VOC), <code>bus</code> (PM)</td>
+        <td>Los del artículo, verificados (tabla de arriba). Flota europea de principios de los 2000. Su CO2 usa el
+          mismo juego al frenar: el término a² hace que frenar fuerte emita más que ir a velocidad constante (frenar de
+          40 a 10 km/h a 4.5 m/s²: 9.2 g de CO2, contra 1.0 g en ralentí).</td></tr>
+      <tr><td><code>sedema_cdmx_2018</code></td><td><code>car</code> (particular, 1250 kg), <code>taxi</code> (1150 kg),
+          <code>carga_ligera</code> (pickups, 1700 kg), <code>colectivo</code> (vans y microbuses a gas LP, 2300 kg):
+          CO2, NOx y VOC</td>
+        <td>Recalibrados con los microdatos de la verificación vehicular de la CDMX (SEDEMA, jul.–dic. 2018): el CO2 de
+          Int Panis escalado por la masa del tipo, con el frenado igual al ralentí (se corta el combustible); NOx y VOC
+          como CO2 × la razón contaminante/CO2 medida en ralentí, a 40 km/h y a 24 km/h con carga, según la potencia
+          específica.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Qué cambia con <code>sedema_cdmx_2018</code> en el auto: el NOx en ralentí es la quinta parte (7.5 mg por minuto
+    contra 37), y a velocidad constante sube con la velocidad (0.51, 0.88, 1.23 y 1.56 mg/s a 20, 40, 60 y 80 km/h;
+    Int Panis baja después de 40 km/h); el VOC es unas 50 veces menor en ralentí; el CO2 es el mismo salvo al frenar.
+    En la calle de 200 m sin semáforo con autos y autobuses, un tope a 100 m sube el CO2 del auto +45 % (274 → 399
+    g/km), el NOx +59 % y el VOC +48 %; con <code>int_panis_2006</code> eran +52 %, +54 % y +15 %.</p>
+  <div class="warn"><p><strong>Limitaciones de <code>sedema_cdmx_2018</code>:</strong> es la <em>media</em> de la
+    flota (la cargan los altos emisores; el vehículo típico emite mucho menos); la verificación solo llega a ≈ 7 kW/t
+    (24 km/h con carga), así que acelerar después de un tope o en un arranque es extrapolación, con la razón constante;
+    los seis coeficientes reproducen la razón medida con un error de 22 % en el NOx del auto; el HC por infrarrojo
+    subestima el VOC; no hay CO ni PM, y el diésel (autobús, carga) no se recalibra porque la verificación solo mide
+    su opacidad. Los tipos <code>taxi</code>, <code>carga_ligera</code> y <code>colectivo</code> de
+    <code>config.toml</code> tienen demanda 0, y su largo, pasajeros y cinemática son supuestos. Los coeficientes se
+    copiaron de <code>multi-dashboard/data/sedema_cdmx/emisiones_sim.toml</code>
+    (<code>exploracion/sedema_cdmx/factores_sim.py</code> explica cómo se obtuvieron).</p></div>
+</section>
+
+<section id="fuel">
+  <h2><code>[fuel]</code> Combustible y costo</h2>
+  <p class="lead">El consumo de cada tipo sale de su CO2: todo el carbono del combustible sale como CO2, así que los
+    litros son el CO2 emitido entre los g de CO2 por litro de su combustible. Hace falta que el tipo tenga
+    <code>fuel</code>, coeficientes de CO2 y <code>accel</code>/<code>decel</code>; el costo, además, el precio de
+    su combustible.</p>
+  <pre><code>[fuel]
+price = {gasolina = 23.99, diesel = 26.99}   # por litro
+currency = "MXN"
+
+[vehicles.car]
+fuel = "gasolina"
+mass_kg = 1250.0</code></pre>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Descripción</th><th>Restricciones</th></tr></thead>
+    <tbody>
+      <tr><td><code>price</code></td><td>diccionario</td>
+        <td>Precio por litro de cada combustible (<code>gasolina</code>, <code>diesel</code>, <code>glp</code>). En
+          <code>config.toml</code>: la mediana de la regular (23.99) y del diésel (26.99) en las 378 y 195 gasolineras
+          de la CDMX del corte de la CNE del 1 de julio de 2026 (el 80 % de la regular cuesta entre 22.99 y 23.99). No
+          hay precio público del gas LP de carburación; sin precio, el consumo se da solo en litros, con un aviso.
+          Opcional; por defecto, sin precios.</td>
+        <td>≥ 0.</td></tr>
+      <tr><td><code>currency</code></td><td>texto</td><td>Moneda con que se rotulan los costos. Por defecto
+          <code>"MXN"</code>.</td><td>No vacía.</td></tr>
+    </tbody>
+  </table></div>
+  <p>g de CO2 por litro: gasolina 2,348 (8,887 g por galón, EPA-420-F-18-008), diésel 2,689 (10,180 g por galón) y gas
+    LP 1,511 (propano, 5,720 g por galón; la mezcla mexicana lleva butano, así que los litros salen algo altos). El
+    carbono del CO y del HC (menos de 1 %) no se cuenta.</p>
+  <p>Salidas, cuando algún tipo que participa quema combustible:</p>
+  <ul>
+    <li><code>resumen.txt</code>, por tipo: combustible en L/100 km y por recorrido del tramo (mL), lo que gasta
+      <strong>de más frente a flujo libre</strong> (el mismo recorrido a velocidad constante, en mL y en dinero), el
+      costo por recorrido y el total de la corrida (litros y costo, media por réplica). El exceso en % es el mismo que
+      el del CO2.</li>
+    <li><code>resumen.txt</code>, «Rendimiento a velocidad constante»: L/100 km, km/L y costo por km a 20, 40, 60 y
+      80 km/h (hasta la velocidad máxima del tipo), con el modelo y con una curva física de referencia.</li>
+    <li><code>series.csv</code>: columnas <code>comb_l_min_&lt;tipo&gt;</code> (litros por minuto).</li>
+    <li>La cabecera de la corrida: el combustible y el precio de cada tipo, y los que tienen <code>fuel</code> pero
+      no CO2 (el autobús y la carga, que solo tienen PM o nada).</li>
+  </ul>
+  <p><strong>Las dos curvas del rendimiento.</strong> La del modelo es el CO2 de Int Panis a aceleración cero: se
+    ajustó con manejo urbano real (pequeñas aceleraciones, flota de hace veinte años), y por km siempre baja al subir
+    la velocidad; arriba de ≈ 70–80 km/h queda por debajo de lo que exige vencer el aire. La física (línea de Willans)
+    es el ralentí del modelo más la potencia en la rueda para vencer la rodadura y el aire, VSP = 0.132·v +
+    0.000302·v³ kW/t por la masa (<code>mass_kg</code>), entre una eficiencia marginal del motor de 24.6 % y el poder
+    calorífico del combustible; esa eficiencia hace que el auto de 1250 kg a 77.7 km/h rinda 18.6 km/L, la mediana en
+    carretera de los autos a gasolina de 4 cilindros y 1.4–2.0 L del catálogo CONUEE 2026. Tiene su mínimo cerca de
+    50 km/h. En ciudad el modelo gasta 1.3 a 1.7 veces la curva física (tráfico real contra velocidad perfectamente
+    constante y un auto nuevo):</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Auto, 1250 kg</th><th>20 km/h</th><th>40 km/h</th><th>60 km/h</th><th>80 km/h</th></tr></thead>
+    <tbody>
+      <tr><td>Modelo (L/100 km)</td><td class="num">10.4</td><td class="num">7.6</td><td class="num">6.2</td><td class="num">5.2</td></tr>
+      <tr><td>Física (L/100 km)</td><td class="num">6.5</td><td class="num">4.8</td><td class="num">4.8</td><td class="num">5.5</td></tr>
+      <tr><td>Modelo a 23.99 MXN/L (MXN/km)</td><td class="num">2.50</td><td class="num">1.83</td><td class="num">1.49</td><td class="num">1.24</td></tr>
+    </tbody>
+  </table></div>
+  <p>Con los coeficientes de SEDEMA el auto gasta 14.1 mL por minuto en ralentí (0.85 L/h, 34 centavos por minuto
+    esperando en el semáforo).</p>
 </section>
 
 <section id="behavior">

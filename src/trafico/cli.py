@@ -11,8 +11,9 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import DT, MAX_TYPES, POLLUTANT_LABELS, POLLUTANTS
+from trafico.config import DT, FUEL_CO2_G_PER_L, FUEL_LABELS, MAX_TYPES, POLLUTANT_LABELS, POLLUTANTS
 from trafico.emissions import EMIS_BIN, acceleration_table, emissions_label, emitted, unit
+from trafico.fuel import constant_speed_table, cost, liters
 from trafico.metrics import (
     EMIS_SERIES, ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, LANE_SPEED, SERIES,
 )
@@ -116,6 +117,7 @@ def format_summary(agg: Aggregate) -> str:
                           where=s["arrived_veh"] > 0)  # fmt: skip
         rows.insert(1, ("Con mercancía (%)", cargo, 1))
     rows += _emission_rows(cfg, s)
+    rows += _fuel_rows(cfg, s)
     w0 = max(len(r[0]) for r in rows) + 2
     widths = {k: max(10, len(cfg.specs[k].name) + 2) for k in active}
     speed = cfg.sim_seconds / agg.replica_wall.mean
@@ -130,6 +132,7 @@ def format_summary(agg: Aggregate) -> str:
             f"{lane}: {_fmt(100 * v)}" for lane, v in enumerate(s["exit_blocked"])
             if cfg.lane_exit_capacity[lane] > 0))  # fmt: skip
     lines += _acceleration_lines(cfg)
+    lines += _cruise_lines(cfg)
     lines += [
         f"Cambios de carril por réplica: {_fmt(s['lane_changes'][0])}",
         f"Tiempo de proceso nominal: {cfg.run:g} s ≙ {cfg.sim_seconds:g} s simulados "
@@ -162,6 +165,70 @@ def _emission_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int]]:
             (f"{label} exceso vs flujo libre (%)", excess, 1),
         ]
     return rows
+
+
+def _burners(cfg) -> list[int]:
+    """Tipos que participan y queman combustible (tienen `fuel` y emiten CO2)."""
+    return [k for k, sp in enumerate(cfg.specs) if cfg.rates[k] > 0 and sp.burns]
+
+
+def _fuel_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int]]:
+    """Consumo (del CO2 emitido) y su costo: por km, por recorrido completo del tramo, lo que se gasta de más frente
+    al mismo recorrido a velocidad constante y el total de la corrida. «—» en los tipos sin combustible o sin
+    precio."""
+    burners = _burners(cfg)
+    if not burners:
+        return []
+    co2 = POLLUTANTS.index("co2")
+    nan = np.full(cfg.n_types, np.nan)
+    total_l, extra_l, l_km = nan.copy(), nan.copy(), nan.copy()
+    total_cost, trip_cost, extra_cost = nan.copy(), nan.copy(), nan.copy()
+    km = s["veh_km"]
+    for k in burners:
+        spec = cfg.specs[k]
+        total_l[k] = liters(spec, s["emissions"][k, co2])
+        if km[k] > 0:
+            l_km[k] = total_l[k] / km[k]
+            extra_l[k] = liters(spec, s["emissions"][k, co2] - s["emissions_free"][k, co2]) / km[k]
+        total_cost[k] = cost(cfg, spec, total_l[k])
+        trip_cost[k] = cost(cfg, spec, l_km[k] * cfg.length / 1000.0)
+        extra_cost[k] = cost(cfg, spec, extra_l[k] * cfg.length / 1000.0)
+    trip = cfg.length / 1000.0
+    cur = cfg.currency
+    return [
+        ("Combustible (L/100 km)", l_km * 100.0, 2),
+        ("Combustible por recorrido (mL)", l_km * trip * 1000.0, 1),
+        ("  de más vs flujo libre (mL)", extra_l * trip * 1000.0, 1),
+        (f"Costo por recorrido ({cur})", trip_cost, 3),
+        (f"  de más vs flujo libre ({cur})", extra_cost, 3),
+        ("Combustible en la corrida (L)", total_l, 2),
+        (f"Costo en la corrida ({cur})", total_cost, 2),
+    ]
+
+
+def _cruise_lines(cfg) -> list[str]:
+    """Tabla de referencia: rendimiento de cada tipo a velocidad constante con el modelo (del CO2) y con la curva
+    física (con `mass_kg`), en L/100 km, km/L y costo por km."""
+    burners = _burners(cfg)
+    if not burners:
+        return []
+    lines = ["", "Rendimiento a velocidad constante (del CO2 del modelo de emisiones; «física»: ralentí + potencia "
+             "para vencer rodadura y aire, de referencia):"]  # fmt: skip
+    for k in burners:
+        spec = cfg.specs[k]
+        price = cfg.price(spec.fuel)
+        extra = f", {price:g} {cfg.currency}/L" if price is not None else ", sin precio"
+        mass = f", {spec.mass_kg:g} kg" if spec.mass_kg is not None else ""
+        lines.append(f"  {spec.name} ({FUEL_LABELS[spec.fuel]}{extra}{mass}):")
+
+        def fmt(l100: float) -> str:
+            money = f", {l100 / 100 * price:.2f} {cfg.currency}/km" if price is not None else ""
+            return f"{l100:.1f} L/100 km ({100 / l100:.1f} km/L{money})"
+
+        for row in constant_speed_table(spec):
+            physical = f" · física {fmt(row.physical_l_100km)}" if row.physical_l_100km is not None else ""
+            lines.append(f"    {row.kmh:g} km/h: {fmt(row.l_100km)}{physical}")
+    return lines
 
 
 def _acceleration_lines(cfg) -> list[str]:
@@ -224,6 +291,12 @@ def write_csv(agg: Aggregate, path: Path) -> None:
             if cfg.specs[k].emission_coefs(POLLUTANTS[p]) is not None:
                 cols += [stats.mean[:, k], stats.std[:, k]]
                 header += [f"{EMIS_SERIES[p]}_g_min_{cfg.specs[k].name}_media", f"{EMIS_SERIES[p]}_g_min_{cfg.specs[k].name}_sd"]
+    if "co2" in [POLLUTANTS[p] for p in pols]:  # L/min de combustible, del CO2
+        stats = agg.series[EMIS_SERIES[POLLUTANTS.index("co2")]]
+        for k in _burners(cfg):
+            g_per_l = FUEL_CO2_G_PER_L[cfg.specs[k].fuel]
+            cols += [stats.mean[:, k] / g_per_l, stats.std[:, k] / g_per_l]
+            header += [f"comb_l_min_{cfg.specs[k].name}_media", f"comb_l_min_{cfg.specs[k].name}_sd"]
     lane_series = [
         (LANE_SATURATION, "saturacion"), (LANE_SPEED, "velocidad_kmh"), (LANE_EXIT_FLOW, "cruzan_veh_min"),
         (ENTRY_QUEUE, "cola_entrada_veh"),
@@ -301,7 +374,27 @@ def _lane_lines(cfg) -> list[str]:
     emis = emissions_label(cfg)
     if emis:
         lines.append(emis)
+    fuel = _fuel_label(cfg)
+    if fuel:
+        lines.append(fuel)
     return lines
+
+
+def _fuel_label(cfg) -> str | None:
+    """Línea de la cabecera: combustible y precio de cada tipo que quema combustible, y los que tienen `fuel`
+    pero no CO2."""
+    burners = _burners(cfg)
+    if not burners:
+        return None
+
+    def price(fuel: str) -> str:
+        p = cfg.price(fuel)
+        return f"{p:g} {cfg.currency}/L" if p is not None else "sin precio"
+
+    parts = [f"{cfg.specs[k].name} {FUEL_LABELS[cfg.specs[k].fuel]} ({price(cfg.specs[k].fuel)})" for k in burners]
+    missing = [sp.name for k, sp in enumerate(cfg.specs) if cfg.rates[k] > 0 and sp.fuel and not sp.burns]
+    return "Combustible (del CO2 emitido): " + " · ".join(parts) + (
+        f" · sin consumo (sin CO2 o sin accel/decel): {', '.join(missing)}" if missing else "")
 
 
 def run(argv: list[str] | None = None) -> Path:
