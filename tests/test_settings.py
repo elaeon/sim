@@ -683,3 +683,64 @@ def test_rate_is_a_dictionary():
 def test_invalid_rates(demand, message):
     with pytest.raises(ConfigError, match=re.escape(message)):
         _parse(f"[demand]\n{demand}\n")
+
+
+def test_emission_sets_and_fuel_settings():
+    """`source` toma los coeficientes de un conjunto con nombre (con `source_type`, los de otro tipo); los escritos
+    a mano los reemplazan por contaminante. `fuel`, `mass_kg` y [fuel] price/currency."""
+    from trafico.emission_sets import EMISSION_SETS
+
+    sedema = EMISSION_SETS["sedema_cdmx_2018"]
+    car = _parse('[vehicles.car.emissions]\nsource = "sedema_cdmx_2018"\n').sim.specs[0]
+    assert car.emissions == sedema["car"] and car.emission_source == "sedema_cdmx_2018"
+    assert car.fuel == "gasolina" and car.mass_kg == 1250.0  # los del auto incorporado
+    assert _parse("").sim.specs[0].emission_source == "int_panis_2006"
+    text = ('[vehicles.car]\nfuel = "glp"\nmass_kg = 2300\n[vehicles.car.emissions]\nsource = "sedema_cdmx_2018"\n'
+            'source_type = "colectivo"\nnox = [1, 0, 0, 0, 0, 0]\nco2_decel = [2, 0, 0, 0, 0, 0]\npm = [3, 0, 0, 0, 0, 0]\n'
+            '[fuel]\nprice = {gasolina = 24, glp = 11.5}\ncurrency = "USD"\n')  # fmt: skip
+    sim = _parse(text).sim
+    car = sim.specs[0]
+    assert car.fuel == "glp" and car.mass_kg == 2300.0
+    assert car.emission_coefs("co2") == (sedema["colectivo"][0][1], (2, 0, 0, 0, 0, 0))
+    assert car.emission_coefs("nox") == ((1, 0, 0, 0, 0, 0),) * 2
+    assert car.emission_coefs("voc") == sedema["colectivo"][2][1:] and car.emission_coefs("pm")[0][0] == 3
+    assert sim.fuel_price == (("gasolina", 24.0), ("glp", 11.5)) and sim.price("glp") == 11.5
+    assert sim.price("diesel") is None and sim.currency == "USD"
+
+
+def test_fuel_notices():
+    base = "[vehicles.car]\naccel = 2.5\ndecel = 4.5\n"
+    assert not _parse(base + "[fuel]\nprice = {gasolina = 24}\n").notices
+    notices = _parse(base).notices
+    assert any("sin precio en [fuel] price para gasolina" in n for n in notices)
+    # Sin participar, no hay aviso.
+    assert not _parse(base + "[demand]\ncar_rate = {min = 0, max = 0, mean = 0, std = 0}\n").notices
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ('[vehicles.car.emissions]\nsource = "copert"\n', "no existe el conjunto 'copert'; hay int_panis_2006, sedema_cdmx_2018"),
+        ('[vehicles.bike.emissions]\nsource = "sedema_cdmx_2018"\n', "el conjunto 'sedema_cdmx_2018' no tiene el tipo 'bike'"),
+        ('[vehicles.car.emissions]\nsource = "int_panis_2006"\nsource_type = "taxi"\n', "no tiene el tipo 'taxi' (source_type)"),
+        ('[vehicles.car.emissions]\nsource_type = "taxi"\n', "source_type requiere source"),
+        ('[vehicles.car]\nfuel = "hidrogeno"\n', "fuel debe ser uno de gasolina, diesel, glp"),
+        ("[vehicles.car]\nmass_kg = 0\n", "mass_kg debe ser mayor que 0"),
+        ("[fuel]\nprice = {gasolina = -1}\n", "el precio de gasolina no puede ser negativo"),
+        ("[fuel]\nprice = 24\n", "[fuel] price debe ser un diccionario"),
+        ("[fuel]\nprice = {electricidad = 3}\n", "claves desconocidas: [fuel.price] electricidad"),
+    ],
+)
+def test_invalid_fuel_and_sets_are_rejected(text, message):
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        _parse(text)
+
+
+@pytest.mark.parametrize("name", [CONFIG_NAME, "config.toml.example"])
+def test_repository_configs_load_with_the_sedema_types(name):
+    sim = parse_settings((project_root() / name).read_text(encoding="utf-8"), Path(name)).sim
+    keys = [sp.key for sp in sim.specs]
+    for key in ("taxi", "carga_ligera", "colectivo"):
+        k = keys.index(key)
+        assert sim.rates[k] == 0 and sim.specs[k].emission_source == "sedema_cdmx_2018" and sim.specs[k].burns
+    assert sim.specs[0].emission_source == "sedema_cdmx_2018" and sim.price("gasolina") == 23.99

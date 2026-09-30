@@ -11,9 +11,10 @@ from pathlib import Path
 
 from trafico import __version__
 from trafico.config import (
-    DEFAULT_RATES, DEFAULT_SPECS, DT, MAX_TYPES, POLLUTANTS, Behavior, Bottleneck, Rate, SimConfig, SpeedBump,
+    DEFAULT_RATES, DEFAULT_SPECS, DT, FUELS, MAX_TYPES, POLLUTANTS, Behavior, Bottleneck, Rate, SimConfig, SpeedBump,
     VehicleSpec,
 )
+from trafico.emission_sets import EMISSION_SETS
 
 CONFIG_NAME = "config.toml"
 DEFAULT_RUN_NAME = "corrida"
@@ -250,6 +251,7 @@ def parse_settings(text: str, path: Path) -> Settings:
         behavior=behavior,
         bottleneck=bottleneck,
         speed_bump=speed_bump,
+        **_fuel(r, d),
     )
 
     o = RunOptions()
@@ -301,33 +303,57 @@ def parse_settings(text: str, path: Path) -> Settings:
     if silent:
         notices += (f"Aviso: sin accel y decel no se calculan las emisiones de {', '.join(silent)} (el modelo usa la "
                     "aceleración real)",)  # fmt: skip
+    unpriced = sorted({sp.fuel for k, sp in enumerate(sim.specs) if sp.burns and sim.rates[k] > 0
+                       and sim.price(sp.fuel) is None})  # fmt: skip
+    if unpriced:
+        notices += (f"Aviso: sin precio en [fuel] price para {', '.join(unpriced)}: su consumo solo se da en litros",)
     return Settings(sim=sim, run=opts, path=path, text=text, notices=notices, animation=anim)
 
 
-def _emissions(r: _Reader, key: str, default: tuple) -> tuple:
-    """[vehicles.<clave>.emissions]: por contaminante, los coeficientes [f1..f6] del modelo de Int Panis et al.
-    (2006) y, opcional, `<contaminante>_decel` para a < −0.5 m/s² (por defecto, los mismos). Si la sección está,
-    reemplaza a la del tipo incorporado; vacía, el tipo no emite."""
+def _emissions(r: _Reader, key: str, base: VehicleSpec | None) -> tuple[tuple, str]:
+    """[vehicles.<clave>.emissions]: (coeficientes, conjunto del que salen). `source` toma los de un conjunto con
+    nombre (`EMISSION_SETS`) para la clave del tipo o para `source_type`; encima, por contaminante, los
+    coeficientes [f1..f6] escritos a mano del modelo de Int Panis et al. (2006) y, opcional, `<contaminante>_decel`
+    para a < −0.5 m/s² (por defecto, los mismos). Si la sección está, reemplaza a la del tipo incorporado; vacía,
+    el tipo no emite."""
     table = r.data.get("vehicles", {}).get(key, {}).get("emissions")
     if table is None:
-        return default
+        return (base.emissions, base.emission_source) if base else ((), "")
     label = f"[vehicles.{key}.emissions]"
     if not isinstance(table, dict):
         raise ConfigError(f"[vehicles.{key}] emissions debe ser una sección {label}")
+    section = ("vehicles", key, "emissions")
+    source = r.get(section + ("source",), str, None)
+    entry = r.get(section + ("source_type",), str, None)
+    found: dict[str, tuple] = {}
+    if source is not None:
+        if source not in EMISSION_SETS:
+            raise ConfigError(f"{label} source: no existe el conjunto {source!r}; hay {', '.join(EMISSION_SETS)}")
+        entry = entry or key
+        if entry not in EMISSION_SETS[source]:
+            raise ConfigError(f"{label} el conjunto {source!r} no tiene el tipo {entry!r}"
+                              f"{'' if key == entry else ' (source_type)'}; tiene {', '.join(EMISSION_SETS[source])} "
+                              "(elige uno con source_type)")  # fmt: skip
+        found = {pol: (acc, dec) for pol, acc, dec in EMISSION_SETS[source][entry]}
+    elif entry is not None:
+        raise ConfigError(f"{label} source_type requiere source (el conjunto de coeficientes)")
     out = []
     for pol in POLLUTANTS:
         coefs = {}
         for name in (pol, f"{pol}_decel"):
-            value = r.get(("vehicles", key, "emissions", name), FLOATS, None)
+            value = r.get(section + (name,), FLOATS, None)
             if value is not None and (not isinstance(value, tuple) or len(value) != 6):
                 raise ConfigError(f"{label} {name} debe ser una lista de 6 números [f1, f2, f3, f4, f5, f6]")
             coefs[name] = value
-        if coefs[pol] is None:
-            if coefs[f"{pol}_decel"] is not None:
+        acc, dec = coefs[pol], coefs[f"{pol}_decel"]
+        if acc is None and pol in found:  # del conjunto; el _decel escrito a mano lo reemplaza
+            acc, dec = found[pol][0], dec or found[pol][1]
+        if acc is None:
+            if dec is not None:
                 raise ConfigError(f"{label} {pol}_decel requiere {pol} (los coeficientes para a ≥ −0.5 m/s²)")
             continue
-        out.append((pol, coefs[pol], coefs[f"{pol}_decel"] or coefs[pol]))
-    return tuple(out)
+        out.append((pol, acc, dec or acc))
+    return tuple(out), source or ""
 
 
 def _zone(value):
@@ -464,12 +490,24 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
                 speed_bump_kmh=r.get(section + ("speed_bump_kmh",), float, base.speed_bump_kmh if base else None),
                 cargo_prob=cargo_prob,
                 **{f: r.get(section + (f,), float, getattr(base, f) if base else _SPEC_DEFAULTS[f]) for f in _BOTTLENECK_FIELDS},
-                emissions=_emissions(r, key, base.emissions if base else ()),
+                **dict(zip(("emissions", "emission_source"), _emissions(r, key, base))),
+                fuel=r.get(section + ("fuel",), str, base.fuel if base else None),
+                mass_kg=r.get(section + ("mass_kg",), float, base.mass_kg if base else None),
                 **values,
             )
         )
         rates.append(rate)
     return tuple(specs), tuple(rates)
+
+
+def _fuel(r: _Reader, d: SimConfig) -> dict:
+    """[fuel]: precio por litro de cada combustible (`price = {gasolina = 24.0, ...}`) y su moneda."""
+    table = r.data.get("fuel", {})
+    if isinstance(table, dict) and "price" in table and not isinstance(table["price"], dict):
+        raise ConfigError(f"[fuel] price debe ser un diccionario por combustible, p. ej. price = {{gasolina = 24.0}}; "
+                          f"se leyó {table['price']!r}")  # fmt: skip
+    prices = tuple((f, v) for f in FUELS if (v := r.get(("fuel", "price", f), float, None)) is not None)
+    return {"fuel_price": prices, "currency": r.get(("fuel", "currency"), str, d.currency)}
 
 
 def _rate(r: _Reader, key: str, default) -> Rate:
@@ -594,6 +632,13 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
 
     _validate_bottleneck(sim, check)
     _validate_speed_bump(sim, check)
+    for spec in sim.specs:
+        check(spec.fuel is None or spec.fuel in FUELS,
+              f"[vehicles.{spec.key}] fuel debe ser uno de {', '.join(FUELS)}; se leyó {spec.fuel!r}")  # fmt: skip
+        check(spec.mass_kg is None or spec.mass_kg > 0, f"[vehicles.{spec.key}] mass_kg debe ser mayor que 0 kg")
+    for fuel, price in sim.fuel_price:
+        check(price >= 0, f"[fuel] price: el precio de {fuel} no puede ser negativo")
+    check(bool(sim.currency.strip()), "[fuel] currency no puede estar vacía")
 
     longest = max(s.longest + s.gap_run for s in sim.specs)
     check(sim.length >= 2 * longest, f"[road] length debe ser al menos {2 * longest:g} m (dos veces el vehículo más largo con su gap)")

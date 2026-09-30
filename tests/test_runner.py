@@ -142,13 +142,20 @@ def test_emission_outputs(tmp_path):
     from trafico.plotting import plot_emissions_by_position, plot_mobility
 
     car = replace(DEFAULT_SPECS[0], accel=2.5, decel=4.5)
-    cfg = SimConfig(length=150, lanes=2, rates=(10, 2, 0), run=10, specs=(car, *DEFAULT_SPECS[1:]))
+    cfg = SimConfig(length=150, lanes=2, rates=(10, 2, 0), run=10, specs=(car, *DEFAULT_SPECS[1:]),
+                    fuel_price=(("gasolina", 24.0),))  # fmt: skip
     agg = run_parallel(cfg, 2, 1, 5)
     text = format_summary(agg)
     assert "CO2 (g/km)" in text and "NOx exceso vs flujo libre (%)" in text and "PM" not in text
     assert "0→20 km/h en 2.2 s" in text
+    # Combustible del CO2: L/100 km = g/km de CO2 ÷ g/L × 100, y su costo al precio de la gasolina.
+    assert "Combustible (L/100 km)" in text and "Costo por recorrido (MXN)" in text
+    assert "40 km/h: 7.6 L/100 km (13.1 km/L, 1.83 MXN/km) · física 4.8 L/100 km" in text
+    assert "60 km/h:" not in text  # el auto incorporado no pasa de 50 km/h
     write_csv(agg, tmp_path / "series.csv")
-    assert "emis_co2_g_min_auto_media" in (tmp_path / "series.csv").read_text().splitlines()[0]
+    header = (tmp_path / "series.csv").read_text().splitlines()[0]
+    assert "emis_co2_g_min_auto_media" in header and "comb_l_min_auto_media" in header
+    assert "comb_l_min_bici" not in header
     write_emissions_csv(agg, tmp_path / "pos.csv")
     header = (tmp_path / "pos.csv").read_text().splitlines()[0]
     assert header.startswith("x_inicio_m,x_fin_m,co2_g_m_h_carril0")
@@ -156,4 +163,4 @@ def test_emission_outputs(tmp_path):
     plot_mobility(agg, tmp_path / "mov.png")
     assert (tmp_path / "pos.png").stat().st_size > 10_000
     quiet = run_parallel(SimConfig(length=150, lanes=2, rates=(10, 2, 0), run=10), 1, 1, 5)
-    assert "CO2" not in format_summary(quiet)
+    assert "CO2" not in format_summary(quiet) and "Combustible" not in format_summary(quiet)
