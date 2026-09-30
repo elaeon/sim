@@ -9,7 +9,7 @@ import numpy as np
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-from trafico.config import POLLUTANT_LABELS, POLLUTANTS
+from trafico.config import POLLUTANT_LABELS, POLLUTANTS, SpeedBump
 from trafico.emissions import EMIS_BIN, emitted
 from trafico.emissions import unit as pollutant_unit
 from trafico.metrics import EMIS_SERIES, ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, SPEED_BIN
@@ -85,8 +85,9 @@ def _lane_assignments(cfg, active: list[int]) -> list[list[str]]:
             out[spec.lane].append(spec.name)
     for lane in cfg.reserved_lanes:
         out[lane] = ["solo " + ", ".join(out[lane])] if out[lane] else ["reservado"]
-    for lane in cfg.free_lanes if cfg.has_light else ():
-        out[lane].append("sin semáforo")
+    for light in cfg.lights:
+        for lane in light.free_lanes:
+            out[lane].append("sin semáforo" if len(cfg.lights) == 1 else f"sin semáforo a {light.position:g} m")
     return out
 
 
@@ -102,12 +103,16 @@ def shade_phases(ax, spans) -> None:
         ax.axvspan(a, b, color=color, alpha=0.07 if color == RED_PHASE else 0.12, linewidth=0, zorder=0)
 
 
-def phase_handles(cfg) -> list:
-    """Entradas de leyenda de las fases sombreadas (ninguna sin semáforo)."""
-    if not cfg.has_light:
+def phase_handles(cfg, per_light: bool = False) -> list:
+    """Entradas de leyenda de las fases sombreadas (ninguna sin semáforo). Con varios semáforos, el sombreado es el
+    del último; `per_light` (el diagrama espacio-tiempo, que marca las fases de cada semáforo en su línea) no
+    nombra cuál."""
+    ref = cfg.ref_light
+    if ref is None:
         return []
-    handles = [Patch(facecolor=RED_PHASE, alpha=0.2, label="semáforo en rojo")]
-    if cfg.yellow > 0:
+    which = f" a {ref.position:g} m" if cfg.inner_lights and not per_light else ""
+    handles = [Patch(facecolor=RED_PHASE, alpha=0.2, label=f"semáforo{which} en rojo")]
+    if ref.yellow > 0:
         handles.append(Patch(facecolor=YELLOW_PHASE, alpha=0.3, label="en amarillo"))
     return handles
 
@@ -298,11 +303,12 @@ def plot_emissions_by_position(agg: Aggregate, path: Path, footer: str | None = 
     fig = Figure(figsize=(11, 1.9 + 2.9 * len(pols)), facecolor=SURFACE)
     axes = fig.subplots(len(pols), 1, sharex=True, squeeze=False, gridspec_kw={"hspace": 0.45})[:, 0]
     marks = [(cfg.length, "semáforo" if cfg.has_light else "final del tramo", INK_2)]
+    marks += [(light.position, "semáforo", INK_2) for light in cfg.inner_lights]
     bump_lanes = cfg.speed_bump_lanes()
     if bump_lanes:
         where = "" if len(bump_lanes) == cfg.lanes else (
             (" (carril " if len(bump_lanes) == 1 else " (carriles ") + ", ".join(map(str, bump_lanes)) + ")")
-        marks.append((cfg.speed_bump.position, "tope" + where, YELLOW_PHASE))
+        marks += [(pos, "tope" + where, YELLOW_PHASE) for pos in cfg.speed_bump.positions]
     marks += [(cfg.specs[k].stop_position, f"parada {cfg.specs[k].name}", TYPE_COLORS[k])
               for k in active if cfg.specs[k].stop_position is not None]  # fmt: skip
     for ax, p in zip(axes, pols):
@@ -498,13 +504,10 @@ def _end_labels(ax, t_end: float, ends: list[tuple[float, str]], fmt: str) -> No
         )
 
 
-def plot_mobility(
-    agg: Aggregate, path: Path | None, show: bool = False, footer: str | None = None
-) -> None:
+def plot_mobility(agg: Aggregate, path: Path | None, footer: str | None = None) -> None:
     import matplotlib
 
-    if not show:
-        matplotlib.use("Agg")
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     cfg = agg.cfg
@@ -590,7 +593,7 @@ def plot_mobility(
     )  # fmt: skip
     fig.text(
         0.075, fy(0.958),
-        f"Tramo {cfg.length:g} m, {cfg.lanes} carril(es) · {cfg.light_label} · "
+        f"Tramo {cfg.length:g} m, {cfg.lanes} carril(es) · {cfg.lights_short} · "
         f"{agg.replicas} réplicas (media ± 1σ) · run {cfg.run:g} s → {cfg.sim_seconds:,g} s simulados "
         f"= {_duration(cfg.sim_seconds)} de ejecución simulada",
         ha="left", fontsize=9, color=INK_2,
@@ -612,8 +615,6 @@ def plot_mobility(
     if path is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(path, dpi=150, facecolor=SURFACE)
-    if show:
-        plt.show()
     plt.close(fig)
 
 
@@ -639,7 +640,7 @@ def plot_passenger_distribution(agg: Aggregate, path: Path, footer: str | None =
     """Distribución de pasajeros por vehículo de cada tipo: histograma de todos los vehículos que
     llegaron durante la simulación, sumando las réplicas, frente a la distribución esperada según
     la configuración. Un panel por tipo, con su propio eje x; un rango ancho se agrupa en intervalos."""
-    from matplotlib.figure import Figure  # sin pyplot: no depende del backend ni de `show`
+    from matplotlib.figure import Figure  # sin pyplot: no depende del backend
     from matplotlib.lines import Line2D
 
     from trafico.distributions import passenger_pmf
@@ -909,7 +910,10 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
 
     pos = data["emissions_pos"].sum(axis=2) / EMIS_BIN / (meta["s_simulados"] / 3600.0)  # (escenario, pol, x)
     x = (np.arange(pos.shape[2]) + 0.5) * EMIS_BIN
-    marks = [(m, "tope") for m in sorted({b for b in meta["topes_m"] if b is not None})]
+    # topes_m: por escenario, una lista de posiciones (en los datos anteriores, una posición o null)
+    marks = [(m, "tope") for m in sorted({p for b in meta["topes_m"] for p in SpeedBump(position=b).positions})]
+    marks_bumps = {len(SpeedBump(position=b).positions) for b in meta["topes_m"]}
+    marks_bumps = range(max(marks_bumps, default=0))  # cuántos topes tiene el escenario con más
     marks += [(m, f"parada {name}") for name, m in meta["paradas_m"].items()]
     span = ncols // max(1, len(pos_pols))
     for n, p in enumerate(pos_pols):
@@ -940,7 +944,7 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
         ("carril " if len(lanes) == 1 else "carriles ") + ", ".join(map(str, lanes)))
     lines = [
         f"Tramo {meta['largo_m']:g} m · {', '.join(meta['carriles'])} · {rates}",
-        f"Tope en {where}: {bump_speed or 'ningún tipo frena (sin speed_bump_kmh)'}",
+        f"{'Topes' if len(marks_bumps) > 1 else 'Tope'} en {where}: {bump_speed or 'ningún tipo frena (sin speed_bump_kmh)'}",
         f"{meta['s_simulados']:,.0f} s simulados · media de {meta['replicas']} réplicas con la misma semilla "
         f"({meta['semilla']}) · emisiones por km recorrido en el tramo, modelo de Int Panis et al. (2006)",
     ]

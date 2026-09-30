@@ -37,7 +37,8 @@ SUMMARY_NAME = "resumen.txt"
 class Scenarios:
     """Qué se compara y cómo."""
 
-    bumps: tuple[float | None, ...]  # posición (m) del tope de cada escenario; None = sin tope
+    # Topes de cada escenario: una posición (m), varias (tupla) o None / vacía = sin tope.
+    bumps: tuple[float | tuple[float, ...] | None, ...]
     bump_lanes: tuple[int, ...] | None  # carriles del tope (ya renumerados); None = todos
     lights: tuple[bool | None, ...]  # semáforo activado en cada variante; None = como en la configuración
     length: float | None  # m del tramo; None = [road] length
@@ -47,9 +48,16 @@ class Scenarios:
     run: float  # s de proceso (× time_scale = s simulados)
 
 
-def scenario_label(bump: float | None, light: bool | None) -> str:
-    """Nombre del escenario, p. ej. «tope a 100 m» o, si se comparan semáforos, «sin tope · sin semáforo»."""
-    name = "sin tope" if bump is None else f"tope a {bump:g} m"
+def bump_positions(bump: float | tuple[float, ...] | None) -> tuple[float, ...]:
+    """Posiciones (m) de los topes de un escenario, de la entrada a la salida (vacía = sin tope)."""
+    return SpeedBump(position=bump).positions
+
+
+def scenario_label(bump: float | tuple[float, ...] | None, light: bool | None) -> str:
+    """Nombre del escenario, p. ej. «tope a 100 m», «topes a 35 y 70 m» o, si se comparan semáforos, «sin tope ·
+    sin semáforo»."""
+    at = bump_positions(bump)
+    name = "sin tope" if not at else f"{'topes' if len(at) > 1 else 'tope'} a {' y '.join(f'{p:g}' for p in at)} m"
     if light is not None:
         name += " · con semáforo" if light else " · sin semáforo"
     return name
@@ -64,11 +72,10 @@ def build_configs(base: SimConfig, s: Scenarios) -> list[tuple[str, SimConfig]]:
     for light in s.lights:
         for bump in s.bumps:
             cfg = replace(
-                reduced, run=s.run,
-                traffic_light=reduced.traffic_light if light is None else light,
-                speed_bump=SpeedBump() if bump is None else SpeedBump(position=bump, lanes=s.bump_lanes),
+                reduced if light is None else reduced.with_lights(light), run=s.run,
+                speed_bump=SpeedBump(position=bump_positions(bump) or None, lanes=s.bump_lanes if bump_positions(bump) else None),
             )  # fmt: skip
-            name = scenario_label(bump, cfg.has_light if len(s.lights) > 1 else None)
+            name = scenario_label(bump, cfg.any_light if len(s.lights) > 1 else None)
             try:
                 validate_config(cfg, RunOptions(replicas=s.replicas))
             except ConfigError as exc:
@@ -112,8 +119,8 @@ def metadata(base: SimConfig, s: Scenarios, configs: list[tuple[str, SimConfig]]
         "comando": "uv run trafico-emisiones " + " ".join(argv),
         "semilla": seed,
         "escenarios": [name for name, _ in configs],
-        "topes_m": [c.speed_bump.position for _, c in configs],
-        "semaforo": [c.has_light for _, c in configs],
+        "topes_m": [list(c.speed_bump.positions) for _, c in configs],
+        "semaforo": [c.any_light for _, c in configs],
         "carriles_tope": list(configs[-1][1].speed_bump_lanes()) or None,
         "largo_m": cfg.length,
         "carriles_base": list(range(base.lanes)) if s.lanes is None else list(s.lanes),
@@ -129,7 +136,7 @@ def metadata(base: SimConfig, s: Scenarios, configs: list[tuple[str, SimConfig]]
         "velocidad_tope_kmh": {cfg.specs[k].name: cfg.specs[k].speed_bump_kmh for k in active},
         "paradas_m": {cfg.specs[k].name: cfg.specs[k].stop_position for k in active
                       if cfg.specs[k].stop_position is not None},  # fmt: skip
-        "semaforo_config": base.light_label,
+        "semaforo_config": base.lights_label,
         "replicas": s.replicas,
         "run_s": s.run,
         "time_scale": base.time_scale,

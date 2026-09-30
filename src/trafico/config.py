@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from trafico.emission_sets import BUS_EMISSIONS, PETROL_CAR_EMISSIONS
 
@@ -230,11 +230,22 @@ class Behavior:
 
 @dataclass(frozen=True, slots=True)
 class SpeedBump:
-    """Tope (reductor de velocidad) a `position` m del inicio del tramo, en los carriles `lanes`. Mientras un
-    vehículo lo pisa (del frente a la parte trasera) no rebasa el `speed_bump_kmh` de su tipo."""
+    """Topes (reductores de velocidad) a `position` m del inicio del tramo, en los carriles `lanes`. Mientras un
+    vehículo pisa uno (del frente a la parte trasera) no rebasa el `speed_bump_kmh` de su tipo."""
 
-    position: float | None = None  # m desde el inicio del tramo; None = sin tope
+    # m desde el inicio del tramo: una posición o una tupla con las de varios topes; None = sin tope. Todos
+    # están en los mismos carriles.
+    position: float | tuple[float, ...] | None = None
     lanes: tuple[int, ...] | None = None  # carriles (0 = derecho); None = todos
+
+    @property
+    def positions(self) -> tuple[float, ...]:
+        """Posiciones de los topes, de la entrada a la salida (vacía si no hay)."""
+        if self.position is None:
+            return ()
+        if isinstance(self.position, (tuple, list)):  # una lista si viene de un JSON
+            return tuple(sorted(float(p) for p in self.position))
+        return (float(self.position),)
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +298,76 @@ class Rate:
         return mu + sigma * (math.exp(-a * a / 2) - math.exp(-b * b / 2)) / math.sqrt(2 * math.pi) / mass
 
 
+def phase_at(red: int, green: int, yellow: int, start_phase: str, tick: int) -> int:
+    """Fase (RED, GREEN o YELLOW) en el paso `tick` de un semáforo con esas fases (en pasos): verde → amarillo →
+    rojo, empezando por el rojo o por el verde."""
+    cycle = red + green + yellow
+    pos = tick % cycle
+    if start_phase == "red":
+        pos = (pos - red) % cycle  # el ciclo empieza en el rojo
+    if pos < green:
+        return GREEN
+    return YELLOW if pos < green + yellow else RED
+
+
+@dataclass(frozen=True, slots=True)
+class Light:
+    """Un semáforo del tramo a `position` m del inicio, con sus propias fases y fase inicial. El del final del
+    tramo (x = length) lo describen `red`, `green`, `yellow`, `start_phase`, `traffic_light` y `free_lanes` de
+    SimConfig (`SimConfig.exit_light`); los intermedios van en `SimConfig.extra_lights`."""
+
+    position: float
+    red: float = 30.0  # s
+    green: float = 30.0  # s
+    yellow: float = 0.0  # s, entre el verde y el rojo; 0 = sin amarillo
+    start_phase: str = "red"  # "red" | "green"
+    enabled: bool = True
+    # Carriles sin este semáforo (0 = derecho): solo aplica a los tipos con carril exclusivo en ellos.
+    free_lanes: tuple[int, ...] = ()
+
+    @property
+    def active(self) -> bool:
+        """Hay semáforo: está activado y alguna de sus fases dura más de 0 s."""
+        return self.enabled and self.red + self.green + self.yellow > 0
+
+    @property
+    def cycle(self) -> float:
+        """Duración del ciclo (s); 0 si no hay semáforo."""
+        return self.red + self.green + self.yellow if self.active else 0.0
+
+    @property
+    def label(self) -> str:
+        """Fases, p. ej. «rojo 25 s / verde 35 s / amarillo 3 s»."""
+        label = f"rojo {self.red:g} s / verde {self.green:g} s"
+        return label + (f" / amarillo {self.yellow:g} s" if self.yellow > 0 else "")
+
+    def phase(self, tick: int) -> int:
+        """Fase (RED, GREEN o YELLOW) en el paso `tick`: verde → amarillo → rojo. Sin semáforo, siempre verde."""
+        if not self.active:
+            return GREEN
+        return phase_at(round(self.red / DT), round(self.green / DT), round(self.yellow / DT), self.start_phase, tick)
+
+    def intervals(self, offset: float, duration: float, horizon: float) -> list[tuple[float, float]]:
+        """Intervalos [inicio, fin) en s simulados, hasta `horizon`, de la fase que empieza `offset` s después del
+        inicio del verde y dura `duration` s."""
+        if duration <= 0 or not self.active:
+            return []
+        out = []
+        # Un ciclo antes del primer verde (en t = red si empieza en rojo): cubre la fase ya en curso en t = 0.
+        start = (self.red if self.start_phase == "red" else 0.0) + offset - self.cycle
+        while start < horizon:
+            if start + duration > 0:
+                out.append((max(start, 0.0), min(start + duration, horizon)))
+            start += self.cycle
+        return out
+
+    def red_intervals(self, horizon: float) -> list[tuple[float, float]]:
+        return self.intervals(self.green + self.yellow, self.red, horizon)
+
+    def yellow_intervals(self, horizon: float) -> list[tuple[float, float]]:
+        return self.intervals(self.green, self.yellow, horizon)
+
+
 @dataclass(frozen=True, slots=True)
 class SimConfig:
     """Configuración completa de una corrida."""
@@ -309,6 +390,8 @@ class SimConfig:
     # exclusivo (`lane` y `exclusive`) en uno de ellos: cruzan la línea aunque esté en rojo y no bajan la
     # velocidad en amarillo.
     free_lanes: tuple[int, ...] = ()
+    # Semáforos intermedios (además del del final del tramo), cada uno a su `position` m con sus propias fases.
+    extra_lights: tuple[Light, ...] = ()
     run: float = 10.0  # s de proceso
     time_scale: float = 10.0  # s simulados por cada s de proceso
     sample: float = 1.0  # s simulados entre muestras
@@ -371,7 +454,7 @@ class SimConfig:
 
     def speed_bump_lanes(self) -> tuple[int, ...]:
         """Carriles con tope (ninguno si no hay tope)."""
-        if self.speed_bump.position is None:
+        if not self.speed_bump.positions:
             return ()
         lanes = self.speed_bump.lanes
         return tuple(range(self.lanes)) if lanes is None else lanes
@@ -406,10 +489,12 @@ class SimConfig:
         """Carriles exclusivos: los de los tipos con `exclusive` y carril fijo."""
         return frozenset(s.lane for s in self.specs if s.exclusive and s.lane is not None)
 
-    def ignores_light(self, k: int) -> bool:
-        """El tipo k no obedece el semáforo: tiene carril exclusivo y ese carril está en `free_lanes`."""
+    def ignores_light(self, k: int, light: Light | None = None) -> bool:
+        """El tipo k no obedece el semáforo (por defecto, el del final del tramo): tiene carril exclusivo y ese
+        carril está en sus `free_lanes`."""
         spec = self.specs[k]
-        return spec.exclusive and spec.lane is not None and spec.lane in self.free_lanes
+        lanes = self.free_lanes if light is None else light.free_lanes
+        return spec.exclusive and spec.lane is not None and spec.lane in lanes
 
     def allowed_lanes(self, k: int) -> tuple[int, ...]:
         """Carriles que puede usar el tipo k: su carril fijo o, si no tiene, los no reservados."""
@@ -478,17 +563,59 @@ class SimConfig:
         return round(self.yellow / DT)
 
     @property
+    def exit_light(self) -> Light:
+        """El semáforo del final del tramo (x = length), con los campos `red`, `green`, `yellow`, `start_phase`,
+        `traffic_light` y `free_lanes`."""
+        return Light(self.length, self.red, self.green, self.yellow, self.start_phase, self.traffic_light,
+                     self.free_lanes)  # fmt: skip
+
+    @property
     def has_light(self) -> bool:
-        """Hay semáforo: está activado y alguna de sus fases dura más de 0 s."""
-        return self.traffic_light and self.red + self.green + self.yellow > 0
+        """Hay semáforo al final del tramo: está activado y alguna de sus fases dura más de 0 s."""
+        return self.exit_light.active
+
+    @property
+    def inner_lights(self) -> tuple[Light, ...]:
+        """Los semáforos intermedios que funcionan, de la entrada a la salida."""
+        return tuple(sorted((lt for lt in self.extra_lights if lt.active), key=lambda lt: lt.position))
+
+    @property
+    def lights(self) -> tuple[Light, ...]:
+        """Todos los semáforos que funcionan (intermedios y el del final del tramo), de la entrada a la salida."""
+        return self.inner_lights + ((self.exit_light,) if self.has_light else ())
+
+    @property
+    def any_light(self) -> bool:
+        return bool(self.lights)
+
+    @property
+    def ref_light(self) -> Light | None:
+        """El semáforo que marca la ventana del flujo y las fases sombreadas de las gráficas: el del final del
+        tramo o, si no hay, el último intermedio."""
+        lights = self.lights
+        return lights[-1] if lights else None
 
     @property
     def light_label(self) -> str:
-        """Duración de las fases del semáforo, p. ej. «rojo 25 s / verde 35 s / amarillo 3 s», o «sin semáforo»."""
-        if not self.has_light:
-            return "sin semáforo"
-        label = f"rojo {self.red:g} s / verde {self.green:g} s"
-        return label + (f" / amarillo {self.yellow:g} s" if self.yellow > 0 else "")
+        """Fases del semáforo del final del tramo, p. ej. «rojo 25 s / verde 35 s / amarillo 3 s», o «sin
+        semáforo»."""
+        return self.exit_light.label if self.has_light else "sin semáforo"
+
+    @property
+    def lights_label(self) -> str:
+        """Los semáforos de la calle: con uno solo, como `light_label`; con varios, cada uno con su posición y fases."""
+        if not self.inner_lights:
+            return self.light_label
+        return " · ".join(f"a {lt.position:g} m: {lt.label}, empieza en {'rojo' if lt.start_phase == 'red' else 'verde'}"
+                          for lt in self.lights)  # fmt: skip
+
+    @property
+    def lights_short(self) -> str:
+        """Como `lights_label`, pero corto para los subtítulos de las gráficas: con varios semáforos, cuántos y dónde."""
+        if not self.inner_lights:
+            return self.light_label
+        at = [f"{lt.position:g}" for lt in self.lights]
+        return f"{len(at)} semáforos (a {', '.join(at[:-1])} y {at[-1]} m)"
 
     @property
     def line_name(self) -> str:
@@ -497,17 +624,18 @@ class SimConfig:
 
     @property
     def cycle(self) -> float:
-        """Duración del ciclo del semáforo (s); 0 sin semáforo."""
-        return self.red + self.green + self.yellow if self.has_light else 0.0
+        """Duración del ciclo del semáforo de referencia (s); 0 sin semáforo."""
+        ref = self.ref_light
+        return ref.cycle if ref else 0.0
 
     @property
     def flow_window(self) -> float:
-        """Ventana (s) del flujo en la línea: un ciclo del semáforo o, sin él, NO_LIGHT_WINDOW."""
-        return self.cycle if self.has_light else NO_LIGHT_WINDOW
+        """Ventana (s) del flujo en la línea: un ciclo del semáforo de referencia o, sin él, NO_LIGHT_WINDOW."""
+        return self.cycle if self.ref_light else NO_LIGHT_WINDOW
 
     @property
     def flow_window_label(self) -> str:
-        return f"ventana de un ciclo, {self.cycle:g} s" if self.has_light else f"ventana de {NO_LIGHT_WINDOW:g} s"
+        return f"ventana de un ciclo, {self.cycle:g} s" if self.ref_light else f"ventana de {NO_LIGHT_WINDOW:g} s"
 
     @property
     def sample_ticks(self) -> int:
@@ -517,18 +645,20 @@ class SimConfig:
     def n_samples(self) -> int:
         return self.n_ticks // self.sample_ticks
 
+    def with_lights(self, enabled: bool) -> SimConfig:
+        """La misma configuración con todos los semáforos (el del final del tramo y los intermedios) activados o
+        desactivados."""
+        return replace(self, traffic_light=enabled,
+                       extra_lights=tuple(replace(lt, enabled=enabled) for lt in self.extra_lights))  # fmt: skip
+
     def phase(self, tick: int) -> int:
-        """Fase del semáforo (RED, GREEN o YELLOW) en el paso `tick`: verde → amarillo → rojo. Sin
-        semáforo, siempre verde."""
-        if not self.has_light:
-            return GREEN
-        red, green, yellow = self.red_ticks, self.green_ticks, self.yellow_ticks
-        pos = tick % (red + green + yellow)
-        if self.start_phase == "red":
-            pos = (pos - red) % (red + green + yellow)  # el ciclo empieza en el rojo
-        if pos < green:
-            return GREEN
-        return YELLOW if pos < green + yellow else RED
+        """Fase del semáforo del final del tramo (RED, GREEN o YELLOW) en el paso `tick`: verde → amarillo → rojo.
+        Sin semáforo, siempre verde."""
+        return self.exit_light.phase(tick)
+
+    def inner_phases(self, tick: int) -> tuple[int, ...]:
+        """Fase de cada semáforo intermedio (`inner_lights`) en el paso `tick`."""
+        return tuple(lt.phase(tick) for lt in self.inner_lights)
 
     def is_green(self, tick: int) -> bool:
         return self.phase(tick) == GREEN
@@ -537,22 +667,11 @@ class SimConfig:
         return self.phase(tick) == RED
 
     def red_intervals(self) -> list[tuple[float, float]]:
-        """Intervalos [inicio, fin) en s simulados en los que el semáforo está en rojo."""
-        return self._intervals(self.green + self.yellow, self.red)
+        """Intervalos [inicio, fin) en s simulados en los que el semáforo de referencia está en rojo."""
+        ref = self.ref_light
+        return ref.red_intervals(self.sim_seconds) if ref else []
 
     def yellow_intervals(self) -> list[tuple[float, float]]:
-        """Intervalos [inicio, fin) en s simulados en los que el semáforo está en amarillo."""
-        return self._intervals(self.green, self.yellow)
-
-    def _intervals(self, offset: float, duration: float) -> list[tuple[float, float]]:
-        """Intervalos de la fase que empieza `offset` s después del inicio del verde y dura `duration` s."""
-        if duration <= 0 or not self.has_light:
-            return []
-        out = []
-        # Un ciclo antes del primer verde (en t = red si empieza en rojo): cubre la fase ya en curso en t = 0.
-        start = (self.red if self.start_phase == "red" else 0.0) + offset - self.cycle
-        while start < self.sim_seconds:
-            if start + duration > 0:
-                out.append((max(start, 0.0), min(start + duration, self.sim_seconds)))
-            start += self.cycle
-        return out
+        """Intervalos [inicio, fin) en s simulados en los que el semáforo de referencia está en amarillo."""
+        ref = self.ref_light
+        return ref.yellow_intervals(self.sim_seconds) if ref else []

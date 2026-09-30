@@ -71,7 +71,8 @@ def test_missing_keys_take_defaults_and_overrides_apply():
             "[road]\nmax_line_speed = [40, 50, 40]\n[initial]\noccupancy = [0.2, 0.3]\n",
             "las listas por carril deben tener el mismo largo",
         ),
-        ("[output]\ncsv = 1\n", "[output] csv debe ser true o false"),
+        ("[output]\nseries_csv = 1\n", "[output] series_csv debe ser true o false"),
+        ("[output]\nemisiones_csv = 1\n", "[output] emisiones_csv debe ser true o false"),
         ("[road]\nlength = 10\n", "[road] length debe ser al menos"),
         ("[demand]\ncar_rate = {min = 0, max = 0, mean = 0, std = 0}\nbike_rate = {min = 0, max = 0, mean = 0, std = 0}\nbus_rate = {min = 0, max = 0, mean = 0, std = 0}\n", "al menos un tipo"),
         ("[traffic_light]\nred = 12.35\n", "múltiplo de 0.1"),
@@ -155,6 +156,12 @@ def test_removed_saturation_threshold_is_ignored_in_old_copies():
     assert any("saturation_threshold se eliminó" in n for n in s.notices)
 
 
+def test_removed_show_is_ignored_in_old_copies():
+    s = _parse("[output]\nshow = false\n")
+    assert any("[output] show se eliminó" in n for n in s.notices)
+    assert not hasattr(s.run, "show") and not _parse("").notices
+
+
 def test_removed_slow_lane_key_is_ignored_in_old_copies():
     """[demand] slow_lane se eliminó: con "right" (lo que se hace ahora) se ignora con un aviso; otro valor es error."""
     s = _parse('[demand]\nslow_lane = "right"\n')
@@ -226,6 +233,21 @@ def test_speed_bump_settings():
     assert sim.speed_bump.position == 60.0 and sim.speed_bump_lanes() == (1, 2)
     assert sim.specs[0].speed_bump_kmh == 10.0 and sim.specs[1].speed_bump_kmh is None
     assert _parse("[speed_bump]\nposition = 60\n").sim.speed_bump_lanes() == (0, 1)  # sin lanes: todos
+
+
+def test_several_speed_bumps():
+    """position acepta una lista: varios topes en los mismos carriles, ordenados de la entrada a la salida."""
+    sim = _parse("[road]\nmax_line_speed = [20, 40, 50]\n[speed_bump]\nposition = [120, 40.5]\nlanes = [1]\n").sim
+    assert sim.speed_bump.positions == (40.5, 120.0) and sim.speed_bump_lanes() == (1,)
+    assert _parse("[speed_bump]\nposition = [60]\n").sim.speed_bump.positions == (60.0,)
+    assert _parse("").sim.speed_bump.positions == () and _parse("").sim.speed_bump_lanes() == ()
+    for text, message in (
+        ("[speed_bump]\nposition = [60, 200]\n", "position debe estar entre 0 y 200 m"),
+        ("[speed_bump]\nposition = [60, 60]\n", "position: hay topes en la misma posición"),
+        ("[speed_bump]\nposition = [60, 'x']\n", "position debe ser un número o una lista de números"),
+    ):
+        with pytest.raises(ConfigError, match=re.escape(message)):
+            _parse(text)
 
 
 @pytest.mark.parametrize(
@@ -742,5 +764,107 @@ def test_repository_configs_load_with_the_sedema_types(name):
     keys = [sp.key for sp in sim.specs]
     for key in ("taxi", "carga_ligera", "colectivo"):
         k = keys.index(key)
-        assert sim.rates[k] == 0 and sim.specs[k].emission_source == "sedema_cdmx_2018" and sim.specs[k].burns
+        assert sim.specs[k].emission_source == "sedema_cdmx_2018" and sim.specs[k].burns
+        assert name == CONFIG_NAME or sim.rates[k] == 0  # el ejemplo los trae sin demanda; config.toml es del usuario
     assert sim.specs[0].emission_source == "sedema_cdmx_2018" and sim.price("gasolina") == 23.99
+
+
+def test_several_traffic_lights():
+    """[[traffic_light]]: un semáforo por sección, cada uno con su position, fases, fase inicial y free_lanes. El que
+    no tiene position (o está en length) es el del final del tramo; los demás, intermedios."""
+    text = """
+[road]
+length = 200
+max_line_speed = [40, 50]
+[[traffic_light]]
+position = 120
+red = 20
+green = 25
+yellow = 3
+start_phase = "green"
+[[traffic_light]]
+position = 50
+red = 15
+green = 15
+[[traffic_light]]
+red = 30
+green = 30
+"""
+    sim = _parse(text).sim
+    assert [(lt.position, lt.red, lt.green, lt.yellow, lt.start_phase) for lt in sim.extra_lights] == [
+        (50.0, 15.0, 15.0, 0.0, "red"), (120.0, 20.0, 25.0, 3.0, "green")]  # fmt: skip
+    assert sim.has_light and (sim.red, sim.green, sim.start_phase) == (30.0, 30.0, "red")
+    assert len(sim.lights) == 3 and sim.lights_label.count("·") == 2
+    # Una sola sección con position < length: ese es el único semáforo, y el del final queda sin semáforo.
+    sim = _parse("[road]\nlength = 200\n[traffic_light]\nposition = 80\nred = 10\ngreen = 10\n").sim
+    assert not sim.has_light and [lt.position for lt in sim.inner_lights] == [80.0] and sim.flow_window == 20.0
+    # position = length es el del final; sin [traffic_light] nada cambia.
+    sim = _parse("[road]\nlength = 200\n[[traffic_light]]\nposition = 200\nred = 10\ngreen = 10\n").sim
+    assert sim.has_light and sim.extra_lights == () and sim.red == 10.0
+    assert _parse("").sim.extra_lights == () and _parse("").sim.has_light
+
+
+def test_traffic_light_free_lanes_are_per_light():
+    text = ("[road]\nlength = 200\nmax_line_speed = [40, 40, 50]\n[vehicles.bike]\nlane = 0\nexclusive = true\n"
+            "[[traffic_light]]\nposition = 100\nfree_lanes = [0]\n[[traffic_light]]\n")  # fmt: skip
+    sim = _parse(text).sim
+    assert sim.extra_lights[0].free_lanes == (0,) and sim.free_lanes == ()
+    k = [sp.key for sp in sim.specs].index("bike")
+    assert sim.ignores_light(k, sim.extra_lights[0]) and not sim.ignores_light(k)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("[[traffic_light]]\nposition = 50\n[[traffic_light]]\nposition = 50\n", "hay semáforos en la misma posición"),
+        ("[[traffic_light]]\nposition = 250\n", "cada semáforo intermedio debe estar entre 0 y 200 m"),
+        ("[[traffic_light]]\nposition = 0\n", "cada semáforo intermedio debe estar entre 0 y 200 m"),
+        ("[[traffic_light]]\nred = 10\n[[traffic_light]]\nposition = 200\n", "hay 2 semáforos en el final del tramo"),
+        ("[[traffic_light]]\nposition = 50\nfoo = 1\n", "claves desconocidas en el semáforo 1 de [[traffic_light]]: foo"),
+        ("[[traffic_light]]\nposition = 50\ngreen = 0\n", "[traffic_light] a 50 m green debe ser mayor que 0"),
+        ("[[traffic_light]]\nposition = 50\nstart_phase = \"azul\"\n", 'a 50 m start_phase debe ser "red" o "green"'),
+        ("[[traffic_light]]\nposition = 50\nred = 10.05\n", "a 50 m red debe ser múltiplo de 0.1 s"),
+        ("[[traffic_light]]\nposition = 50\nfree_lanes = [0]\n", "a 50 m free_lanes: el carril 0 no es exclusivo"),
+        ("[[traffic_light]]\nposition = 50\nfree_lanes = [5]\n", "a 50 m free_lanes: cada carril debe estar entre 0 y"),
+        ("traffic_light = 3\n", "[traffic_light] debe ser una sección o una lista de secciones"),
+    ],
+)
+def test_invalid_several_traffic_lights_are_rejected(text, message):
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        _parse("[road]\nlength = 200\nmax_line_speed = [40, 40]\n" + text if not text.startswith("traffic_light") else text)
+
+
+def test_plot_options_in_output(root):
+    """mobility_plot, passengers_plot y emissions_plot: por defecto se dibujan las tres; en false no se escribe su PNG
+    (el CSV de emisiones y el resto de las salidas sí)."""
+    assert _parse("").run.mobility_plot and _parse("").run.emissions_plot and _parse("").run.passengers_plot
+    with pytest.raises(ConfigError, match="mobility_plot debe ser true o false"):
+        _parse("[output]\nmobility_plot = 1\n")
+    emits = "[vehicles.car]\naccel = 2.5\ndecel = 4.5\n"
+    (root / CONFIG_NAME).write_text(FAST + emits, encoding="utf-8")
+    names = {p.name for p in run([]).iterdir()}
+    assert {"movilidad_pasajeros.png", "emisiones_posicion.png", "emisiones_posicion.csv",
+            "distribucion_pasajeros.png"} <= names  # fmt: skip
+    off = FAST + "mobility_plot = false\nemissions_plot = false\npassengers_plot = false\n" + emits  # en [output]
+    (root / CONFIG_NAME).write_text(off, encoding="utf-8")
+    names = {p.name for p in run([]).iterdir()}
+    assert not {"movilidad_pasajeros.png", "emisiones_posicion.png", "distribucion_pasajeros.png"} & names
+    assert {"resumen.txt", "emisiones_posicion.csv", "series.csv"} <= names
+
+
+def test_csv_options_in_output(root):
+    """series_csv y emisiones_csv (por defecto, las dos): cada una escribe su archivo, independiente de las gráficas.
+    `csv`, el nombre anterior de series_csv, sigue valiendo en las copias viejas, con un aviso."""
+    assert _parse("").run.series_csv and _parse("").run.emisiones_csv and not hasattr(_parse("").run, "csv")
+    s = _parse("[output]\ncsv = false\n")
+    assert not s.run.series_csv and any("[output] csv se renombró series_csv" in n for n in s.notices)
+    assert _parse("[output]\nseries_csv = false\n").run.series_csv is False and not _parse("").notices
+    emits = "[vehicles.car]\naccel = 2.5\ndecel = 4.5\n"
+    (root / CONFIG_NAME).write_text(FAST + emits, encoding="utf-8")
+    assert {"series.csv", "emisiones_posicion.csv", "emisiones_posicion.png"} <= {p.name for p in run([]).iterdir()}
+    off = FAST + "series_csv = false\nemisiones_csv = false\n" + emits
+    (root / CONFIG_NAME).write_text(off, encoding="utf-8")
+    names = {p.name for p in run([]).iterdir()}
+    assert not {"series.csv", "emisiones_posicion.csv"} & names and "emisiones_posicion.png" in names
+    (root / CONFIG_NAME).write_text(FAST + "csv = false\n" + emits, encoding="utf-8")  # copia anterior
+    assert "series.csv" not in {p.name for p in run([]).iterdir()}

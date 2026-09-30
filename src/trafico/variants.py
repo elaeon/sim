@@ -105,13 +105,19 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
         # Sin semáforo solo quedan los carriles que siguen siendo exclusivos de un tipo que participa.
         free_lanes=tuple(new_of[ln] for ln in base.free_lanes
                          if ln in new_of and any(s.exclusive and s.lane == new_of[ln] for s in specs)),  # fmt: skip
+        extra_lights=tuple(
+            replace(lt, free_lanes=tuple(new_of[ln] for ln in lt.free_lanes
+                                         if ln in new_of and any(s.exclusive and s.lane == new_of[ln] for s in specs)))
+            for lt in base.extra_lights
+        ),  # fmt: skip
         bottleneck=replace(base.bottleneck, stop_lanes=bn_lanes),
         speed_bump=replace(base.speed_bump, lanes=bump_lanes),
     )  # fmt: skip
 
 
 def scenario(reduced: SimConfig, v: Variants, length: float, red: float, green: float) -> SimConfig:
-    """Un escenario validado: la configuración reducida con ese largo, semáforo y duración."""
+    """Un escenario validado: la configuración reducida con ese largo, semáforo y duración. El reparto `red`/`green`
+    es el del semáforo del final del tramo; los intermedios conservan sus fases y su posición."""
     cfg = replace(reduced, length=length, red=red, green=green, traffic_light=True, run=v.run)
     try:
         validate_config(cfg, RunOptions(replicas=v.replicas))

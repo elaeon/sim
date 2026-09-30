@@ -195,3 +195,24 @@ def test_exit_queue_is_recorded_per_lane():
     np.testing.assert_array_equal(traj.exit_closed[-1], sim.exit_closed)
     assert not traj.exit_queued[:, 0].any() and traj.exit_queued[:, 1].max() >= 16.5 - 1e-4  # 3 autos de 5.5 m
     assert not traj.exit_closed[:, 0].any() and traj.exit_closed[:, 1].any()
+
+
+def test_outputs_with_several_lights(root):
+    """Con varios semáforos: la cabecera los lista, la corrida escribe gráfica, resumen y CSV, y la vista (diagrama
+    espacio-tiempo y video) dibuja cada uno con sus fases."""
+    text = (root / CONFIG_NAME).read_text().replace(
+        "[traffic_light]\nred = 10\ngreen = 10\n",
+        "[[traffic_light]]\nposition = 60\nred = 8\ngreen = 12\nstart_phase = \"green\"\n"
+        "[[traffic_light]]\nred = 10\ngreen = 10\n",
+    )
+    (root / CONFIG_NAME).write_text(text, encoding="utf-8")
+    run_dir = run([])
+    summary = (run_dir / "resumen.txt").read_text(encoding="utf-8")
+    assert "semáforos a 60 m: rojo 8 s / verde 12 s, empieza en verde · a 150 m: rojo 10 s / verde 10 s" in summary
+    assert (run_dir / "movilidad_pasajeros.png").stat().st_size > 10_000
+    paths = view([str(run_dir), "--duracion", "2"])
+    assert all(p.stat().st_size > 1000 for p in paths)
+    cfg = parse_settings((root / CONFIG_NAME).read_text(encoding="utf-8"), Path("x.toml")).sim
+    traj = record(cfg, seed=1, replica=1, start=0, end=25)
+    assert traj.inner_phase.shape == (traj.n_frames, 1)
+    assert traj.inner_phase[0, 0] == GREEN and (traj.inner_phase[:, 0] != GREEN).any()  # empieza en verde
