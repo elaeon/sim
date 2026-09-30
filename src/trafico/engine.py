@@ -13,7 +13,11 @@ Modelo por paso de DT segundos (actualización paralela con posiciones previas):
     abierta, pero quien está a menos de `yellow_approach` m de ella avanza a
     `yellow_speed_factor` de su velocidad; en rojo, se detiene. Los tipos con
     carril exclusivo en uno de `free_lanes` no obedecen ni el rojo ni el
-    amarillo (no cambian de carril, así que siempre van por él).
+    amarillo (no cambian de carril, así que siempre van por él). Además del
+    semáforo del final del tramo puede haber otros a `position` m (`Light`),
+    cada uno con sus fases, su fase inicial y sus `free_lanes`: se detienen en
+    su línea como en la del final, pero el flujo y las colas se miden en la
+    del final del tramo.
   * Condición inicial (opcional): los carriles empiezan con vehículos en marcha
     que ocupan una fracción del tramo, para no esperar a que se llene.
   * Compresión: detrás de un líder detenido basta `gap_stop` (< `gap_run`).
@@ -37,7 +41,7 @@ Modelo por paso de DT segundos (actualización paralela con posiciones previas):
     (aunque esté en verde): se detiene en ella y arranca con su reacción cuando
     hay lugar; si llegan más de los que acepta, el carril se satura. Una cola
     vacía acepta a cualquiera.
-  * Tope (opcional, [speed_bump]): en los carriles `lanes`, a `position` m del
+  * Topes (opcionales, [speed_bump]): en los carriles `lanes`, a `position` m (uno o varios) del
     inicio, quien lo pisa (del frente a la parte trasera) no rebasa el
     `speed_bump_kmh` de su tipo; sin `decel` baja de golpe, con `decel` frena
     antes para llegar a esa velocidad. Los tipos sin `speed_bump_kmh` no frenan.
@@ -76,7 +80,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from trafico.config import DT, RED, YELLOW, SimConfig
+from trafico.config import DT, GREEN, RED, YELLOW, SimConfig
 from trafico.distributions import (
     normal_ticks, reaction_ticks, sample_lengths, sample_passengers, sample_rates, sample_speeds, stop_ticks,
     uniform_ticks,
@@ -201,6 +205,10 @@ class Simulation:
         self.bn_time = [cfg.bottleneck_time(k) for k in range(self.n_types)]
         self.bn_type = self.bn_prob > 0  # tipos que pueden detenerse en un cuello de botella
         self.free_type = np.array([cfg.ignores_light(k) for k in range(self.n_types)], np.bool_)  # sin semáforo
+        # Semáforos intermedios: posición y tipos que no los obedecen (carril exclusivo en sus free_lanes).
+        self.inner_x = [float(lt.position) for lt in cfg.inner_lights]
+        self.inner_free = [np.array([cfg.ignores_light(k, lt) for k in range(self.n_types)], np.bool_)
+                           for lt in cfg.inner_lights]  # fmt: skip
         self.bn_lane = np.zeros(cfg.lanes, np.bool_)
         self.bn_lane[list(cfg.bottleneck_lanes())] = True
         self.bn_zone = cfg.bottleneck_zone()
@@ -237,11 +245,11 @@ class Simulation:
         self.dyn_t = np.isfinite(self.acc_t) | np.isfinite(self.dec_t)  # tipos con dinámica gradual
         self.any_dynamics = bool(self.dyn_t.any())
         # Tope ([speed_bump]): posición, carriles donde está y velocidad máxima de cada tipo al pisarlo (m/paso).
-        self.bump_x = INF if cfg.speed_bump.position is None else float(cfg.speed_bump.position)
+        self.bump_x = np.array(cfg.speed_bump.positions, dtype=np.float64)  # uno o varios topes
         self.bump_lane = np.zeros(cfg.lanes, np.bool_)
         self.bump_lane[list(cfg.speed_bump_lanes())] = True
         self.bump_v_t = np.array([INF if s.speed_bump_kmh is None else s.speed_bump_kmh / 3.6 * DT for s in specs])
-        self.any_bump = bool(self.bump_lane.any() and np.isfinite(self.bump_v_t).any())
+        self.any_bump = bool(self.bump_x.size and self.bump_lane.any() and np.isfinite(self.bump_v_t).any())
         # Emisiones (Int Panis et al., 2006): coeficientes por tipo y contaminante, límites de la aceleración que
         # entra al modelo (m/s²) y gramos acumulados: en la corrida, a flujo libre (mismo recorrido a velocidad
         # constante), en el intervalo de muestreo y por posición (contaminante × carril × intervalo de EMIS_BIN m).
@@ -461,9 +469,19 @@ class Simulation:
                         v_ahead, dec_ahead = 0.0, INF
                     if np.isfinite(room):
                         self.v_last[i] = min(self.v_last[i], _safe_speed_1(room, v_ahead, self.dec_t[k], dec_ahead))
+                    light = self._inner_room(k, self.x[i])
+                    if np.isfinite(light):  # semáforo intermedio en rojo al empezar
+                        self.v_last[i] = min(self.v_last[i], _safe_speed_1(light, 0.0, self.dec_t[k], INF))
                     self.v_last[i] = min(self.v_last[i], self._bump_speed_1(k, lane, self.x[i], self.x[i] - length))
                 ahead = i
                 rear = self.x[i] - length
+
+    def _inner_room(self, k: int, x: float) -> float:
+        """Distancia desde `x` hasta el semáforo intermedio en rojo (al empezar la corrida) más cercano adelante que
+        obedece el tipo k; INF si no hay."""
+        phases = self.cfg.inner_phases(0)
+        return min((pos - x for pos, free, ph in zip(self.inner_x, self.inner_free, phases)
+                    if ph == RED and x <= pos and not free[k]), default=INF)  # fmt: skip
 
     def occupancy(self) -> Occupancy:
         n = self.n
@@ -491,7 +509,7 @@ class Simulation:
         if self.any_exit:
             self._drain_exit()
         if self.n:
-            self._move(self.cfg.phase(self.tick))
+            self._move(self.cfg.phase(self.tick), self.cfg.inner_phases(self.tick) if self.inner_x else ())
         self.tick += 1
         if self.n_lanes > 1 and self.n and self.tick % self.lc_every == 0:
             self._lane_changes()
@@ -613,16 +631,22 @@ class Simulation:
         return min(speed_kmh / 3.6 * DT, safe)
 
     def _bump_speed_1(self, k: int, lane: int, front: float, rear: float) -> float:
-        """Velocidad máxima (m/paso) de un vehículo del tipo k en `lane` por el tope: la del tipo si lo pisa;
+        """Velocidad máxima (m/paso) de un vehículo del tipo k en `lane` por los topes: la del tipo si pisa uno;
         antes de él, con frenado gradual, la que aún le permite llegar a ella frenando a `decel`; INF si no
-        aplica (sin tope en el carril, ya lo pasó o el tipo pasa sin frenar)."""
+        aplica (sin tope en el carril, ya los pasó o el tipo pasa sin frenar). Con varios, la menor."""
         vb = self.bump_v_t[k]
-        if not (np.isfinite(vb) and self.bump_lane[lane]) or rear >= self.bump_x:
+        if not (np.isfinite(vb) and self.bump_lane[lane]):
             return INF
-        if front >= self.bump_x:
-            return float(vb)
         dec = self.dec_t[k]
-        return _safe_speed_1(self.bump_x - front, vb, dec, dec) if np.isfinite(dec) else INF
+        speed = INF
+        for bump in self.bump_x:
+            if rear >= bump:
+                continue
+            if front >= bump:
+                speed = min(speed, float(vb))
+            elif np.isfinite(dec):
+                speed = min(speed, _safe_speed_1(bump - front, vb, dec, dec))
+        return speed
 
     def _queue_ready(self, ln: int, vt: int, fits: bool, tail_stopped: bool) -> bool:
         """El primero de la cola de entrada detenida del carril `ln` ya reaccionó y puede entrar.
@@ -639,7 +663,7 @@ class Simulation:
             self.queue_react[ln] = left = left - 1
         return left == 0
 
-    def _move(self, phase: int) -> None:
+    def _move(self, phase: int, inner_phases: tuple[int, ...] = ()) -> None:
         n = self.n
         b = self.cfg.behavior
         vt = self.vtype[:n]
@@ -731,6 +755,27 @@ class Simulation:
                 vsafe = np.minimum(vsafe, np.where(ruled_out, INF, safe_line))
         if phase == RED:
             stop_space = np.minimum(stop_space, np.where(ruled_out, INF, self.L - x))
+        # Semáforos intermedios: en rojo, quien no los ha pasado (su frente) se detiene en la línea; en amarillo, se
+        # detiene si aún puede (con frenado gradual) o baja la velocidad cerca de ella, como en el del final.
+        inner_yellow = []
+        for pos, free, ph in zip(self.inner_x, self.inner_free, inner_phases):
+            if ph == GREEN:
+                continue
+            before = (x <= pos) & ~free[vt] if free.any() else x <= pos
+            to_inner = np.where(before, pos - x, INF)
+            if dynamics:
+                safe_inner = _safe_speed(to_inner, 0.0, dec_v, INF)
+                if ph == YELLOW:
+                    halt = np.isfinite(dec_v) & before & (v_prev - dec_v <= safe_inner + EPS)
+                    stop_space = np.minimum(stop_space, np.where(halt, to_inner, INF))
+                    vsafe = np.minimum(vsafe, np.where(halt, safe_inner, INF))
+                else:
+                    vsafe = np.minimum(vsafe, safe_inner)
+            if ph == RED:
+                stop_space = np.minimum(stop_space, to_inner)
+            else:
+                near = before & (pos - x <= b.yellow_approach)
+                inner_yellow.append(near & ~np.isfinite(dec_v) if dynamics else near)
         if self.any_exit:
             # Cola de salida sin lugar: quien no cabe en los m libres de la cola de su carril (o del destino, si
             # está cambiando) no cruza la línea. Una cola vacía acepta a cualquiera, aunque no quepa entero.
@@ -812,16 +857,19 @@ class Simulation:
             vb = self.bump_v_t[vt]
             tgt = self.lc_target[:n]
             in_lane = self.bump_lane[self.lane[:n]] | ((tgt >= 0) & self.bump_lane[np.maximum(tgt, 0)])
-            before = in_lane & np.isfinite(vb) & (x - self.vlen[:n] < self.bump_x)  # aún no lo pasa entero
-            vcap = np.where(before & (x + vcap > self.bump_x), np.minimum(vcap, vb), vcap)
-            if dynamics:
-                ahead = before & (x < self.bump_x)
-                vsafe = np.minimum(vsafe, np.where(ahead, _safe_speed(self.bump_x - x, vb, dec_v, dec_v), INF))
+            for bump_x in self.bump_x:  # cada tope por separado; queda la menor de las velocidades
+                before = in_lane & np.isfinite(vb) & (x - self.vlen[:n] < bump_x)  # aún no lo pasa entero
+                vcap = np.where(before & (x + vcap > bump_x), np.minimum(vcap, vb), vcap)
+                if dynamics:
+                    ahead = before & (x < bump_x)
+                    vsafe = np.minimum(vsafe, np.where(ahead, _safe_speed(bump_x - x, vb, dec_v, dec_v), INF))
         if phase == YELLOW:  # quien se aproxima a la línea de alto baja la velocidad
             near = ~ruled_out & (self.L - x <= b.yellow_approach)
             if dynamics:
                 # Con frenado gradual decide: se detiene si aún puede (halt, arriba) o sigue sin frenar.
                 near &= ~np.isfinite(dec_v)
+            vcap = np.where(near, vcap * b.yellow_speed_factor, vcap)
+        for near in inner_yellow:
             vcap = np.where(near, vcap * b.yellow_speed_factor, vcap)
         if dynamics:
             # Hacia la velocidad deseada a lo más accel·DT por paso (y bajando a lo más decel·DT), sin

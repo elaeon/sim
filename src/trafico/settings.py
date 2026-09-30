@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import re
 import tomllib
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from pathlib import Path
 
 from trafico import __version__
 from trafico.config import (
-    DEFAULT_RATES, DEFAULT_SPECS, DT, FUELS, MAX_TYPES, POLLUTANTS, Behavior, Bottleneck, Rate, SimConfig, SpeedBump,
-    VehicleSpec,
+    DEFAULT_RATES, DEFAULT_SPECS, DT, FUELS, MAX_TYPES, POLLUTANTS, Behavior, Bottleneck, Light, Rate, SimConfig,
+    SpeedBump, VehicleSpec,
 )
 from trafico.emission_sets import EMISSION_SETS
 
@@ -71,10 +71,13 @@ class RunOptions:
     seed: int | None = None  # None = aleatoria (se registra en la copia de la configuración)
     output_dir: str = "resultados"
     name: str = ""  # sufijo de la carpeta de resultados; el nombre dado en el comando tiene prioridad
-    csv: bool = True
-    show: bool = False
+    series_csv: bool = True  # genera series.csv
+    emisiones_csv: bool = True  # genera emisiones_posicion.csv (si algún tipo emite)
     progress: bool = True
     animation: bool = False  # genera también el diagrama espacio-tiempo y el video de movimiento
+    mobility_plot: bool = True  # genera movilidad_pasajeros.png
+    passengers_plot: bool = True  # genera distribucion_pasajeros.png (si algún tipo lleva pasajeros)
+    emissions_plot: bool = True  # genera emisiones_posicion.png (si algún tipo emite)
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,7 +205,7 @@ def parse_settings(text: str, path: Path) -> Settings:
         stop_zone=_zone(r.get(("bottleneck", "stop_zone"), FLOATS, bn.stop_zone)),
     )
     speed_bump = SpeedBump(
-        position=r.get(("speed_bump", "position"), float, None),
+        position=r.get(("speed_bump", "position"), FLOATS, None),
         lanes=r.get(("speed_bump", "lanes"), INTS, None),
     )
 
@@ -225,19 +228,29 @@ def parse_settings(text: str, path: Path) -> Settings:
             raise ConfigError('[demand] slow_lane se eliminó: los tipos que no cambian de carril ni tienen lane van por '
                               'el carril libre más a la derecha; para otro carril usa lane en [vehicles.<clave>]')
         notices += ("Aviso: [demand] slow_lane se eliminó y se ignora; puedes quitarla del archivo",)
+    # [output] csv se renombró series_csv; las copias anteriores la traen y conservan su valor.
+    legacy_csv = r.get(("output", "csv"), bool, None)
+    if legacy_csv is not None:
+        notices += ("Aviso: [output] csv se renombró series_csv; se usa su valor, pero cámbiala en el archivo",)
+    # [output] show se eliminó (abría la ventana de matplotlib); las copias anteriores la traen.
+    if r.get(("output", "show"), bool, None) is not None:
+        notices += ("Aviso: [output] show se eliminó y se ignora; puedes quitarla del archivo",)
     # [output] saturation_threshold se eliminó (solo marcaba la gráfica); las copias anteriores la traen.
     if r.get(("output", "saturation_threshold"), float, None) is not None:
         notices += ("Aviso: [output] saturation_threshold se eliminó y se ignora; puedes quitarla del archivo",)
+    length = r.get(("road", "length"), float, d.length)
+    exit_light, extra_lights = _lights(r, length, d)
     sim = SimConfig(
-        length=r.get(("road", "length"), float, d.length),
+        length=length,
         lanes=lanes,
         lane_speed_limit=speed_limit,
-        red=r.get(("traffic_light", "red"), float, d.red),
-        green=r.get(("traffic_light", "green"), float, d.green),
-        yellow=r.get(("traffic_light", "yellow"), float, d.yellow),
-        start_phase=r.get(("traffic_light", "start_phase"), str, d.start_phase),
-        traffic_light=r.get(("traffic_light", "enabled"), bool, d.traffic_light),
-        free_lanes=r.get(("traffic_light", "free_lanes"), INTS, d.free_lanes),
+        red=exit_light.red,
+        green=exit_light.green,
+        yellow=exit_light.yellow,
+        start_phase=exit_light.start_phase,
+        traffic_light=exit_light.enabled,
+        free_lanes=exit_light.free_lanes,
+        extra_lights=extra_lights,
         # Solo con alguna tasa variable hace falta la distribución; si todas son fijas, basta su valor.
         **({"rate_dists": rates} if any(rate.variable for rate in rates) else {"rates": tuple(r.expected for r in rates)}),
         rate_interval=r.get(("demand", "rate_interval"), float, d.rate_interval),
@@ -261,10 +274,13 @@ def parse_settings(text: str, path: Path) -> Settings:
         seed=r.get(("execution", "seed"), int, o.seed),
         output_dir=r.get(("output", "dir"), str, o.output_dir),
         name=r.get(("output", "name"), str, o.name),
-        csv=r.get(("output", "csv"), bool, o.csv),
-        show=r.get(("output", "show"), bool, o.show),
+        series_csv=r.get(("output", "series_csv"), bool, legacy_csv if legacy_csv is not None else o.series_csv),
+        emisiones_csv=r.get(("output", "emisiones_csv"), bool, o.emisiones_csv),
         progress=r.get(("output", "progress"), bool, o.progress),
         animation=r.get(("output", "animation"), bool, o.animation),
+        mobility_plot=r.get(("output", "mobility_plot"), bool, o.mobility_plot),
+        passengers_plot=r.get(("output", "passengers_plot"), bool, o.passengers_plot),
+        emissions_plot=r.get(("output", "emissions_plot"), bool, o.emissions_plot),
     )
     a = AnimationOptions()
     anim = AnimationOptions(
@@ -500,6 +516,48 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
     return tuple(specs), tuple(rates)
 
 
+def _lights(r: _Reader, length: float, d: SimConfig) -> tuple[Light, tuple[Light, ...]]:
+    """[traffic_light]: un semáforo al final del tramo (una sección) o varios ([[traffic_light]], uno por semáforo).
+    Cada uno lleva `position` (m desde el inicio; sin ella o igual a `length`, el del final del tramo), `enabled`,
+    `red`, `green`, `yellow`, `start_phase` y `free_lanes`. Devuelve (el del final del tramo, los intermedios);
+    si hay semáforos pero ninguno en el final del tramo, este queda desactivado."""
+    table = r.data.get("traffic_light")
+    if table is None:
+        return d.exit_light, ()
+    if isinstance(table, dict):
+        entries = [lambda key, kind, default: r.get(("traffic_light", key), kind, default)]
+        checks = []
+    elif isinstance(table, list) and all(isinstance(e, dict) for e in table):
+        r.used.add(("traffic_light",))
+        entries, checks = [], []
+        for i, entry in enumerate(table, 1):
+            sub = _Reader({"traffic_light": entry})
+            entries.append(lambda key, kind, default, sub=sub: sub.get(("traffic_light", key), kind, default))
+            checks.append((i, sub))
+    else:
+        raise ConfigError("[traffic_light] debe ser una sección o una lista de secciones ([[traffic_light]])")
+    lights = []
+    for read in entries:
+        position = read("position", float, None)
+        lights.append(Light(
+            position=length if position is None else position,
+            red=read("red", float, d.red), green=read("green", float, d.green),
+            yellow=read("yellow", float, d.yellow), start_phase=read("start_phase", str, d.start_phase),
+            enabled=read("enabled", bool, d.traffic_light), free_lanes=read("free_lanes", INTS, d.free_lanes),
+        ))  # fmt: skip
+    for i, sub in checks:
+        unknown = sub.unknown()
+        if unknown:
+            raise ConfigError(f"claves desconocidas en el semáforo {i} de [[traffic_light]]: "
+                              + ", ".join(u.replace("[traffic_light] ", "") for u in unknown))  # fmt: skip
+    at_exit = [lt for lt in lights if abs(lt.position - length) < 1e-9]
+    if len(at_exit) > 1:
+        raise ConfigError(f"[[traffic_light]] hay {len(at_exit)} semáforos en el final del tramo ({length:g} m, o sin "
+                          "position): solo puede haber uno")  # fmt: skip
+    extra = tuple(sorted((lt for lt in lights if lt not in at_exit), key=lambda lt: lt.position))
+    return (at_exit[0] if at_exit else replace(d.exit_light, enabled=False)), extra
+
+
 def _fuel(r: _Reader, d: SimConfig) -> dict:
     """[fuel]: precio por litro de cada combustible (`price = {gasolina = 24.0, ...}`) y su moneda."""
     table = r.data.get("fuel", {})
@@ -644,13 +702,22 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
     check(sim.length >= 2 * longest, f"[road] length debe ser al menos {2 * longest:g} m (dos veces el vehículo más largo con su gap)")
     check(1 <= sim.lanes <= 50, "se admiten entre 1 y 50 carriles (largo de las listas por carril)")
     check(all(v > 0 for v in sim.lane_max_kmh), "[road] max_line_speed: cada valor debe ser mayor que 0")
-    check(sim.red >= 0, "[traffic_light] red no puede ser negativo")
-    check(sim.yellow >= 0, "[traffic_light] yellow no puede ser negativo")
-    # Con los tres en 0 no hay semáforo (como enabled = false); si no, hace falta verde.
-    check(not sim.has_light or sim.green > 0,
-          "[traffic_light] green debe ser mayor que 0 (o red, green y yellow en 0, o enabled = false, para no tener "
-          "semáforo)")  # fmt: skip
-    check(sim.start_phase in ("red", "green"), '[traffic_light] start_phase debe ser "red" o "green"')
+    for where, lt in [("[traffic_light]", sim.exit_light), *((f"[traffic_light] a {e.position:g} m", e)
+                                                                for e in sim.extra_lights)]:  # fmt: skip
+        check(lt.red >= 0, f"{where} red no puede ser negativo")
+        check(lt.yellow >= 0, f"{where} yellow no puede ser negativo")
+        # Con los tres en 0 no hay semáforo (como enabled = false); si no, hace falta verde.
+        check(not lt.active or lt.green > 0,
+              f"{where} green debe ser mayor que 0 (o red, green y yellow en 0, o enabled = false, para no tener "
+              "semáforo)")  # fmt: skip
+        check(lt.start_phase in ("red", "green"), f'{where} start_phase debe ser "red" o "green"')
+        for name, value in (("red", lt.red), ("green", lt.green), ("yellow", lt.yellow)):
+            check(abs(value / DT - round(value / DT)) < 1e-9, f"{where} {name} debe ser múltiplo de {DT} s")
+    positions = [e.position for e in sim.extra_lights]
+    check(all(0 < p < sim.length for p in positions),
+          f"[[traffic_light]] position: cada semáforo intermedio debe estar entre 0 y {sim.length:g} m ([road] "
+          "length), sin incluirlos (el del final del tramo va sin position)")  # fmt: skip
+    check(len(set(positions)) == len(positions), "[[traffic_light]] position: hay semáforos en la misma posición")
     for k, spec in enumerate(sim.specs):
         _check_rate(f"[demand] {spec.key}_rate", sim.rate(k))
     check(sim.rate_interval >= DT, f"[demand] rate_interval debe ser ≥ {DT} s")
@@ -662,9 +729,6 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
     check(sim.time_scale > 0, "[execution] time_scale debe ser mayor que 0")
     check(sim.sample > 0, "[execution] sample debe ser mayor que 0")
     for label, value in (
-        ("[traffic_light] red", sim.red),
-        ("[traffic_light] green", sim.green),
-        ("[traffic_light] yellow", sim.yellow),
         ("[execution] sample", sim.sample),
         ("[demand] rate_interval", sim.rate_interval),
     ):
@@ -684,8 +748,10 @@ def _validate_speed_bump(sim: SimConfig, check) -> None:
     if bump.position is None:
         check(bump.lanes is None, "[speed_bump] lanes requiere position (dónde está el tope)")
         return
-    check(0 < bump.position < sim.length,
-          f"[speed_bump] position debe estar entre 0 y {sim.length:g} m ([road] length), sin incluirlos")  # fmt: skip
+    positions = bump.positions
+    check(all(0 < p < sim.length for p in positions),
+          f"[speed_bump] position debe estar entre 0 y {sim.length:g} m ([road] length), sin incluirlos (cada tope)")  # fmt: skip
+    check(len(set(positions)) == len(positions), "[speed_bump] position: hay topes en la misma posición")
     lanes = bump.lanes or ()
     for lane in lanes:
         check(0 <= lane < sim.lanes, f"[speed_bump] lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
@@ -705,13 +771,15 @@ def _validate_bottleneck(sim: SimConfig, check) -> None:
               f"{label} la detención no puede durar más de una hora (media + 6·σ ≤ 3600 s)")  # fmt: skip
     for lane in sim.bottleneck.stop_lanes or ():
         check(0 <= lane < sim.lanes, f"[bottleneck] stop_lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
-    for lane in sim.free_lanes:
-        check(0 <= lane < sim.lanes, f"[traffic_light] free_lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
-    check(len(set(sim.free_lanes)) == len(sim.free_lanes), "[traffic_light] free_lanes: hay carriles repetidos")
-    for lane in sim.free_lanes:
-        check(lane not in range(sim.lanes) or lane in sim.reserved_lanes,
-              f"[traffic_light] free_lanes: el carril {lane} no es exclusivo de ningún tipo; free_lanes solo aplica "
-              "a los tipos con carril exclusivo ([vehicles.<clave>] lane y exclusive = true)")  # fmt: skip
+    for where, lt in [("[traffic_light]", sim.exit_light), *((f"[traffic_light] a {e.position:g} m", e)
+                                                                for e in sim.extra_lights)]:  # fmt: skip
+        for lane in lt.free_lanes:
+            check(0 <= lane < sim.lanes, f"{where} free_lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
+        check(len(set(lt.free_lanes)) == len(lt.free_lanes), f"{where} free_lanes: hay carriles repetidos")
+        for lane in lt.free_lanes:
+            check(lane not in range(sim.lanes) or lane in sim.reserved_lanes,
+                  f"{where} free_lanes: el carril {lane} no es exclusivo de ningún tipo; free_lanes solo aplica a los "
+                  "tipos con carril exclusivo ([vehicles.<clave>] lane y exclusive = true)")  # fmt: skip
     lo, hi = sim.bottleneck_zone()
     check(0 <= lo < hi <= sim.length, f"[bottleneck] stop_zone requiere 0 ≤ inicio < fin ≤ {sim.length:g} ([road] length)")
 

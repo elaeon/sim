@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from trafico.cli import CONFIG_NAME, _lights, latest_run_dir, variants
-from trafico.config import BUS, CAR, DEFAULT_SPECS, Bottleneck, SimConfig, SpeedBump
+from trafico.config import BUS, CAR, DEFAULT_SPECS, Bottleneck, Light, SimConfig, SpeedBump
 from trafico.settings import ConfigError
 from trafico.variants import (
     BASE_CONFIG_NAME, DATA_NAME, META_NAME, PLOT_NAME, QUEUE_CSV, SPEED_CSV, SUMMARY_NAME, Variants, light_name,
@@ -128,3 +128,20 @@ def test_command_errors(root):
         variants(["--carriles", "1", "2", "--sin", "bus"])  # las bicis tienen carril 0
     with pytest.raises(SystemExit):
         variants(["--redibujar", str(root)])  # no es una comparación
+
+
+def test_reduce_config_keeps_the_free_lanes_of_each_light():
+    base = replace(_base(), extra_lights=(Light(100.0, free_lanes=(0, 3)),))
+    cfg = reduce_config(base, (3, 1), ("bike",))
+    assert cfg.extra_lights[0].free_lanes == (0,)  # el carril 3 (autobuses) es el 0; el de las bicis no quedó
+    assert reduce_config(base, (3, 1), ("bike", "bus")).extra_lights[0].free_lanes == ()
+
+
+def test_scenario_varies_only_the_light_at_the_end():
+    v = Variants(lengths=(200.0,), lights=((20.0, 40.0),), lanes=(1, 2), without=(), queue_types=("car",),
+                 replicas=1, run=10.0)  # fmt: skip
+    base = replace(reduce_config(_base(), (1, 2, 0, 3), ("bus",)), extra_lights=(Light(90.0, red=12, green=8),))
+    cfg = scenario(base, v, 200.0, 20.0, 40.0)
+    assert (cfg.red, cfg.green) == (20.0, 40.0) and cfg.extra_lights == (Light(90.0, red=12, green=8),)
+    with pytest.raises(ConfigError, match="tramo de 60 m, semáforo 20/40: .*cada semáforo intermedio"):
+        scenario(base, replace(v, lengths=(60.0,)), 60.0, 20.0, 40.0)  # el de 90 m ya no cabe

@@ -191,6 +191,12 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       vehículos que cruzan la línea contra la capacidad de su cola de salida, y otra fila con la cola de entrada al
       tramo junto a la cola de salida. El video muestra, a la derecha de cada carril con cola de salida, los m
       ocupados contra lo que mide.</li>
+    <li><code>[output] csv</code> se llama ahora <code>series_csv</code>, y la nueva <code>emisiones_csv</code> decide
+      si se escribe <code>emisiones_posicion.csv</code> (antes siempre). Las copias anteriores con <code>csv</code>
+      siguen funcionando: se usa su valor, con un aviso.</li>
+    <li>Se eliminó <code>[output] show</code> (abría la ventana de matplotlib además de guardar la gráfica). Las
+      copias anteriores la traen: se ignora con un aviso. En su lugar, <code>mobility_plot</code>,
+      <code>passengers_plot</code> y <code>emissions_plot</code> deciden qué gráficas se dibujan.</li>
     <li>Se eliminó <code>[behavior] congestion_factor</code>. Frenaba a quienes avanzan en proporción a la cola de
       detenidos de todo el carril, incluso a los que iban delante de ella, y dependía de <code>length</code>. En la
       práctica casi no cambiaba los resultados (en la configuración de Insurgentes, 661 autos con el factor contra 661
@@ -206,6 +212,11 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       no tiene semáforo, igual que con <code>red</code>, <code>green</code> y <code>yellow</code> en 0.</li>
     <li>Nuevo comando <a href="#trafico-emisiones"><code>trafico-emisiones</code></a>: compara las emisiones de una
       calle sin tope, con topes en distintas posiciones y con o sin semáforo, con la misma semilla.</li>
+    <li><a href="#several_lights">Varios semáforos</a>: una calle puede tener más de uno
+      (<code>[[traffic_light]]</code>, una sección por semáforo), cada uno con su <code>position</code>, sus fases
+      <code>red</code>, <code>green</code> y <code>yellow</code>, su <code>start_phase</code> y sus
+      <code>free_lanes</code>. El que no tiene <code>position</code> es el del final del tramo, donde se miden los
+      flujos y las colas.</li>
     <li>Nuevos <a href="#emission-sets">conjuntos de coeficientes</a> con nombre, que se eligen con
       <code>[vehicles.&lt;clave&gt;.emissions] source</code>: <code>int_panis_2006</code> (los originales) y
       <code>sedema_cdmx_2018</code> (recalibrados con la verificación vehicular de la CDMX: auto, taxi, pickup y
@@ -219,6 +230,9 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       <code>resumen.txt</code> (por km, por recorrido, exceso frente a flujo libre y tabla al acelerar de 0 a 80
       km/h), en la gráfica y en <code>emisiones_posicion.png</code>/<code>.csv</code>. Requieren <code>accel</code> y
       <code>decel</code>.</li>
+    <li><a href="#speed_bump"><code>[speed_bump] position</code></a> acepta una lista: una calle puede tener varios
+      topes (<code>position = [35, 70]</code>, todos en los mismos <code>lanes</code>). En
+      <code>trafico-emisiones</code>, <code>--topes 35,70</code> es un escenario con dos topes.</li>
     <li>Nueva sección <a href="#speed_bump"><code>[speed_bump]</code></a> (tope en <code>position</code> m, en los
       carriles <code>lanes</code>) y clave <code>[vehicles.&lt;clave&gt;] speed_bump_kmh</code>: la velocidad máxima
       a la que cada tipo pasa el tope. <code>trafico-variantes --carriles</code> conserva el tope en los carriles
@@ -285,6 +299,7 @@ uv run trafico-variantes --redibujar resultados/&lt;ID&gt;_variantes_semaforo</c
   <pre><code>uv run trafico-emisiones [nombre | carpeta] [opciones]
 uv run trafico-emisiones calle200 --topes sin 100 --semaforo no --largo 200 --carriles 1 2 --sin bike motorbike carga
 uv run trafico-emisiones --topes sin 50 100 150            # dónde conviene poner el tope
+uv run trafico-emisiones --topes sin 100 50,100 25,50,75   # uno, dos o tres topes en la misma calle
 uv run trafico-emisiones --semaforo ambos                  # cada tope con y sin semáforo
 uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code></pre>
   <div class="table-scroll"><table>
@@ -293,9 +308,10 @@ uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code
       <tr><td><code>nombre | carpeta</code></td><td>Como en <code>trafico</code>: una carpeta de la que se lee su
         <code>config.toml</code>, o el nombre de la comparación. Va antes de las opciones.</td>
         <td><code>emisiones_topes</code> con el <code>config.toml</code> de la raíz</td></tr>
-      <tr><td><code>--topes M|sin …</code></td><td>Un escenario por valor: la posición del tope en m desde la entrada,
-        o <code>sin</code> para ninguno. El primero es la referencia de los cambios en %.</td>
-        <td><code>sin</code> y el de <code>[speed_bump] position</code> (si no hay, a la mitad del tramo)</td></tr>
+      <tr><td><code>--topes M|M,M|sin …</code></td><td>Un escenario por valor: la posición del tope en m desde la
+        entrada, varias separadas por comas (<code>35,70</code>: dos topes en el mismo escenario) o <code>sin</code>
+        para ninguno. El primero es la referencia de los cambios en %.</td>
+        <td><code>sin</code> y los de <code>[speed_bump] position</code> (si no hay, uno a la mitad del tramo)</td></tr>
       <tr><td><code>--carriles-tope N …</code></td><td>Carriles con tope, en la numeración después de
         <code>--carriles</code>.</td><td><code>[speed_bump] lanes</code>; sin ella, todos</td></tr>
       <tr><td><code>--semaforo config|si|no|ambos</code></td><td>Semáforo de todos los escenarios: como en la
@@ -411,8 +427,58 @@ stop_time_std = 5.0</code></pre>
           cambiarse a él. El nombre del carril dice «sin semáforo» en las gráficas y el video; en el video su semáforo
           siempre está en verde, y el diagrama espacio-tiempo no sombrea sus fases.</td>
         <td>Cada carril entre 0 y el número de carriles − 1, sin repetir, y exclusivo de algún tipo.</td></tr>
+      <tr><td><code>position</code></td><td>número</td><td class="num">(el final del tramo)</td>
+        <td>Dónde está el semáforo, en metros desde el inicio del tramo. Sin ella (o igual a <code>[road] length</code>)
+          es el semáforo del final del tramo; con ella, un <a href="#several_lights">semáforo intermedio</a>.</td>
+        <td>Entre 0 y <code>[road] length</code>, sin incluirlos, si es intermedio.</td></tr>
     </tbody>
   </table></div>
+
+  <h3 id="several_lights">Varios semáforos: <code>[[traffic_light]]</code></h3>
+  <p>Una calle puede tener más de un semáforo. En vez de la sección <code>[traffic_light]</code>, se escribe una
+    sección <code>[[traffic_light]]</code> (con doble corchete) por semáforo, cada una con las claves de la tabla de
+    arriba: sus propias fases <code>red</code>, <code>green</code> y <code>yellow</code>, su fase inicial
+    <code>start_phase</code>, sus <code>free_lanes</code>, su <code>enabled</code> y su <code>position</code>.</p>
+  <pre><code>[[traffic_light]]
+position = 70.0          # semáforo intermedio a 70 m
+red = 20.0
+green = 20.0
+yellow = 3.0
+start_phase = "green"    # empieza en verde
+
+[[traffic_light]]
+position = 140.0
+red = 25.0
+green = 15.0
+start_phase = "red"
+
+[[traffic_light]]         # sin position: el del final del tramo
+red = 30.0
+green = 30.0
+yellow = 3.0</code></pre>
+  <ul>
+    <li><strong>El del final del tramo</strong> es el que no lleva <code>position</code> (o la tiene igual a
+      <code>length</code>). Es la línea donde se miden los vehículos y pasajeros que cruzan, el flujo y las colas de
+      entrada y de salida: la cola de salida sigue después de ese punto. Si ninguna sección está en el final, el final
+      del tramo queda sin semáforo y la línea siempre está abierta; solo puede haber uno en el final.</li>
+    <li><strong>Los intermedios</strong> funcionan igual que el del final: en rojo detienen en su línea a quien no la
+      ha cruzado con el frente (con <code>decel</code>, frenan antes), y en amarillo se detienen si aún pueden o bajan la
+      velocidad cerca de ella. Cada uno tiene su propio ciclo, y sus fases no tienen que coincidir («onda verde» se logra
+      ajustando <code>start_phase</code> y las duraciones). Los vehículos de la condición inicial también respetan un
+      rojo intermedio.</li>
+    <li>Los <code>free_lanes</code> son de cada semáforo: un carril puede estar libre en uno y obedecer a otro.</li>
+    <li>Con <code>[traffic_light]</code> sola (una sección), nada cambia. Con una sola sección que lleva
+      <code>position</code> menor que el largo, ese es el único semáforo y el final del tramo queda sin semáforo.</li>
+    <li>Las gráficas del tiempo (flujo, colas, emisiones) sombrean las fases del <strong>último</strong> semáforo, el del
+      final o, si no hay, el intermedio más cercano a él, y la ventana del flujo es un ciclo de ese semáforo. El
+      diagrama espacio-tiempo marca las fases de cada semáforo sobre su línea (amarillo y rojo), y el video dibuja
+      cada semáforo en su posición. La cabecera y <code>resumen.txt</code> listan las posiciones, fases y fase inicial
+      de todos.</li>
+    <li><code>trafico-variantes</code> cambia solo el reparto de rojo y verde del semáforo del final del tramo; los
+      intermedios conservan sus fases y su posición (y si <code>--largos</code> deja alguno fuera del tramo, el
+      escenario se rechaza). <code>trafico-emisiones --semaforo si|no|ambos</code> enciende o apaga todos los
+      semáforos a la vez.</li>
+  </ul>
 </section>
 
 <section id="demand">
@@ -554,17 +620,18 @@ bus_rate = {min = 0.25, max = 0.25, mean = 0.25, std = 0}  # fija: 1 cada 4 min<
 
 <section id="speed_bump">
   <h2><code>[speed_bump]</code> Tope</h2>
-  <p class="lead">Un tope (reductor de velocidad) a lo ancho de uno o varios carriles. Mientras un vehículo lo pisa
-    (desde que su frente llega al tope hasta que lo pasa su parte trasera) no rebasa la velocidad
+  <p class="lead">Uno o varios topes (reductores de velocidad) a lo ancho de uno o varios carriles. Mientras un vehículo
+    pisa uno (desde que su frente llega al tope hasta que lo pasa su parte trasera) no rebasa la velocidad
     <code>speed_bump_kmh</code> de su tipo (ver <a href="#vehicles">[vehicles.&lt;clave&gt;]</a>); los tipos sin ella
     pasan sin frenar.</p>
   <div class="table-scroll"><table>
     <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
     <tbody>
-      <tr><td><code>position</code></td><td>número</td><td class="num">(sin tope)</td>
-        <td>Dónde está el tope, en metros desde el inicio del tramo (el semáforo está en <code>length</code>). Sin
-          ella no hay tope.</td>
-        <td>Entre 0 y <code>[road] length</code>, sin incluirlos.</td></tr>
+      <tr><td><code>position</code></td><td>número o lista de números</td><td class="num">(sin tope)</td>
+        <td>Dónde está el tope, en metros desde el inicio del tramo (el semáforo está en <code>length</code>). Una
+          lista, p. ej. <code>[35, 70]</code>, pone varios topes en la misma calle; todos están en los mismos
+          <code>lanes</code>. Sin ella no hay tope.</td>
+        <td>Cada uno entre 0 y <code>[road] length</code>, sin incluirlos y sin repetir.</td></tr>
       <tr><td><code>lanes</code></td><td>lista de enteros</td><td class="num">(todos)</td>
         <td>Carriles donde está instalado, empezando por el derecho (carril 0), p. ej. <code>[1, 2]</code>. Sin
           ella, en todos los carriles.</td>
@@ -579,11 +646,15 @@ bus_rate = {min = 0.25, max = 0.25, mean = 0.25, std = 0}  # fija: 1 cada 4 min<
       después acelera a lo más <code>accel</code>. Quien viene detrás lo trata como a cualquier líder más lento.</li>
     <li>Un vehículo que está cambiando de carril respeta el tope si está en su carril de origen o en el destino.
       Quien va detrás de uno que frena por el tope puede cambiarse a un carril sin tope si le conviene.</li>
-    <li>La cabecera de la corrida indica la posición, los carriles y la velocidad de cada tipo; en el video el tope es
-      una franja rayada y en el diagrama espacio-tiempo, una línea «tope» en sus carriles.</li>
+    <li>Con varios topes, cada uno se trata por separado: el vehículo frena antes de cada uno, recupera velocidad
+      entre ellos (si la distancia alcanza; con topes muy juntos apenas acelera) y pasa cada uno a lo más a su
+      <code>speed_bump_kmh</code>. Cada tope suma su propio frenado y arranque en las
+      <a href="#emissions">emisiones</a> y el combustible.</li>
+    <li>La cabecera de la corrida indica las posiciones, los carriles y la velocidad de cada tipo; en el video cada tope
+      es una franja rayada y en el diagrama espacio-tiempo, una línea «tope» en sus carriles.</li>
   </ul>
   <pre><code>[speed_bump]
-position = 60.0      # m desde el inicio del tramo
+position = 60.0      # m desde el inicio del tramo; una lista ([35, 70]) pone varios topes
 lanes = [1, 2]       # sin ella, todos los carriles
 
 [vehicles.car]
@@ -684,11 +755,23 @@ bottleneck_time_std = 30.0</code></pre>
         <td>Sufijo de la carpeta de la corrida. Prioridad: el nombre dado en el comando, luego esta clave, luego el
           nombre de la carpeta leída (o <code>corrida</code>). Solo se conservan letras, dígitos,
           <code>.</code>, <code>_</code> y <code>-</code>.</td></tr>
-      <tr><td><code>csv</code></td><td>booleano</td><td class="num">true</td>
+      <tr><td><code>series_csv</code></td><td>booleano</td><td class="num">true</td>
         <td>Exporta las series (media y σ) a <code>series.csv</code>: las de cada tipo de vehículo y las de cada carril
-          (saturación y velocidad media).</td></tr>
-      <tr><td><code>show</code></td><td>booleano</td><td class="num">false</td>
-        <td>Además de guardar la gráfica, abre la ventana de matplotlib.</td></tr>
+          (saturación y velocidad media). Antes se llamaba <code>csv</code>.</td></tr>
+      <tr><td><code>emisiones_csv</code></td><td>booleano</td><td class="num">true</td>
+        <td>Exporta las emisiones a lo largo del tramo (g/(m·h) por contaminante, carril e intervalo de 5 m) a
+          <code>emisiones_posicion.csv</code>, si algún tipo que participa emite. Es independiente de
+          <code>emissions_plot</code>: se puede dibujar la figura sin el CSV o al revés.</td></tr>
+      <tr><td><code>mobility_plot</code></td><td>booleano</td><td class="num">true</td>
+        <td>Genera <code>movilidad_pasajeros.png</code>, la gráfica principal de la corrida. Con <code>false</code> no
+          se dibuja; el resumen, el CSV y las demás salidas no cambian.</td></tr>
+      <tr><td><code>passengers_plot</code></td><td>booleano</td><td class="num">true</td>
+        <td>Genera <code>distribucion_pasajeros.png</code>, el porcentaje de vehículos con cada número de pasajeros
+          (solo si algún tipo que participa lleva pasajeros). Con <code>false</code> no se dibuja; lo demás no
+          cambia.</td></tr>
+      <tr><td><code>emissions_plot</code></td><td>booleano</td><td class="num">true</td>
+        <td>Genera <code>emisiones_posicion.png</code>, las emisiones a lo largo del tramo (solo si algún tipo que
+          participa emite). Con <code>false</code> no se dibuja la figura (el CSV lo decide <code>emisiones_csv</code>).</td></tr>
       <tr><td><code>progress</code></td><td>booleano</td><td class="num">true</td>
         <td>Muestra la barra de progreso de réplicas.</td></tr>
       <tr><td><code>animation</code></td><td>booleano</td><td class="num">false</td>

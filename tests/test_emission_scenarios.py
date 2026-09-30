@@ -37,7 +37,7 @@ def test_command_compares_bumps(root, capsys):
     assert {PLOT_NAME, DATA_NAME, META_NAME, TABLE_CSV, POSITION_CSV, SUMMARY_NAME, BASE_CONFIG_NAME} <= files
     assert CONFIG_NAME not in files and latest_run_dir(folder.parent) is None  # no es una corrida de `trafico`
     meta = json.loads((folder / META_NAME).read_text())
-    assert meta["escenarios"] == ["sin tope", "tope a 80 m"] and meta["topes_m"] == [None, 80.0]
+    assert meta["escenarios"] == ["sin tope", "tope a 80 m"] and meta["topes_m"] == [[], [80.0]]
     assert meta["contaminantes"] == ["co2", "nox", "voc"] and meta["semilla"] == 7
     with np.load(folder / DATA_NAME) as d:
         arrived = d["crossed_veh"][:, CAR]
@@ -72,3 +72,40 @@ def test_command_errors(root):
     (root / CONFIG_NAME).write_text((root / CONFIG_NAME).read_text().replace("accel = 2.5\n", ""), encoding="utf-8")
     with pytest.raises(SystemExit):
         emissions([])  # sin accel, los autos no emiten
+
+
+def test_scenarios_with_several_bumps(root):
+    """--topes 30,60 es un escenario con dos topes (los de [speed_bump] también pueden ser una lista)."""
+    from trafico.cli import _bumps
+    from trafico.emission_scenarios import scenario_label
+
+    assert _bumps(["sin", "30,60", "45"], None, 100.0) == ((), (30.0, 60.0), (45.0,))
+    assert _bumps(None, (70.0, 20.0), 100.0) == ((), (20.0, 70.0))
+    assert _bumps(None, None, 100.0) == ((), (50.0,))
+    assert scenario_label((60.0, 30.0), None) == "topes a 30 y 60 m" and scenario_label((), True) == "sin tope · con semáforo"
+    assert scenario_label(45.0, False) == "tope a 45 m · sin semáforo" and scenario_label(None, None) == "sin tope"
+    with pytest.raises(SystemExit):
+        emissions(["--topes", "30;60"])
+    folder = emissions(["--topes", "sin", "30,60", "--replicas", "1"])
+    meta = json.loads((folder / META_NAME).read_text())
+    assert meta["escenarios"] == ["sin tope", "topes a 30 y 60 m"] and meta["topes_m"] == [[], [30.0, 60.0]]
+    with np.load(folder / DATA_NAME) as d:
+        co2 = d["emissions"][:, CAR, POLLUTANTS.index("co2")] / d["veh_km"][:, CAR]
+    assert co2[1] > 1.2 * co2[0]
+
+
+def test_semaforo_option_switches_every_light(root):
+    """--semaforo no/si apaga o enciende todos los semáforos, también los intermedios."""
+    from dataclasses import replace
+
+    from trafico.config import Light, SimConfig
+    from trafico.emission_scenarios import Scenarios, build_configs
+
+    base = SimConfig(length=150, lanes=2, rates=(10, 0, 0), run=3, traffic_light=True, extra_lights=(Light(60.0),),
+                     specs=tuple(replace(s, accel=2.5, decel=4.5) if s.key == "car" else s
+                                 for s in SimConfig().specs))  # fmt: skip
+    s = Scenarios(bumps=(None,), bump_lanes=None, lights=(True, False), length=None, lanes=None, without=(),
+                  replicas=1, run=3.0)  # fmt: skip
+    (on_name, on), (off_name, off) = build_configs(base, s)
+    assert on.has_light and on.inner_lights and not off.has_light and not off.inner_lights and not off.any_light
+    assert on_name == "sin tope · con semáforo" and off_name == "sin tope · sin semáforo"

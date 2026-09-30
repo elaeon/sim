@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import DT, FUEL_CO2_G_PER_L, FUEL_LABELS, MAX_TYPES, POLLUTANT_LABELS, POLLUTANTS
+from trafico.config import DT, FUEL_CO2_G_PER_L, FUEL_LABELS, MAX_TYPES, POLLUTANT_LABELS, POLLUTANTS, SpeedBump
 from trafico.emissions import EMIS_BIN, acceleration_table, emissions_label, emitted, unit
 from trafico.fuel import constant_speed_table, cost, liters
 from trafico.metrics import (
@@ -323,11 +323,16 @@ def _lane_lines(cfg) -> list[str]:
                 if sp.speed_bump_kmh is not None and cfg.rates[k] > 0]  # fmt: skip
         where = "todos los carriles" if len(bump_lanes) == cfg.lanes else (
             ("carril " if len(bump_lanes) == 1 else "carriles ") + ", ".join(map(str, bump_lanes)))
-        lines.append(f"Tope a {cfg.speed_bump.position:g} m ({where}), km/h al pasarlo: "
+        at = " y ".join(f"{p:g}" for p in cfg.speed_bump.positions)
+        lines.append(f"{'Topes' if len(cfg.speed_bump.positions) > 1 else 'Tope'} a {at} m ({where}), km/h al pasarlo: "
                      + (" · ".join(slow) if slow else "ningún tipo frena (sin speed_bump_kmh)"))  # fmt: skip
-    free = [f"{sp.name} (carril {sp.lane})" for k, sp in enumerate(cfg.specs) if cfg.ignores_light(k) and cfg.rates[k] > 0]
-    if free and cfg.has_light:
-        lines.append("Sin semáforo, siguen en rojo y en amarillo (carril exclusivo en free_lanes): " + ", ".join(free))
+    for light in cfg.lights:
+        free = [f"{sp.name} (carril {sp.lane})" for k, sp in enumerate(cfg.specs)
+                if cfg.ignores_light(k, light) and cfg.rates[k] > 0]  # fmt: skip
+        if free:
+            at = f" a {light.position:g} m" if cfg.inner_lights else ""
+            lines.append(f"Sin semáforo{at}, siguen en rojo y en amarillo (carril exclusivo en free_lanes): "
+                         + ", ".join(free))  # fmt: skip
     stops = [
         f"{sp.name} a {sp.stop_position:g} m, {sp.stop_time_mean:g} ± {sp.stop_time_std:g} s"
         for k, sp in enumerate(cfg.specs) if sp.stop_position is not None and cfg.rates[k] > 0
@@ -421,7 +426,8 @@ def run(argv: list[str] | None = None) -> Path:
         [
             f"Corrida {run_dir.name} · configuración {target.config}",
             f"Tramo {cfg.length:g} m · {cfg.lanes} carril(es) · "
-            + (f"semáforo {cfg.light_label}" if cfg.has_light else "sin semáforo"),
+            + (f"semáforos {cfg.lights_label}" if cfg.inner_lights else
+               f"semáforo {cfg.light_label}" if cfg.has_light else "sin semáforo"),
             f"run {cfg.run:g} s de proceso × {cfg.time_scale:g} = {cfg.sim_seconds:g} s simulados · "
             f"{opts.replicas} réplicas en {workers} proceso(s) · semilla {seed}",
             *_lane_lines(cfg),
@@ -434,20 +440,23 @@ def run(argv: list[str] | None = None) -> Path:
     print(summary)
     (run_dir / SUMMARY_NAME).write_text(header + "\n" + summary + "\n", encoding="utf-8")
 
-    if opts.csv:
+    if opts.series_csv:
         write_csv(agg, run_dir / CSV_NAME)
 
     from trafico.plotting import plot_mobility, plot_passenger_distribution
 
     footer = f"corrida {run_dir.name} · semilla {seed}"
-    if any(rate > 0 and sp.carries_passengers for sp, rate in zip(cfg.specs, cfg.rates)):
+    if opts.passengers_plot and any(rate > 0 and sp.carries_passengers for sp, rate in zip(cfg.specs, cfg.rates)):
         plot_passenger_distribution(agg, run_dir / PAX_PLOT_NAME, footer=footer)
-    plot_mobility(agg, run_dir / PLOT_NAME, show=opts.show, footer=footer)
+    if opts.mobility_plot:
+        plot_mobility(agg, run_dir / PLOT_NAME, footer=footer)
     if emitted(cfg)[0]:
-        from trafico.plotting import plot_emissions_by_position
+        if opts.emisiones_csv:
+            write_emissions_csv(agg, run_dir / EMIS_CSV_NAME)
+        if opts.emissions_plot:
+            from trafico.plotting import plot_emissions_by_position
 
-        write_emissions_csv(agg, run_dir / EMIS_CSV_NAME)
-        plot_emissions_by_position(agg, run_dir / EMIS_PLOT_NAME, footer=footer)
+            plot_emissions_by_position(agg, run_dir / EMIS_PLOT_NAME, footer=footer)
     if opts.animation:
         from trafico.movement import visualize
 
@@ -686,9 +695,10 @@ def build_emissions_parser() -> argparse.ArgumentParser:
         help=f"como en `trafico`: una carpeta de la que se lee su {CONFIG_NAME}, o el nombre de la comparación "
              f"(por defecto, {EMISSIONS_NAME}) con {default_config_path()}",
     )  # fmt: skip
-    p.add_argument("--topes", nargs="+", metavar="M|sin",
-                   help="posición del tope (m desde la entrada) de cada escenario, o «sin» (por defecto, sin tope y "
-                        "con el de [speed_bump]; si no hay, a la mitad del tramo)")  # fmt: skip
+    p.add_argument("--topes", nargs="+", metavar="M|M,M|sin",
+                   help="topes de cada escenario: la posición (m desde la entrada), varias separadas por comas "
+                        "(35,70: dos topes en el mismo escenario) o «sin» (por defecto, sin tope y con los de "
+                        "[speed_bump]; si no hay, uno a la mitad del tramo)")  # fmt: skip
     p.add_argument("--carriles-tope", type=int, nargs="+", metavar="N",
                    help="carriles con tope, en la numeración después de --carriles (por defecto, los de "
                         "[speed_bump] lanes; sin ella, todos)")  # fmt: skip
@@ -708,18 +718,22 @@ def build_emissions_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _bumps(values: list[str] | None, config_bump: float | None, length: float) -> tuple[float | None, ...]:
+def _bumps(values: list[str] | None, config_bump, length: float) -> tuple[tuple[float, ...], ...]:
+    """Topes de cada escenario: «sin» (ninguno), una posición en m o varias separadas por comas (p. ej. 35,70).
+    Por defecto, sin tope y con los de [speed_bump] (o uno a la mitad del tramo si no hay)."""
     if values is None:
-        return (None, config_bump if config_bump is not None else length / 2)
-    out: list[float | None] = []
+        configured = SpeedBump(position=config_bump).positions
+        return ((), configured or (length / 2,))
+    out: list[tuple[float, ...]] = []
     for text in values:
         if text.lower() == "sin":
-            out.append(None)
+            out.append(())
             continue
         try:
-            out.append(float(text))
+            out.append(tuple(sorted(float(part) for part in text.split(","))))
         except ValueError:
-            raise ConfigError(f"--topes: {text!r} debe ser una posición en m o «sin»") from None
+            raise ConfigError(f"--topes: {text!r} debe ser «sin», una posición en m o varias separadas por comas "
+                              "(p. ej. 35,70)") from None
     return tuple(out)
 
 
@@ -772,7 +786,7 @@ def emissions(argv: list[str] | None = None) -> Path:
     print(f"Comparación de emisiones · configuración {target.config}")
     print(f"{len(configs)} escenarios × {s.replicas} réplicas · run {s.run:g} s × {base.time_scale:g} = "
           f"{s.run * base.time_scale:g} s simulados · semilla {seed}")  # fmt: skip
-    if not any(v for v in meta["velocidad_tope_kmh"].values()) and any(b is not None for b in s.bumps):
+    if not any(v for v in meta["velocidad_tope_kmh"].values()) and any(s.bumps):
         print("Aviso: ningún tipo que participa tiene speed_bump_kmh: el tope no frena a nadie")
 
     def progress(name: str, done: int, total: int) -> None:

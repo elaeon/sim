@@ -40,7 +40,8 @@ class Trajectories:
 
     cfg: SimConfig
     t: np.ndarray  # (F,) s simulados de cada instante
-    phase: np.ndarray  # (F,) fase del semáforo (RED, GREEN o YELLOW)
+    phase: np.ndarray  # (F,) fase del semáforo del final del tramo (RED, GREEN o YELLOW)
+    inner_phase: np.ndarray  # (F, semáforos intermedios) fase de cada uno
     offsets: np.ndarray  # (F+1,) filas del instante f: offsets[f]:offsets[f+1]
     vid: np.ndarray
     vtype: np.ndarray
@@ -74,6 +75,7 @@ def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) ->
     sim = Simulation(cfg, np.random.default_rng(seq))
     first, last = round(start / DT), round(end / DT)
     ts, phases, counts, parts, pax, veh, queued, exit_queued, exit_closed = [], [], [], [], [], [], [], [], []
+    inner = []
     base_pax, base_veh = sim.cum_pax.copy(), sim.cum_veh.copy()
     while sim.tick < last:
         if sim.tick < first:  # lo cruzado antes de la ventana no cuenta en el video
@@ -89,6 +91,7 @@ def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) ->
         exit_closed.append(sim.exit_closed.copy())
         veh.append(sim.cum_veh - base_veh)
         phases.append(cfg.phase(sim.tick))
+        inner.append(cfg.inner_phases(sim.tick))
         counts.append(n)
         rank, size = sim.row_positions()
         parts.append((sim.vid[:n].copy(), sim.vtype[:n].copy(), sim.lane[:n].copy(),
@@ -98,6 +101,7 @@ def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) ->
     cols = [np.concatenate(c) if c else np.zeros(0) for c in zip(*parts)] if parts else [np.zeros(0)] * 11
     return Trajectories(
         cfg=cfg, t=np.array(ts), phase=np.array(phases, np.int8),
+        inner_phase=np.array(inner, np.int8).reshape(len(ts), len(cfg.inner_lights)),
         offsets=np.concatenate(([0], np.cumsum(counts))).astype(np.int64),
         vid=cols[0], vtype=cols[1], lane=cols[2], target=cols[3], x=cols[4], stopped=cols[5],
         row_rank=cols[6], row_size=cols[7], vlen=cols[8], cargo=cols[9].astype(np.bool_),
@@ -165,13 +169,23 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
     for lane in range(lanes):
         ax = axes[lanes - 1 - lane]  # carril izquierdo arriba, como en una vista desde arriba
         _style_axis(ax, "{:,.0f}")
-        if lane not in cfg.free_lanes:  # sin semáforo, las fases no lo afectan
+        if not cfg.inner_lights and lane not in cfg.free_lanes:  # sin semáforo, las fases no lo afectan
             shade_phases(ax, spans)
         ax.axhline(cfg.length, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
+        for light in cfg.lights if cfg.inner_lights else ():  # varios semáforos: sus fases, sobre su línea
+            ax.axhline(light.position, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
+            if lane not in light.free_lanes:
+                for intervals, color, width in ((light.yellow_intervals(cfg.sim_seconds), YELLOW_PHASE, 3),
+                                                (light.red_intervals(cfg.sim_seconds), RED_PHASE, 3)):  # fmt: skip
+                    for a, b in intervals:
+                        if b > traj.t[0] and a < traj.t[-1]:
+                            ax.hlines(light.position, max(a, traj.t[0]), min(b, traj.t[-1]), colors=color,
+                                      linewidth=width, zorder=3)  # fmt: skip
         if lane in bump_lanes:
-            ax.axhline(cfg.speed_bump.position, color=MUTED, linewidth=1.5, linestyle=(0, (6, 2, 1, 2)), zorder=1)
-            ax.annotate("tope", (0, cfg.speed_bump.position), xycoords=("axes fraction", "data"), xytext=(4, 3),
-                        textcoords="offset points", ha="left", fontsize=8, color=INK_2)  # fmt: skip
+            for pos in cfg.speed_bump.positions:
+                ax.axhline(pos, color=MUTED, linewidth=1.5, linestyle=(0, (6, 2, 1, 2)), zorder=1)
+                ax.annotate("tope", (0, pos), xycoords=("axes fraction", "data"), xytext=(4, 3),
+                            textcoords="offset points", ha="left", fontsize=8, color=INK_2)  # fmt: skip
         for k, pos in _stops(cfg, lane):
             ax.axhline(pos, color=TYPE_COLORS[k], linewidth=1, linestyle=(0, (1, 2)), zorder=1)
             ax.annotate(f"parada {cfg.specs[k].name}", (1, pos), xycoords=("axes fraction", "data"),
@@ -204,7 +218,7 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
         f"línea punteada = {'semáforo' if cfg.has_light else 'final del tramo'} ({cfg.length:g} m)",
         ha="left", fontsize=9, color=INK_2,
     )  # fmt: skip
-    _type_legend(fig, cfg, 1 - 0.7 / fh, [*phase_handles(cfg),
+    _type_legend(fig, cfg, 1 - 0.7 / fh, [*phase_handles(cfg, per_light=True),
                                           Line2D([], [], color=INK_2, linewidth=1, linestyle=(0, (4, 3)),
                                                  label="línea de alto")])  # fmt: skip
     fig.subplots_adjust(left=0.075, right=0.975, top=1 - 1.3 / fh, bottom=0.55 / fh)
@@ -280,13 +294,13 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     ax.set_yticks(range(lanes), labels)
     ax.set_xlabel("posición (m)", color=INK_2, fontsize=9)
     bump_lanes = cfg.speed_bump_lanes()
-    for lane in bump_lanes:  # tope: franja rayada a lo ancho del carril
-        pos = cfg.speed_bump.position
-        ax.add_patch(Rectangle((pos - 0.4, lane - 0.45), 0.8, 0.9, facecolor=YELLOW_PHASE, edgecolor=INK_2,
-                               hatch="////", linewidth=0.6, zorder=1))  # fmt: skip
-    if bump_lanes:  # una sola etiqueta, sobre el carril con tope de más arriba
-        ax.annotate("tope", (cfg.speed_bump.position, max(bump_lanes) + 0.45), xytext=(0, 1),
-                    textcoords="offset points", ha="center", va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
+    for pos in cfg.speed_bump.positions:
+        for lane in bump_lanes:  # tope: franja rayada a lo ancho del carril
+            ax.add_patch(Rectangle((pos - 0.4, lane - 0.45), 0.8, 0.9, facecolor=YELLOW_PHASE, edgecolor=INK_2,
+                                   hatch="////", linewidth=0.6, zorder=1))  # fmt: skip
+        if bump_lanes:  # una sola etiqueta por tope, sobre el carril con tope de más arriba
+            ax.annotate("tope", (pos, max(bump_lanes) + 0.45), xytext=(0, 1),
+                        textcoords="offset points", ha="center", va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
     for lane in range(lanes):
         for k, pos in _stops(cfg, lane):
             ax.plot([pos, pos], [lane - 0.45, lane + 0.45], color=TYPE_COLORS[k], linewidth=2, zorder=1,
@@ -316,9 +330,12 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     storage = cfg.lane_exit_storage
     # Semáforo: un tramo por carril; los carriles sin semáforo siempre en verde. Sin semáforo no se dibuja.
     light_w = max(1.5, cfg.length * 0.006)
-    lights = [Rectangle((cfg.length, lane - 0.5), light_w, 1, zorder=3, animated=True)
-              for lane in (range(lanes) if cfg.has_light else ())]  # fmt: skip
-    for light in lights:
+    sources = [(lt, traj.inner_phase[:, j]) for j, lt in enumerate(cfg.inner_lights)]
+    if cfg.has_light:
+        sources.append((cfg.exit_light, traj.phase))
+    lights = [(Rectangle((lt.position, lane - 0.5), light_w, 1, zorder=3, animated=True), lane, phases, lt.free_lanes)
+              for lt, phases in sources for lane in range(lanes)]  # fmt: skip
+    for light, *_ in lights:
         ax.add_patch(light)
     cars = PolyCollection([], linewidths=0.9, zorder=2, animated=True)
     ax.add_collection(cars)
@@ -349,8 +366,8 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
         edges = np.zeros((vt.size, 4))
         edges[traj.stopped[traj.frame(f)]] = edge_stop
         cars.set_edgecolor(edges)
-        for lane, light in enumerate(lights):
-            light.set_facecolor(GREEN_LIGHT if lane in cfg.free_lanes else LIGHT_COLORS[traj.phase[f]])
+        for light, lane, phases, free_lanes in lights:
+            light.set_facecolor(GREEN_LIGHT if lane in free_lanes else LIGHT_COLORS[phases[f]])
         clock.set_text(_clock_text(float(traj.t[f])))
         for lane, text in enumerate(queue_texts):
             text.set_text(f"{traj.queued[f, lane]:,}")
@@ -376,7 +393,7 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     if fmt == "gif":
         from matplotlib import animation
 
-        for artist in (*lights, cars, clock, *queue_texts, *(t for _, t in exit_texts), *(text for _, text in counters)):
+        for artist in (*(lt[0] for lt in lights), cars, clock, *queue_texts, *(t for _, t in exit_texts), *(text for _, text in counters)):
             artist.set_animated(False)
         writer = animation.PillowWriter(fps=anim.fps)
         with writer.saving(fig, str(path), dpi=dpi):
@@ -407,7 +424,7 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
         for i, f in enumerate(frames):
             update(f)
             canvas.restore_region(background)
-            for artist in (cars, *lights, clock, *queue_texts, *(t for _, t in exit_texts), *(text for _, text in counters)):
+            for artist in (cars, *(lt[0] for lt in lights), clock, *queue_texts, *(t for _, t in exit_texts), *(text for _, text in counters)):
                 fig.draw_artist(artist)
             proc.stdin.write(canvas.buffer_rgba())
             progress(i)

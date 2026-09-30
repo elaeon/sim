@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from trafico.config import (
-    BIKE, BUS, CAR, DEFAULT_SPECS, DT, GREEN, POLLUTANTS, RED, YELLOW, Behavior, Bottleneck, Rate, SimConfig,
+    BIKE, BUS, CAR, DEFAULT_SPECS, DT, GREEN, POLLUTANTS, RED, YELLOW, Behavior, Bottleneck, Rate, Light, SimConfig,
     SpeedBump, VehicleSpec,
 )  # fmt: skip
 from trafico.engine import Simulation
@@ -328,15 +328,16 @@ def test_free_lane_only_frees_the_exclusive_type():
     assert sim.stopped[: sim.n].all() and sim.x[: sim.n].max() <= sim.L + 1e-9
 
 
-def _bump_run(gradual: bool, lanes: int = 1, bump_lanes=None, lane: int = 0, vt: int = CAR) -> tuple[list, Simulation]:
-    """Un vehículo solo, siempre en verde, con un tope a 60 m en `bump_lanes` (auto a 10 km/h en él). Devuelve,
-    por paso, (x antes, x después, velocidad en m/paso) y la simulación."""
+def _bump_run(gradual: bool, lanes: int = 1, bump_lanes=None, lane: int = 0, vt: int = CAR,
+              position=60.0) -> tuple[list, Simulation]:
+    """Un vehículo solo, siempre en verde, con un tope a 60 m (o varios, `position`) en `bump_lanes` (auto a
+    10 km/h en él). Devuelve, por paso, (x antes, x después, velocidad en m/paso) y la simulación."""
     car = replace(DEFAULT_SPECS[CAR], speed_bump_kmh=10.0)
     specs = (car, *DEFAULT_SPECS[1:])
     if gradual:
         specs = tuple(_gradual(s) for s in specs)
     sim = _empty_sim(length=150, lanes=lanes, red=0, green=60, run=10, specs=specs,
-                     speed_bump=SpeedBump(position=60.0, lanes=bump_lanes))  # fmt: skip
+                     speed_bump=SpeedBump(position=position, lanes=bump_lanes))  # fmt: skip
     i = _place(sim, vt, 20.0, lane=lane)
     vid = sim.vid[i]
     steps = []
@@ -364,6 +365,26 @@ def test_speed_bump_limits_speed_while_on_it(gradual):
         dec = sim.dec_t[CAR]
         assert all(b >= a - dec - 1e-9 for a, b in zip(advs, advs[1:])), "frenado brusco antes del tope"
         assert min(adv for x0, x1, adv in steps if x0 < 60.0) >= vb - dec - 1e-9  # no se detiene antes
+
+
+@pytest.mark.parametrize("gradual", [False, True])
+def test_several_speed_bumps_each_slow_the_vehicle(gradual):
+    """Con dos topes (40 y 100 m) el auto pisa cada uno a lo más a 10 km/h, recupera su velocidad entre ellos y
+    tarda más que con uno solo."""
+    steps, sim = _bump_run(gradual, position=(100.0, 40.0))  # sin orden
+    assert sim.cfg.speed_bump.positions == (40.0, 100.0)
+    vb, vlen = 10 / 3.6 * DT, sim.cfg.specs[CAR].length
+    for at in (40.0, 100.0):
+        on = [adv for x0, x1, adv in steps if x0 - vlen < at and x1 > at]
+        assert on and max(on) <= vb + 1e-9
+    between = [adv for x0, x1, adv in steps if 40.0 + vlen + 3 < x0 < 100.0 - 25]
+    # Recupera velocidad entre ellos (con frenado gradual, sin llegar a la máxima: ya va frenando para el segundo).
+    assert max(between) == pytest.approx(sim.v_step[CAR]) if not gradual else max(between) > 1.5 * vb
+    if gradual:
+        advs = [adv for *_, adv in steps]
+        dec = sim.dec_t[CAR]
+        assert all(b >= a - dec - 1e-9 for a, b in zip(advs, advs[1:])), "frenado brusco antes del tope"
+    assert len(steps) > len(_bump_run(gradual, position=40.0)[0]) + 5
 
 
 def test_speed_bump_only_in_its_lanes_and_for_types_with_speed():
@@ -1372,3 +1393,95 @@ def test_rate_expected_is_the_truncated_mean():
     draws = np.random.default_rng(0).normal(15, 5, 2_000_000)
     draws = draws[(draws >= 1) & (draws <= 20)]
     assert Rate(1, 20, 15, 5).expected == pytest.approx(draws.mean(), abs=0.01)
+
+
+def _front_stays_behind(sim: Simulation, line: float, phase_of, until: int) -> tuple[int, bool]:
+    """Corre `until` pasos; devuelve (pasos en rojo, si alguien rebasó `line` con su frente mientras estaba en rojo)."""
+    in_red, crossed_in_red = 0, False
+    crossed_before = lambda: bool((sim.x[: sim.n] > line + 1e-9).any())  # noqa: E731
+    for _ in range(until):
+        was = crossed_before()
+        red = phase_of(sim.tick) == RED
+        sim.step()
+        in_red += red
+        if red and not was and crossed_before():
+            crossed_in_red = True
+    return in_red, crossed_in_red
+
+
+@pytest.mark.parametrize("gradual", [False, True])
+def test_inner_light_stops_vehicles_at_its_line_in_red_and_releases_them_in_green(gradual):
+    """Un semáforo a 60 m (rojo 20 s, verde 20 s, empieza en rojo) detiene en su línea a quien llega en rojo, y en
+    verde lo deja pasar; el del final del tramo (desactivado) no interviene."""
+    spec = _gradual(DEFAULT_SPECS[CAR]) if gradual else DEFAULT_SPECS[CAR]
+    light = Light(60.0, red=20, green=20, start_phase="red")
+    sim = _empty_sim(length=150, red=10, green=30, traffic_light=False, extra_lights=(light,), run=10,
+                     specs=(spec, *DEFAULT_SPECS[1:]))  # fmt: skip
+    _place(sim, CAR, 20.0)
+    in_red, crossed = _front_stays_behind(sim, 60.0, light.phase, round(20 / DT))
+    assert in_red == round(20 / DT) and not crossed
+    assert sim.n == 1 and sim.stopped[0] and sim.x[0] <= 60.0 + 1e-9 and sim.x[0] > 50.0  # esperando en la línea
+    for _ in range(round(25 / DT)):
+        sim.step()
+    assert sim.n == 0 or sim.x[0] > 60.0  # en verde, pasó
+
+
+def test_each_light_has_its_own_phases_and_initial_phase():
+    """Dos semáforos intermedios con ciclos y fase inicial distintos: cada uno detiene a un auto solo en sus rojos."""
+    lights = (Light(40.0, red=10, green=30, start_phase="red"), Light(100.0, red=15, green=5, start_phase="green"))
+    cfg = SimConfig(length=150, lanes=1, rates=(0, 0, 0), traffic_light=False, extra_lights=lights, run=5)
+    assert [lt.phase(0) for lt in lights] == [RED, GREEN] and cfg.inner_phases(0) == (RED, GREEN)
+    assert cfg.inner_phases(round(22 / DT)) == (GREEN, GREEN) and cfg.inner_phases(round(27 / DT)) == (GREEN, RED)
+    sim = Simulation(cfg, np.random.default_rng(0))
+    _place(sim, CAR, 10.0)
+    xs = []
+    for _ in range(round(120 / DT)):
+        sim.step()
+        if sim.n:
+            xs.append(float(sim.x[0]))
+    # Espera en el primero (rojo inicial) hasta que se abre; el segundo (verde inicial) lo deja pasar o lo frena.
+    assert max(x for x in xs[: round(9 / DT)]) <= 40.0 + 1e-9
+    assert not sim.n or sim.x[0] > 100.0
+
+
+def test_light_starting_in_green_lets_the_first_vehicle_through():
+    light = Light(60.0, red=20, green=20, start_phase="green")
+    sim = _empty_sim(length=150, traffic_light=False, extra_lights=(light,), run=5)
+    _place(sim, CAR, 20.0)
+    for _ in range(round(8 / DT)):
+        sim.step()
+    assert sim.n == 1 and sim.x[0] > 60.0 and not sim.stopped[0]  # cruzó sin detenerse
+
+
+def test_inner_light_free_lane_ignores_red_and_yellow():
+    """Las bicis, con carril exclusivo en los free_lanes del semáforo intermedio, lo cruzan en rojo; el auto, que no
+    tiene carril exclusivo, se detiene."""
+    bike = replace(DEFAULT_SPECS[BIKE], lane=0, exclusive=True)
+    light = Light(60.0, red=30, green=10, start_phase="red", free_lanes=(0,))
+    sim = _empty_sim(length=150, lanes=2, traffic_light=False, extra_lights=(light,), run=5,
+                     specs=(DEFAULT_SPECS[CAR], bike, DEFAULT_SPECS[BUS]))  # fmt: skip
+    _place(sim, BIKE, 20.0, lane=0)
+    _place(sim, CAR, 20.0, lane=1)
+    for _ in range(round(15 / DT)):
+        sim.step()
+    x = {int(v): float(sim.x[j]) for j, v in enumerate(sim.vtype[: sim.n])}
+    assert BIKE not in x or x[BIKE] > 60.0  # cruzó (o ya salió)
+    assert x[CAR] <= 60.0 + 1e-9
+
+
+def test_lights_properties_and_labels():
+    lights = (Light(100.0, red=20, green=20, start_phase="green"), Light(40.0, red=10, green=30, yellow=3))
+    cfg = SimConfig(length=150, red=25, green=35, extra_lights=lights)
+    assert [lt.position for lt in cfg.inner_lights] == [40.0, 100.0]  # de la entrada a la salida
+    assert [lt.position for lt in cfg.lights] == [40.0, 100.0, 150.0] and cfg.any_light
+    assert cfg.ref_light.position == 150.0 and cfg.cycle == 60.0 and cfg.flow_window == 60.0
+    assert cfg.lights_label == ("a 40 m: rojo 10 s / verde 30 s / amarillo 3 s, empieza en rojo · "
+                                "a 100 m: rojo 20 s / verde 20 s, empieza en verde · "
+                                "a 150 m: rojo 25 s / verde 35 s, empieza en rojo")  # fmt: skip
+    # Sin semáforo al final, el último intermedio marca la ventana y las fases sombreadas.
+    cfg = SimConfig(length=150, traffic_light=False, extra_lights=lights)
+    assert not cfg.has_light and cfg.ref_light.position == 100.0 and cfg.cycle == 40.0 and cfg.flow_window == 40.0
+    assert cfg.red_intervals()[0] == (0.0, 20.0) or cfg.red_intervals()[0][1] > 0  # las del de 100 m
+    off = cfg.with_lights(False)
+    assert not off.any_light and off.flow_window == 60.0
+    assert SimConfig(length=150, red=0, green=0, extra_lights=(Light(50.0, enabled=False),)).lights == ()

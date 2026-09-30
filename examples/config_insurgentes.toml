@@ -1,3 +1,7 @@
+# Copia de la configuración usada en la corrida 20260930-102903_insurgentes
+# (2026-09-30 10:29:03, trafico 0.2.0). Para replicarla:
+#   uv run trafico resultados/20260930-102903_insurgentes
+
 # Configuración de la simulación de flujo vehicular (trafico).
 #
 #   uv run trafico                            # usa este archivo -> resultados/<ID>_corrida/
@@ -8,63 +12,52 @@
 # copia de esta configuración (config.toml); esa copia basta para replicar la corrida.
 
 [road]
-length = 500.0          # m; el semáforo está al final del tramo
-max_line_speed = [20, 30, 50, 80]   # km/h, límite de cada carril (0 = derecho); ningún vehículo lo rebasa.
+length = 100.0          # m; el semáforo está al final del tramo
+max_line_speed = [20, 40, 50, 80]   # km/h, límite de cada carril (0 = derecho); ningún vehículo lo rebasa.
                                 # El número de carriles es el largo de esta lista y de las demás listas por
                                 # carril ([initial] occupancy, [exit] capacity y storage), que deben coincidir.
 
 [traffic_light]
 enabled = true          # false = esta calle no tiene semáforo (la línea final siempre está abierta); igual que
                         # red, green y yellow en 0
-red = 25.0              # s (múltiplo de 0.1)
-green = 35.0            # s (múltiplo de 0.1)
+red = 30.0              # s (múltiplo de 0.1)
+green = 30.0            # s (múltiplo de 0.1)
 yellow = 3.0            # s (múltiplo de 0.1) entre el verde y el rojo: verde → amarillo → rojo; 0 = sin amarillo
 start_phase = "red"     # "red" | "green"
 free_lanes = []         # carriles sin semáforo (0 = derecho), p. ej. [0] para una vuelta continua a la derecha.
                         # Solo aplica a los tipos con carril exclusivo ahí ([vehicles.<clave>] lane y
                         # exclusive = true): cruzan aunque esté en rojo y no bajan la velocidad en amarillo
-                        # position = 120.0 (m desde el inicio del tramo) pone un semáforo intermedio; para varios, una
-                        # sección [[traffic_light]] por semáforo, cada una con sus fases y su start_phase. El del
-                        # final del tramo es el que no tiene position (o position = length). Ejemplo:
-                        #   [[traffic_light]]
-                        #   position = 120.0
-                        #   red = 20.0
-                        #   green = 20.0
-                        #   start_phase = "green"
-                        #   [[traffic_light]]          # el del final del tramo
-                        #   red = 25.0
-                        #   green = 35.0
 
 [demand]                # llegadas Poisson en veh/min, un diccionario por tipo: {min, max, mean, std}.
                         # La tasa es una normal(mean, std) truncada a [min, max] que se vuelve a sortear
                         # cada rate_interval s; con std = 0 es fija. Todo en 0 = ese tipo no participa.
 rate_interval = 60.0    # s simulados entre sorteos de la tasa (múltiplo de 0.1)
-car_rate = {min = 5, max = 30, mean = 18, std = 6}
-bike_rate = {min = 2, max = 12, mean = 8, std = 3}
-bus_rate = {min = 0.25, max = 0.25, mean = 0.25, std = 0}
-motorbike_rate = {min = 2, max = 14, mean = 8, std = 3}
-carga_rate = {min = 1, max = 1, mean = 1, std = 0}   # vehículos de carga (ver [vehicles.carga])
+car_rate = {min = 15, max = 30, mean = 20, std = 5}
+bike_rate = {min = 2, max = 10, mean = 5, std = 6}
+bus_rate = {min = 0.2, max = 0.45, mean = 0.35, std = 0.8}
+motorbike_rate = {min = 5, max = 10, mean = 7.5, std = 3}
+carga_rate = {min = 1, max = 2, mean = 1.5, std = 1.5}   # vehículos de carga (ver [vehicles.carga])
 taxi_rate = {min = 0, max = 0, mean = 0, std = 0}           # 0 = no participa (ver [vehicles.taxi])
 carga_ligera_rate = {min = 0, max = 0, mean = 0, std = 0}   # pickups de carga (ver [vehicles.carga_ligera])
 colectivo_rate = {min = 0, max = 0, mean = 0, std = 0}      # microbuses y vans a gas LP (ver [vehicles.colectivo])
 
 [initial]               # condición inicial: los carriles ya tienen vehículos al empezar (no espera el llenado)
-occupancy = 0.0         # fracción de cada carril ocupada: Σ(largo + gap_stop) / length; 1 = cola compacta.
+occupancy = [0, 0.3, 0.3, 0]         # fracción de cada carril ocupada: Σ(largo + gap_stop) / length; 1 = cola compacta.
                         # Un número para todos o una lista por carril (0 = derecho) del largo de max_line_speed,
                         # p. ej. [0.2, 0.6, 0.6, 0.05]; 0 = tramo vacío. Tipos según las tasas de [demand].
 
 [exit]                  # cola de salida después del semáforo, por carril (0 = derecho)
-capacity = 0            # veh/min que acepta cada carril: un número para todos o una lista por carril,
+capacity = [30, 6, 6, 3]            # veh/min que acepta cada carril: un número para todos o una lista por carril,
                         # p. ej. [0, 12, 15, 0]; 0 = sin cola de salida. Si por la línea pasan más de los que
                         # acepta, la cola se llena, la línea de ese carril se cierra (aunque esté en verde) y el
                         # carril se satura.
-storage = 60            # m que mide la cola de salida de cada carril (número o lista por carril); cada vehículo ocupa su largo + gap_stop
-                        # (60 m ≈ 11 autos de 4.5 m + 1 m). Si el siguiente no cabe, la línea de su carril se
-                        # cierra para él; una cola vacía acepta a cualquiera.
+storage = [80, 80, 80, 80]   # m que mide la cola de salida de cada carril (número o lista por carril); cada vehículo ocupa su largo + gap_stop
+                        # (≈ 40 bicis de 2.3 m, 15 autos de 5.5 m, 4 autobuses de 16.5 m). Si el siguiente no cabe, la
+                        # línea de su carril se cierra para él; una cola vacía acepta a cualquiera.
 
 [speed_bump]            # tope (reductor de velocidad): quien lo pisa no rebasa el speed_bump_kmh de su tipo
-# position = 60.0       # m desde el inicio del tramo; sin ella, no hay tope. Una lista ([35, 70]) pone varios topes
-# lanes = [1, 2]        # carriles con tope (0 = derecho); sin ella, todos
+#position = 60.0       # m desde el inicio del tramo; sin ella, no hay tope
+#lanes = [1, 2]        # carriles con tope (0 = derecho); sin ella, todos
 
 [fuel]                  # combustible: el consumo sale del CO2 emitido (g de CO2 por litro de cada combustible)
 price = {gasolina = 23.99, diesel = 26.99}   # precio por litro: mediana de la regular y del diésel en las
@@ -74,26 +67,23 @@ currency = "MXN"        # moneda de los costos
 [bottleneck]            # cuellos de botella: dónde ocurren las detenciones. Quién se detiene, con qué
                         # probabilidad y cuánto tiempo va en cada [vehicles.<clave>] (bottleneck_prob,
                         # bottleneck_time_mean, bottleneck_time_std); sin bottleneck_prob, ese tipo no se detiene.
-stop_lanes = [1, 2]     # carriles donde ocurre (0 = derecho); sin ella, todos
+stop_lanes = [1]        # carriles donde ocurre (0 = derecho); sin ella, todos
 # stop_zone = [0.0, 450.0]  # m del tramo donde puede ocurrir (frente del vehículo); sin ella, todo el tramo
                         # Quien viene detrás lo trata como cualquier vehículo detenido: se cambia de carril o espera.
 
 [execution]
 run = 100.0              # s de proceso
-time_scale = 10.0       # s simulados por s de proceso (run 10 -> 100 s simulados)
+time_scale = 30.0       # s simulados por s de proceso (run 10 -> 100 s simulados)
 sample = 1.0            # s simulados entre muestras de las series
-replicas = 8            # réplicas Monte Carlo
+replicas = 4            # réplicas Monte Carlo
 workers = 0             # procesos en paralelo; 0 = automático (min(réplicas, CPUs))
 seed = 42               # quítala para una semilla aleatoria (queda registrada en la copia)
 
 [output]
 dir = "resultados"      # relativo a la raíz del proyecto
-name = ""               # sufijo de la carpeta de resultados si no se da en el comando
-series_csv = false       # exporta las series (media y σ) a series.csv
-emisiones_csv = true     # exporta las emisiones por posición a emisiones_posicion.csv
-mobility_plot = true    # genera movilidad_pasajeros.png (false = sin esa gráfica)
-passengers_plot = true  # genera distribucion_pasajeros.png (false = sin esa gráfica)
-emissions_plot = true   # genera emisiones_posicion.png
+name = "insurgentes"  # nombre usado en la corrida 20260930-102903_insurgentes
+csv = false              # exporta las series (media y σ) a series.csv
+show = false            # abre además la ventana de matplotlib
 progress = true         # barra de progreso de réplicas
 animation = false       # genera también el diagrama espacio-tiempo y el video de movimiento
                         # (o, sin volver a correr: uv run trafico-ver resultados/<ID>_<nombre>)
@@ -109,18 +99,18 @@ format = "webm"         # "webm" (VP9) | "mp4" (H.264) | "gif"
 # --- Modelo -------------------------------------------------------------------------------
 
 [vehicles.car]          # automóvil: puede cambiar de carril
-speed_kmh = {min = 80, max = 80, mean = 80, std = 0}   # km/h, velocidad máxima de cada vehículo: normal(mean, std) truncada a [min, max]
+speed_kmh = {min = 15, max = 80, mean = 50, std = 15}   # km/h, velocidad máxima de cada vehículo: normal(mean, std) truncada a [min, max]
 length = {min = 4.5, max = 4.5, mean = 4.5, std = 0}   # m
 gap_run = 3.0           # m al líder en marcha
 gap_stop = 1.0          # m al líder detenido (compresión)
 accel = 2.5             # m/s², aceleración gradual (sin ella, instantánea)
 decel = 4.5             # m/s², frenado gradual con anticipación (sin ella, en seco)
 speed_bump_kmh = 10.0   # km/h máx. al pasar el tope de [speed_bump] (sin ella, pasa sin frenar)
-pax = {min = 1, max = 6, mean = 1.3, std = 1}   # pasajeros: normal(mean, std) redondeada y truncada a [min, max]
+pax = {min = 1, max = 6, mean = 1.2, std = 0.8}   # pasajeros: normal(mean, std) redondeada y truncada a [min, max]
 cargo_prob = 0.1        # probabilidad de que lleve mercancía: ocupa la vía, pero no cuenta en los pasajeros
-# bottleneck_prob = 0.4     # [bottleneck]: probabilidad de detenerse una vez en el tramo …
-# bottleneck_time_mean = 50.0  # … y duración (s): media y desviación estándar
-# bottleneck_time_std = 10.0
+bottleneck_prob = 0.08     # [bottleneck]: probabilidad de detenerse una vez en el tramo …
+bottleneck_time_mean = 22.0  # … y duración (s): media y desviación estándar
+bottleneck_time_std = 5.0
 
 fuel = "gasolina"       # combustible: gasolina | diesel | glp (el consumo sale del CO2; sin ella, no se calcula)
 mass_kg = 1250.0        # kg, solo para la curva física de referencia del rendimiento
@@ -135,7 +125,7 @@ source = "sedema_cdmx_2018"   # conjunto de coeficientes: "int_panis_2006" (flot
                         # a < −0.5 m/s²; reemplazan a las del conjunto.
 
 [vehicles.bike]         # bicicleta: un solo carril
-speed_kmh = {min = 20, max = 20, mean = 20, std = 0}   # km/h
+speed_kmh = {min = 5, max = 20, mean = 13, std = 5}   # km/h
 length = {min = 1.8, max = 1.8, mean = 1.8, std = 0}
 gap_run = 1.0
 gap_stop = 0.5
@@ -147,9 +137,10 @@ exclusive = true        # reserva el carril: solo lo usan los tipos con este lan
 abreast = 2             # al detenerse, hasta 2 bicis lado a lado en el carril (1 = en fila)
 pass_in_lane = true     # en marcha, la más rápida rebasa a la de adelante dentro del carril (requiere
                         # abreast ≥ 2; solo hay rebases si speed_kmh varía, std > 0)
+cargo_prob = 0.1
 
 [vehicles.bus]          # autobús: un solo carril
-speed_kmh = {min = 60, max = 60, mean = 60, std = 0}   # km/h
+speed_kmh = {min = 40, max = 60, mean = 50, std = 10}   # km/h
 length = {min = 15, max = 15, mean = 15, std = 0}
 gap_run = 4.0           # supuesto: el enunciado no lo especifica
 gap_stop = 1.5
@@ -161,15 +152,15 @@ mass_kg = 12000.0
 pax = {min = 1, max = 120, mean = 80, std = 15}
 lane = 3              # p. ej. separa autobuses (carril 1) de bicis (carril 0)
 exclusive = true        # carril exclusivo de autobuses
-stop_position = 400.0   # m desde el inicio del tramo donde se detiene (frente del autobús); quítala para no parar
-stop_time_mean = 25.0   # s de descenso y ascenso de pasajeros: media …
+stop_position = 50.0   # m desde el inicio del tramo donde se detiene (frente del autobús); quítala para no parar
+stop_time_mean = 20.0   # s de descenso y ascenso de pasajeros: media …
 stop_time_std = 5.0     # … y desviación estándar (normal truncada a ≥ 0)
 
 [vehicles.bus.emissions]  # autobús: solo PM verificado (arXiv 2008.02405); CO2 y NOx, del artículo original
 pm = [2.23e-4, 3.47e-4, -2.38e-5, 2.08e-3, 1.76e-3, 2.23e-4]
 
 [vehicles.motorbike]
-speed_kmh = {min = 70, max = 70, mean = 70, std = 0}   # km/h
+speed_kmh = {min = 20, max = 70, mean = 50, std = 20}   # km/h
 length = {min = 2, max = 2, mean = 2, std = 0}
 gap_run = 2.0
 gap_stop = 1
@@ -179,18 +170,18 @@ speed_bump_kmh = 15.0
 fuel = "gasolina"       # sin coeficientes de CO2 (abajo) no se calcula su consumo
 mass_kg = 150.0
 pax = {min = 1, max = 2, mean = 1.2, std = 0.2}
-cargo_prob = 0.3        # motos de reparto: probabilidad de que lleve mercancía en vez de pasajeros
+cargo_prob = 0.45        # motos de reparto: probabilidad de que lleve mercancía en vez de pasajeros
 overtake = true         # rebasa a quien va más lento que ella (por su velocidad real) y baja incluso
                         # a un carril de menor límite si ahí avanza más; luego sube a uno más rápido
 lookahead = 50.0        # m; sin estas tres claves se usan las de [behavior]
-min_advantage = 1.0     # m de espacio libre extra que le basta para cambiar
-lane_change_cooldown = 1.0  # s sin volver a cambiar tras una maniobra
+min_advantage = 3.0     # m de espacio libre extra que le basta para cambiar
+lane_change_cooldown = 3.0  # s sin volver a cambiar tras una maniobra
 
 # [vehicles.motorbike.emissions]  # Int Panis et al. (2006) no tiene motos: sin coeficientes, no emite
 # co2 = [f1, f2, f3, f4, f5, f6]
 
 [vehicles.carga]        # vehículo de carga: solo mercancía, no cuenta en los pasajeros
-speed_kmh = {min = 40, max = 40, mean = 40, std = 0}   # km/h
+speed_kmh = {min = 10, max = 50, mean = 40, std = 10}   # km/h
 length = {min = 8, max = 16, mean = 10, std = 2}   # m, normal truncada a [min, max], sorteada para cada vehículo
 gap_run = 4.0           # supuesto: como el autobús
 gap_stop = 1.5
@@ -200,9 +191,9 @@ speed_bump_kmh = 8.0
 fuel = "diesel"         # sin coeficientes de CO2 (abajo) no se calcula su consumo
 mass_kg = 7000.0
 cargo_prob = 1.0        # siempre lleva mercancía (con 1, pax es opcional)
-# bottleneck_prob = 0.6     # [bottleneck]: se detiene más seguido …
-# bottleneck_time_mean = 120.0  # … y por más tiempo (s) que un auto
-# bottleneck_time_std = 30.0
+bottleneck_prob = 0.2     # [bottleneck]: se detiene más seguido …
+bottleneck_time_mean = 120.0  # … y por más tiempo (s) que un auto
+bottleneck_time_std = 30.0
 
 # [vehicles.carga.emissions]  # camión (HGV): cargar del artículo original (tabla de coeficientes); sin ellos,
 # co2 = [f1, f2, f3, f4, f5, f6]  # no emite
@@ -259,7 +250,7 @@ pax = {min = 1, max = 25, mean = 12, std = 6}
 source = "sedema_cdmx_2018"
 
 [behavior]
-reaction = {min = 2.0, max = 5.0, mean = 3.0, std = 1.0}
+reaction = {min = 0.7, max = 3.0, mean = 2, std = 1}
                                 # s, reacción al poder avanzar (verde o arranque del líder): normal(mean, std)
                                 # truncada a [min, max]; sin mean y std, uniforme en [min, max]
 queue_reaction = true           # la cola de entrada detenida (cola del tramo detenida hasta la entrada)
@@ -268,10 +259,10 @@ queue_reaction = true           # la cola de entrada detenida (cola del tramo de
 lane_change_min = 1.5           # s, duración de la maniobra de cambio de carril
 lane_change_max = 4.0
 lane_change_speed_factor = 0.5  # fracción de la velocidad durante la maniobra
-lane_change_cooldown = 3.0      # s sin volver a cambiar tras una maniobra
-lane_change_interval = 0.5      # s entre decisiones de cambio de carril
+lane_change_cooldown = 6.0      # s sin volver a cambiar tras una maniobra
+lane_change_interval = 0.8      # s entre decisiones de cambio de carril
 lookahead = 30.0                # m a los que un líder lento motiva cambiar
-min_advantage = 3.0             # m de espacio libre extra para que valga la pena cambiar
+min_advantage = 5.0             # m de espacio libre extra para que valga la pena cambiar
 leader_slowdown = 0.25          # solo cambia de carril si el vehículo de enfrente (a menos de lookahead)
                                 # va al menos 25 % por debajo del límite del carril
 release_space = 0.5             # m de espacio que libera a un vehículo detenido
