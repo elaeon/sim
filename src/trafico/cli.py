@@ -717,6 +717,7 @@ def variants_main(argv: list[str] | None = None) -> None:
 
 
 EMISSIONS_NAME = "emisiones_topes"
+SPACING_NAME = "separacion_topes"
 
 
 def build_emissions_parser() -> argparse.ArgumentParser:
@@ -742,6 +743,22 @@ def build_emissions_parser() -> argparse.ArgumentParser:
     p.add_argument("--carriles-tope", type=int, nargs="+", metavar="N",
                    help="carriles con tope, en la numeración después de --carriles (por defecto, los de "
                         "[[speed_bump]] lanes de cada tope; sin ella, todos)")  # fmt: skip
+    p.add_argument("--separacion", nargs="*", type=float, default=None, metavar="D",
+                   help="en vez de la comparación normal, evalúa cuánto deben separarse dos topes para diluir la huella de "
+                        "emisiones: corre sin tope, con un tope y con dos topes (o --cadena N) separados D m (por omisión "
+                        "10 15 20 25 30 40 50 60 80 100) y grafica aditividad, media en el tramo, gradiente y costo de cada tope")  # fmt: skip
+    p.add_argument("--primer-tope", type=float, metavar="M",
+                   help="con --separacion, posición del primer tope en m (por omisión, el primer [[speed_bump]] o un cuarto "
+                        "del tramo)")  # fmt: skip
+    p.add_argument("--cadena", type=int, metavar="N",
+                   help="con --separacion, topes de cada cadena (por defecto 2, una pareja): N topes separados D m "
+                        "(P1, P1 + D, …); calcula también el costo de cada tope añadido")  # fmt: skip
+    p.add_argument("--tolerancia", type=float, default=0.05, metavar="T",
+                   help="con --separacion, cuánto puede apartarse la pareja de dos topes aislados para llamarla aditiva "
+                        "(por defecto 0.05)")  # fmt: skip
+    p.add_argument("--umbral", type=float, default=0.10, metavar="U",
+                   help="con --separacion, fracción del pico de un tope solo bajo la cual su exceso cuenta como diluido "
+                        "(por defecto 0.10)")  # fmt: skip
     p.add_argument("--semaforo", choices=("config", "si", "no", "ambos"), default="config",
                    help="semáforo en todos los escenarios: como en la configuración, activado, desactivado o ambos "
                         "(cada tope con y sin semáforo)")  # fmt: skip
@@ -795,6 +812,14 @@ def emissions(argv: list[str] | None = None) -> Path:
         if args.redibujar:
             folder = Path(args.redibujar).expanduser()
             meta, data = load(folder)
+            if meta.get("modo") == "separacion":
+                from trafico.bump_spacing import PLOT_NAME as SPACING_PLOT, analyze
+                from trafico.plotting import plot_bump_spacing
+
+                path = _free_path(folder / SPACING_PLOT)
+                plot_bump_spacing(path, meta, data, analyze(meta, data))
+                print(f"Gráfica en {path}")
+                return folder
             path = _free_path(folder / EMIS_PLOT)
             plot_emission_comparison(path, meta, data)
             print(f"Gráfica en {path}")
@@ -805,6 +830,10 @@ def emissions(argv: list[str] | None = None) -> Path:
         lanes = tuple(args.carriles) if args.carriles else None
         reduced = reduce_config(base, lanes, tuple(args.sin))
         length = args.largo if args.largo is not None else reduced.length
+        if args.cadena is not None and args.separacion is None:
+            parser.error("--cadena requiere --separacion")
+        if args.separacion is not None:
+            return _bump_spacing(args, argv, parser, target, settings, reduced, lanes, length)
         lights = {"config": (None,), "si": (True,), "no": (False,), "ambos": (True, False)}[args.semaforo]
         s = Scenarios(
             bumps=_bumps(args.topes, tuple(b.position for b in reduced.bumps), length),
@@ -845,6 +874,77 @@ def emissions(argv: list[str] | None = None) -> Path:
     print("\n" + summary)
     (folder / EMIS_SUMMARY).write_text(f"{meta['comando']}\n\n{summary}\n", encoding="utf-8")
     plot_emission_comparison(folder / EMIS_PLOT, meta, data)
+    print(f"\nResultados en {folder}")
+    return folder
+
+
+def _bump_spacing(args, argv, parser, target, settings, reduced, lanes, length) -> Path:
+    """`trafico-emisiones --separacion`: barrido de la distancia entre dos topes (ver bump_spacing.py)."""
+    from trafico.bump_spacing import (
+        DEFAULT_DISTANCES, PLOT_NAME as SPACING_PLOT, SUMMARY_NAME as SPACING_SUMMARY, Spacing, analyze, build_configs,
+        metadata, write_outputs,
+    )  # fmt: skip
+    from trafico.emission_scenarios import BASE_CONFIG_NAME, Scenarios
+    from trafico.emission_scenarios import metadata as base_metadata
+    from trafico.emission_scenarios import run_scenarios
+    from trafico.movement import _free_path
+    from trafico.plotting import plot_bump_spacing
+    from trafico.settings import _set_key
+
+    base, opts = settings.sim, settings.run
+    try:
+        if args.topes is not None:
+            raise ConfigError("--separacion no se combina con --topes (los topes son el primero y el que se aleja)")
+        if args.semaforo == "ambos":
+            raise ConfigError("--separacion no admite --semaforo ambos (usa config, si o no)")
+        distances = tuple(args.separacion) or DEFAULT_DISTANCES
+        if any(d <= 0 for d in distances) or len(set(distances)) != len(distances):
+            raise ConfigError("--separacion: cada distancia debe ser mayor que 0 m y no repetirse")
+        if args.cadena is not None and args.cadena < 2:
+            raise ConfigError("--cadena debe ser de al menos 2 topes")
+        if not 0 < args.tolerancia < 1 or not 0 < args.umbral < 1:
+            raise ConfigError("--tolerancia y --umbral deben estar entre 0 y 1")
+        first = args.primer_tope if args.primer_tope is not None else (
+            reduced.bumps[0].position if reduced.bumps else length / 4)
+        spacing = Spacing(
+            first=first, distances=tuple(sorted(distances)), light={"config": None, "si": True, "no": False}[args.semaforo],
+            bump_lanes=tuple(args.carriles_tope) if args.carriles_tope else None, length=args.largo,
+            tolerance=args.tolerancia, threshold=args.umbral, count=args.cadena or 2,
+            replicas=args.replicas if args.replicas is not None else opts.replicas,
+            run=args.run if args.run is not None else base.run,
+        )  # fmt: skip
+        if spacing.replicas < 1:
+            raise ConfigError("--replicas debe ser al menos 1")
+        configs, skipped = build_configs(reduced, spacing)
+        kept = [d for d in spacing.distances if d not in skipped]
+        seed = opts.seed if opts.seed is not None else secrets.randbelow(2**32)
+        scen = Scenarios(bumps=((),), bump_lanes=spacing.bump_lanes, lights=(None,), length=args.largo, lanes=lanes,
+                         without=tuple(args.sin), replicas=spacing.replicas, run=spacing.run)  # fmt: skip
+        meta = metadata(base_metadata(base, scen, configs, seed, argv), spacing, kept, skipped)
+    except ConfigError as exc:
+        parser.error(str(exc))
+
+    print(f"Separación entre topes · configuración {target.config}")
+    print(f"{len(configs)} escenarios × {spacing.replicas} réplicas · run {spacing.run:g} s × {base.time_scale:g} = "
+          f"{spacing.run * base.time_scale:g} s simulados · semilla {seed}")  # fmt: skip
+    if skipped:
+        print("Aviso: no caben en el tramo y se omiten las separaciones " + ", ".join(f"{d:g}" for d in skipped) + " m")
+
+    def progress(name: str, done: int, total: int) -> None:
+        if done == 1:
+            sys.stderr.write(f"  {name}\n")
+        _progress(done, total)
+
+    data = run_scenarios(configs, spacing.replicas, seed, opts.workers, progress=progress if opts.progress else None)
+    folder = make_run_dir(resolve_output_dir(opts.output_dir), safe_name(target.name or SPACING_NAME), datetime.now())
+    text = settings.text if opts.seed is not None else _set_key(settings.text, "execution", "seed", seed, "semilla usada")
+    (folder / BASE_CONFIG_NAME).write_text(
+        f"# Configuración base de la comparación {folder.name}\n# {meta['comando']}\n\n{text}", encoding="utf-8"
+    )
+    summary = write_outputs(folder, meta, data)
+    print("\n" + summary)
+    (folder / SPACING_SUMMARY).write_text(f"{meta['comando']}\n\n{summary}\n", encoding="utf-8")
+    plot_bump_spacing(_free_path(folder / SPACING_PLOT), meta, data, analyze(meta, data))
     print(f"\nResultados en {folder}")
     return folder
 
