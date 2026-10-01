@@ -119,6 +119,7 @@
 
 <nav>
   <a href="#uso">Uso</a>
+  <a href="#api">API y JSON</a>
   <a href="#road">[road]</a>
   <a href="#traffic_light">[traffic_light]</a>
   <a href="#demand">[demand]</a>
@@ -236,6 +237,9 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       <code>resumen.txt</code> (por km, por recorrido, exceso frente a flujo libre y tabla al acelerar de 0 a 80
       km/h), en la gráfica y en <code>emisiones_posicion.png</code>/<code>.csv</code>. Requieren <code>accel</code> y
       <code>decel</code>.</li>
+    <li>Nueva <a href="#api">API de Python (<code>trafico.api</code>) y <code>resultados.json</code></a>: cada corrida
+      escribe un resumen en JSON de formato estable y los comandos aceptan <code>--json</code> (imprime ese JSON en
+      stdout); la API corre lo mismo que los comandos con argumentos con nombre y devuelve el resultado ya leído.</li>
     <li>Nueva opción <a href="#spacing"><code>trafico-emisiones --separacion</code></a>: barrido de la distancia entre dos
       topes que calcula la aditividad de sus emisiones, la media en el tramo, el exceso entre ellos, el gradiente en el tramo, el costo de cada tope añadido, la
       huella de un tope y la separación mínima para diluirla, con una figura y tablas.</li>
@@ -409,6 +413,99 @@ uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code
     <code>config_base.toml</code>. Son 2 + (número de separaciones) escenarios por réplicas: con <code>--replicas</code>
     y <code>--run</code> se acorta. Los valores valen para la velocidad de crucero, <code>accel</code> y
     <code>speed_bump_kmh</code> de la configuración.</p>
+</section>
+
+<section id="api">
+  <h2>API de Python y <code>resultados.json</code></h2>
+  <p>Para usar el simulador desde un programa (un script, un notebook, un agente) sin leer texto ni abrir CSV, hay dos
+    cosas que no cambian entre versiones mientras no suba su número: el archivo <code>resultados.json</code> de cada
+    carpeta de resultados y el módulo <code>trafico.api</code>.</p>
+
+  <h3 id="results-json"><code>resultados.json</code> y <code>--json</code></h3>
+  <p>Cada comando (<code>trafico</code>, <code>trafico-variantes</code>, <code>trafico-emisiones</code>, con o sin
+    <code>--separacion</code>) escribe <code>resultados.json</code> al terminar. Con <code>--json</code>, el comando
+    imprime ese mismo JSON en stdout y manda todo lo demás (resumen, progreso, avisos) a stderr:</p>
+  <pre><code>uv run trafico-emisiones --separacion 20 40 60 --cadena 3 --json 2&gt;/dev/null | python -c "import json,sys; print(json.load(sys.stdin)['metricas']['recomendada_m'])"
+uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes --json    # también con comparaciones ya corridas</code></pre>
+  <p>La cabecera es la misma en todos los modos:</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Contenido</th></tr></thead>
+    <tbody>
+      <tr><td><code>schema</code></td><td>Versión del formato (hoy 1).</td></tr>
+      <tr><td><code>modo</code></td><td><code>"corrida"</code> (<code>trafico</code>), <code>"variantes"</code>,
+        <code>"emisiones"</code> o <code>"separacion"</code>.</td></tr>
+      <tr><td><code>id</code>, <code>carpeta</code>, <code>creado</code></td><td>Nombre de la carpeta, su ruta absoluta y la
+        fecha y hora (ISO 8601).</td></tr>
+      <tr><td><code>comando</code>, <code>semilla</code>, <code>replicas</code>, <code>s_simulados</code></td>
+        <td>Con qué se corrió (la semilla usada, aunque fuera aleatoria).</td></tr>
+      <tr><td><code>archivos</code></td><td>Archivos de la carpeta (nombres relativos).</td></tr>
+      <tr><td><code>metricas</code></td><td>Lo propio de cada modo (abajo).</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong><code>corrida</code></strong>: <code>tipos</code> (por clave de tipo, <code>car</code>, <code>bus</code>…:
+      los estadísticos de la tabla del resumen, media entre réplicas, con claves como <code>vehiculos_cruzan</code>,
+      <code>pasajeros_min</code>, <code>tiempo_recorrido_s</code>, <code>velocidad_media_kmh</code>,
+      <code>co2_g_km</code>, <code>co2_exceso_flujo_libre_pct</code>, <code>combustible_l_100km</code>),
+      <code>carriles</code> (<code>cruzan_veh_min</code>, <code>linea_cerrada_pct</code>), <code>peatones</code> (cruces de
+      cada tope y semáforo peatonal), <code>cambios_carril_por_replica</code> y <code>ejecucion</code>.</li>
+    <li><strong><code>emisiones</code></strong>: <code>escenarios</code>, cada uno con <code>nombre</code>,
+      <code>topes_m</code>, <code>semaforo</code> y, por tipo, <code>veh_min</code>, <code>tiempo_recorrido_s</code>,
+      <code>velocidad_media_kmh</code> y por contaminante <code>por_km</code>, <code>cambio_pct</code> (frente al
+      escenario <code>referencia</code>) y <code>exceso_flujo_libre_pct</code>; <code>parametros</code> es el
+      <code>escenarios.json</code>.</li>
+    <li><strong><code>separacion</code></strong>: <code>distancias_m</code>, <code>recomendada_m</code>,
+      <code>huella_m</code>, <code>topes_por_cadena</code> y, por contaminante, un valor por separación de
+      <code>aditividad</code>, <code>media_tramo</code>, <code>exceso_entre</code>, <code>gradiente_tramo</code>,
+      <code>costo_tope</code> y <code>costo_por_m</code> (ver <a href="#spacing">separación entre topes</a>), más
+      <code>d_aditiva</code>, <code>d_huella</code> y <code>d_minima</code>.</li>
+    <li><strong><code>variantes</code></strong>: <code>escenarios</code> por tramo y semáforo, con
+      <code>velocidad_kmh_por_carril</code>, <code>cola_final</code>, <code>cola_maxima</code> y <code>cruzan</code>.</li>
+  </ul>
+  <p>Reglas del formato: las claves son ASCII en minúsculas con la unidad al final (<code>_s</code>, <code>_m</code>,
+    <code>_kmh</code>, <code>_pct</code>); NaN e infinitos salen como <code>null</code> (JSON estricto); una clave
+    no cambia de significado ni de unidad, y se pueden añadir claves nuevas sin cambiar <code>schema</code>. Las
+    carpetas de comparaciones y barridos hechas antes de esta versión no lo tienen: la API lo reconstruye de sus datos
+    crudos sin escribir nada; las corridas antiguas de <code>trafico</code> hay que volver a correrlas.</p>
+
+  <h3 id="python-api"><code>trafico.api</code></h3>
+  <pre><code>from trafico import api
+
+run = api.simulate()                                                   # como `uv run trafico`
+run.results["metricas"]["tipos"]["car"]["tiempo_recorrido_s"]
+run = api.compare_emissions(bumps=["sin", 35, (35, 70)], replicas=4)   # trafico-emisiones
+run = api.bump_spacing(distances=[20, 40, 60], chain=3)                # trafico-emisiones --separacion
+run = api.compare_variants(lengths=[100, 200], lights=[(40, 20), "30/30"])
+api.list_runs(mode="separacion", limit=5)                              # carpetas, de la más reciente
+api.read_results("resultados/&lt;ID&gt;_separacion_topes")                    # su resultados.json
+api.redraw("resultados/&lt;ID&gt;_separacion_topes")                          # gráfica nueva, sin simular
+api.describe_config()                                                  # la configuración leída y validada</code></pre>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Función</th><th>Qué hace</th></tr></thead>
+    <tbody>
+      <tr><td><code>simulate(config=None, *, name=None)</code></td><td>Una corrida de <code>trafico</code>.</td></tr>
+      <tr><td><code>compare_emissions(config=None, *, name, bumps, lights, lanes, without, length, bump_lanes, replicas,
+        run)</code></td><td><code>trafico-emisiones</code>. <code>bumps</code>: por escenario, <code>None</code>/<code>"sin"</code>,
+        una posición o una lista de posiciones.</td></tr>
+      <tr><td><code>bump_spacing(config=None, *, name, distances, chain, first, tolerance, threshold, lights, lanes,
+        without, length, bump_lanes, replicas, run)</code></td><td><code>trafico-emisiones --separacion</code>.</td></tr>
+      <tr><td><code>compare_variants(config=None, *, name, lengths, lights, lanes, without, queue, replicas,
+        run)</code></td><td><code>trafico-variantes</code>. <code>lights</code>: pares <code>(rojo, verde)</code> o
+        textos <code>"40/20"</code>.</td></tr>
+      <tr><td><code>redraw(folder)</code>, <code>read_results(folder)</code>, <code>list_runs(output_dir=None, mode=None,
+        limit=None)</code>, <code>describe_config(config=None)</code></td><td>Consulta y redibujo, sin simular.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Las funciones de corrida devuelven un <code>Run</code> con <code>folder</code>, <code>mode</code>,
+    <code>results</code> (el <code>resultados.json</code>), <code>files</code>, <code>path(nombre)</code> y
+    <code>log</code> (lo que el comando habría impreso). <code>config</code> es <code>None</code> (el
+    <code>config.toml</code> de la raíz), una carpeta con su <code>config.toml</code> (p. ej. una de resultados, para
+    repetir la corrida) o la ruta de un <code>config.toml</code>; <code>name</code> solo se admite sin
+    <code>config</code>. Los errores de configuración o de argumentos son <code>ConfigError</code> (subclase de
+    <code>ValueError</code>); una carpeta inexistente, <code>FileNotFoundError</code>. Las funciones no imprimen ni leen
+    <code>sys.argv</code>; capturan stdout y stderr mientras corren, así que no se llaman desde varios hilos a la vez
+    (varios procesos sí). Cada una acepta los mismos argumentos que su opción de línea de comandos, con el mismo
+    significado; los nombres y las claves del JSON no cambian mientras <code>api.API_VERSION</code> sea 1.</p>
 </section>
 
 <section id="road">

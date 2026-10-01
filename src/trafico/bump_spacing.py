@@ -197,6 +197,20 @@ def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
     return summary_text(meta, result)
 
 
+def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
+    """Métricas de `resultados.json`: las de `analyze` por contaminante (un valor por separación) y la separación mínima."""
+    r = analyze(meta, data)
+    keep = ("aditividad", "media_tramo", "exceso_entre", "gradiente_tramo", "pendiente_max", "costo_tope", "costo_por_m",
+            "pico", "huella_m", "pendiente_tope_solo", "neto_tope_solo", "d_aditiva", "d_huella", "d_minima")  # fmt: skip
+    return {
+        "topes_por_cadena": int(meta.get("topes_por_cadena", 2)), "primer_tope_m": meta["primer_tope_m"],
+        "distancias_m": r["distancias_m"], "omitidas_m": meta.get("omitidas_m", []), "tolerancia": meta["tolerancia"],
+        "umbral": meta["umbral"], "recomendada_m": r["recomendada_m"], "huella_m": r["huella_m"],
+        "contaminantes": {pol: {k: v[k] for k in keep} for pol, v in r["pollutants"].items()},
+        "parametros": meta,
+    }  # fmt: skip
+
+
 def _num(v: float) -> str:
     return "" if not np.isfinite(v) else f"{v:.4g}"
 

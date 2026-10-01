@@ -615,7 +615,7 @@ def test_resolve_target(root, monkeypatch):
 def test_name_argument_and_replication(root, capsys):
     first = run(["hora pico"])  # nombre con espacio: se sanea
     assert first.parent == root / "resultados" and _named(first, "hora_pico")
-    assert {p.name for p in first.iterdir()} == {CONFIG_NAME, PLOT_NAME, PAX_PLOT_NAME, CSV_NAME, SUMMARY_NAME}
+    assert {p.name for p in first.iterdir()} == {CONFIG_NAME, PLOT_NAME, PAX_PLOT_NAME, CSV_NAME, SUMMARY_NAME, "resultados.json"}
     assert (first / PLOT_NAME).stat().st_size > 10_000
     assert (first / PAX_PLOT_NAME).stat().st_size > 10_000
     lines = (first / CSV_NAME).read_text().splitlines()
