@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import DT, GREEN, RED, YELLOW, SimConfig
+from trafico.config import DT, GREEN, RED, YELLOW, SimConfig, StopLine
 from trafico.engine import Simulation
 from trafico.plotting import (
     BASELINE, INK, INK_2, MUTED, RED_PHASE, SURFACE, TYPE_COLORS, YELLOW_PHASE,
@@ -41,7 +41,7 @@ class Trajectories:
     cfg: SimConfig
     t: np.ndarray  # (F,) s simulados de cada instante
     phase: np.ndarray  # (F,) fase del semáforo del final del tramo (RED, GREEN o YELLOW)
-    inner_phase: np.ndarray  # (F, semáforos intermedios) fase de cada uno
+    inner_phase: np.ndarray  # (F, líneas de alto intermedias) fase de cada una (`cfg.stop_lines`)
     offsets: np.ndarray  # (F+1,) filas del instante f: offsets[f]:offsets[f+1]
     vid: np.ndarray
     vtype: np.ndarray
@@ -90,8 +90,8 @@ def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) ->
         exit_queued.append(sim.exit_q.copy())
         exit_closed.append(sim.exit_closed.copy())
         veh.append(sim.cum_veh - base_veh)
-        phases.append(cfg.phase(sim.tick))
-        inner.append(cfg.inner_phases(sim.tick))
+        phases.append(sim.exit_phase(sim.tick))
+        inner.append(sim.line_phases(sim.tick))
         counts.append(n)
         rank, size = sim.row_positions()
         parts.append((sim.vid[:n].copy(), sim.vtype[:n].copy(), sim.lane[:n].copy(),
@@ -101,7 +101,7 @@ def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) ->
     cols = [np.concatenate(c) if c else np.zeros(0) for c in zip(*parts)] if parts else [np.zeros(0)] * 11
     return Trajectories(
         cfg=cfg, t=np.array(ts), phase=np.array(phases, np.int8),
-        inner_phase=np.array(inner, np.int8).reshape(len(ts), len(cfg.inner_lights)),
+        inner_phase=np.array(inner, np.int8).reshape(len(ts), len(cfg.stop_lines)),
         offsets=np.concatenate(([0], np.cumsum(counts))).astype(np.int64),
         vid=cols[0], vtype=cols[1], lane=cols[2], target=cols[3], x=cols[4], stopped=cols[5],
         row_rank=cols[6], row_size=cols[7], vlen=cols[8], cargo=cols[9].astype(np.bool_),
@@ -117,12 +117,18 @@ def _active(cfg: SimConfig) -> list[int]:
     return [k for k, rate in enumerate(cfg.rates) if rate > 0]
 
 
-def _phase_spans(traj: Trajectories) -> list[tuple[float, float, str]]:
-    """Fases en rojo y en amarillo dentro de la ventana grabada: (inicio, fin, color)."""
-    t0, t1 = float(traj.t[0]), float(traj.t[-1])
-    spans = [(a, b, RED_PHASE) for a, b in traj.cfg.red_intervals()]
-    spans += [(a, b, YELLOW_PHASE) for a, b in traj.cfg.yellow_intervals()]
-    return [(max(a, t0), min(b, t1), c) for a, b, c in spans if b > t0 and a < t1]
+def _phase_spans(traj: Trajectories, phases: np.ndarray) -> list[tuple[float, float, str]]:
+    """Fases en rojo y en amarillo de `phases` (una por instante grabado) dentro de la ventana: (inicio, fin, color).
+    Salen de lo grabado, no del ciclo del config, porque la fase de un paso peatonal depende de los peatones."""
+    if not phases.size:
+        return []
+    change = np.flatnonzero(np.diff(phases)) + 1
+    first = np.r_[0, change]
+    last = np.r_[change - 1, phases.size - 1]
+    t1 = float(traj.t[-1])
+    colors = {RED: RED_PHASE, YELLOW: YELLOW_PHASE}
+    return [(float(traj.t[a]), min(float(traj.t[b]) + DT, t1), colors[int(phases[a])])
+            for a, b in zip(first, last) if int(phases[a]) in colors]  # fmt: skip
 
 
 def _stops(cfg: SimConfig, lane: int) -> list[tuple[int, float]]:
@@ -164,28 +170,34 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
     fig = Figure(figsize=(12, 1.5 + 2.2 * lanes), facecolor=SURFACE)
     axes = fig.subplots(lanes, 1, sharex=True, squeeze=False, gridspec_kw={"hspace": 0.35})[:, 0]
     assigned = _lane_assignments(cfg, _active(cfg))
-    spans = _phase_spans(traj)
-    bump_lanes = cfg.speed_bump_lanes()
+    # Con semáforos intermedios o pasos peatonales, las fases se marcan sobre la línea de cada uno (y la del final del
+    # tramo); con solo el del final, sombrean todo el panel.
+    marked = bool(cfg.stop_lines)
+    exit_spans = _phase_spans(traj, traj.phase) if cfg.has_light else []
+    line_spans = [(s, _phase_spans(traj, traj.inner_phase[:, j])) for j, s in enumerate(cfg.stop_lines)]
+    if cfg.has_light:
+        line_spans.append((StopLine(cfg.length, cfg.exit_light), exit_spans))
+    crossings = {b.position for b in cfg.crossings}
     for lane in range(lanes):
         ax = axes[lanes - 1 - lane]  # carril izquierdo arriba, como en una vista desde arriba
         _style_axis(ax, "{:,.0f}")
-        if not cfg.inner_lights and lane not in cfg.free_lanes:  # sin semáforo, las fases no lo afectan
-            shade_phases(ax, spans)
+        if not marked and lane not in cfg.free_lanes:  # sin otras líneas, las fases del semáforo sombrean el panel
+            shade_phases(ax, exit_spans)
         ax.axhline(cfg.length, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
-        for light in cfg.lights if cfg.inner_lights else ():  # varios semáforos: sus fases, sobre su línea
-            ax.axhline(light.position, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
-            if lane not in light.free_lanes:
-                for intervals, color, width in ((light.yellow_intervals(cfg.sim_seconds), YELLOW_PHASE, 3),
-                                                (light.red_intervals(cfg.sim_seconds), RED_PHASE, 3)):  # fmt: skip
-                    for a, b in intervals:
-                        if b > traj.t[0] and a < traj.t[-1]:
-                            ax.hlines(light.position, max(a, traj.t[0]), min(b, traj.t[-1]), colors=color,
-                                      linewidth=width, zorder=3)  # fmt: skip
-        if lane in bump_lanes:
-            for pos in cfg.speed_bump.positions:
+        for line, spans in line_spans if marked else ():
+            if line.light is not None:  # el paso peatonal de un tope se dibuja con él, abajo
+                ax.axhline(line.position, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
+            if lane in line.free_lanes or (line.lanes is not None and lane not in line.lanes):
+                continue
+            for a, b, color in spans:
+                ax.hlines(line.position, a, b, colors=color, linewidth=3, zorder=3)
+        for bump in cfg.bumps:
+            if lane in cfg.bump_lanes(bump):
+                pos = bump.position
                 ax.axhline(pos, color=MUTED, linewidth=1.5, linestyle=(0, (6, 2, 1, 2)), zorder=1)
-                ax.annotate("tope", (0, pos), xycoords=("axes fraction", "data"), xytext=(4, 3),
-                            textcoords="offset points", ha="left", fontsize=8, color=INK_2)  # fmt: skip
+                ax.annotate("tope · peatones" if pos in crossings else "tope", (0, pos),
+                            xycoords=("axes fraction", "data"), xytext=(4, 3), textcoords="offset points", ha="left",
+                            fontsize=8, color=INK_2)  # fmt: skip
         for k, pos in _stops(cfg, lane):
             ax.axhline(pos, color=TYPE_COLORS[k], linewidth=1, linestyle=(0, (1, 2)), zorder=1)
             ax.annotate(f"parada {cfg.specs[k].name}", (1, pos), xycoords=("axes fraction", "data"),
@@ -293,13 +305,14 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     ax.tick_params(colors=MUTED, labelcolor=INK_2, labelsize=8, length=0)
     ax.set_yticks(range(lanes), labels)
     ax.set_xlabel("posición (m)", color=INK_2, fontsize=9)
-    bump_lanes = cfg.speed_bump_lanes()
-    for pos in cfg.speed_bump.positions:
+    for bump in cfg.bumps:
+        pos, bump_lanes = bump.position, cfg.bump_lanes(bump)
         for lane in bump_lanes:  # tope: franja rayada a lo ancho del carril
             ax.add_patch(Rectangle((pos - 0.4, lane - 0.45), 0.8, 0.9, facecolor=YELLOW_PHASE, edgecolor=INK_2,
                                    hatch="////", linewidth=0.6, zorder=1))  # fmt: skip
         if bump_lanes:  # una sola etiqueta por tope, sobre el carril con tope de más arriba
-            ax.annotate("tope", (pos, max(bump_lanes) + 0.45), xytext=(0, 1),
+            label = "tope · peatones" if bump.pedestrian else "tope"
+            ax.annotate(label, (pos, max(bump_lanes) + 0.45), xytext=(0, 1),
                         textcoords="offset points", ha="center", va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
     for lane in range(lanes):
         for k, pos in _stops(cfg, lane):
@@ -330,13 +343,20 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     storage = cfg.lane_exit_storage
     # Semáforo: un tramo por carril; los carriles sin semáforo siempre en verde. Sin semáforo no se dibuja.
     light_w = max(1.5, cfg.length * 0.006)
-    sources = [(lt, traj.inner_phase[:, j]) for j, lt in enumerate(cfg.inner_lights)]
+    sources = [(line, traj.inner_phase[:, j]) for j, line in enumerate(cfg.stop_lines)]
     if cfg.has_light:
-        sources.append((cfg.exit_light, traj.phase))
-    lights = [(Rectangle((lt.position, lane - 0.5), light_w, 1, zorder=3, animated=True), lane, phases, lt.free_lanes)
-              for lt, phases in sources for lane in range(lanes)]  # fmt: skip
+        sources.append((StopLine(cfg.length, cfg.exit_light), traj.phase))
+    lights = [(Rectangle((line.position, lane - 0.5), light_w, 1, zorder=3, animated=True), lane, phases,
+               line.free_lanes)
+              for line, phases in sources for lane in range(lanes)
+              if line.lanes is None or lane in line.lanes]  # fmt: skip
     for light, *_ in lights:
         ax.add_patch(light)
+    # Leyenda de los semáforos peatonales (verde para los vehículos salvo con peatones esperando), sobre su línea.
+    walkers = [line for line, _ in sources if line.light is not None and line.light.pedestrian]
+    for line in walkers:
+        ax.annotate("semáforo peatonal", (line.position, lanes - 0.5), xytext=(0, 1), textcoords="offset points",
+                    ha="center", va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
     cars = PolyCollection([], linewidths=0.9, zorder=2, animated=True)
     ax.add_collection(cars)
     # Reloj: tiempo simulado y tiempo real (de proceso) = simulado / time_scale, como en --run.
@@ -347,7 +367,8 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     fig.text(0.02, 1 - 0.55 / fh,
              f"{title_note} · video ×{anim.speed:g} · borde oscuro = detenido"
              + (" · claro = mercancía" if any(sp.cargo_prob > 0 for sp in cfg.specs) else "")
-             + (" · negro = bottleneck" if cfg.bottleneck_active else ""),
+             + (" · negro = bottleneck" if cfg.bottleneck_active else "")
+             + (" · semáforo peatonal: rojo solo con peatones esperando" if walkers else ""),
              ha="left", fontsize=9, color=INK_2)  # fmt: skip
     counters = _crossing_counters(fig, traj, width_in, 1 - 0.68 / fh)
 

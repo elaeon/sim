@@ -48,11 +48,12 @@ def test_reduce_config_keeps_exit_queue_and_free_lanes_of_the_chosen_lanes():
 
 
 def test_reduce_config_keeps_the_speed_bump_of_the_chosen_lanes():
-    base = replace(_base(), speed_bump=SpeedBump(position=100.0, lanes=(1, 2)))
-    assert reduce_config(base, (2, 3), ("bike",)).speed_bump == SpeedBump(position=100.0, lanes=(0,))
-    assert reduce_config(base, (0, 3), ("car",)).speed_bump_lanes() == ()  # ninguno de sus carriles: sin tope
-    everywhere = replace(_base(), speed_bump=SpeedBump(position=100.0))
-    assert reduce_config(everywhere, (1, 2), ("bike", "bus")).speed_bump_lanes() == (0, 1)
+    base = replace(_base(), speed_bumps=(SpeedBump(100.0, (1, 2)), SpeedBump(150.0, (0,))))
+    assert reduce_config(base, (2, 3), ("bike",)).speed_bumps == (SpeedBump(100.0, (0,)),)  # el de 150 m pierde su único carril
+    assert reduce_config(base, (3,), ("car", "bike")).speed_bumps == ()  # ninguno de sus carriles: sin tope
+    everywhere = replace(_base(), speed_bumps=(SpeedBump(100.0),))
+    reduced = reduce_config(everywhere, (1, 2), ("bike", "bus"))
+    assert reduced.speed_bumps == (SpeedBump(100.0),) and reduced.bump_lanes(reduced.speed_bumps[0]) == (0, 1)
 
 
 def test_reduce_config_errors():
@@ -145,3 +146,18 @@ def test_scenario_varies_only_the_light_at_the_end():
     assert (cfg.red, cfg.green) == (20.0, 40.0) and cfg.extra_lights == (Light(90.0, red=12, green=8),)
     with pytest.raises(ConfigError, match="tramo de 60 m, semáforo 20/40: .*cada semáforo intermedio"):
         scenario(base, replace(v, lengths=(60.0,)), 60.0, 20.0, 40.0)  # el de 90 m ya no cabe
+
+
+def test_scenario_replaces_a_pedestrian_light_at_the_end_with_a_fixed_cycle_one():
+    """trafico-variantes varía el reparto rojo/verde del final del tramo: ahí el semáforo es de ciclo fijo, aunque en la
+    configuración sea peatonal; los intermedios peatonales se conservan."""
+    from trafico.config import Rate
+
+    pedestrian = Light(100.0, red=12.0, green=15.0, yellow=3.0, pedestrian=True, pedestrian_crossing=Rate(2, 2, 2, 0))
+    base = replace(_base(), light_pedestrian=True, extra_lights=(pedestrian,), length=300)
+    reduced = reduce_config(base, None, ())
+    assert reduced.extra_lights == (pedestrian,) and reduced.exit_light.pedestrian
+    v = Variants(lengths=(300.0,), lights=((20.0, 40.0),), lanes=None, without=(), queue_types=(), replicas=1, run=2.0)
+    cfg = scenario(reduced, v, 300.0, 20.0, 40.0)
+    assert not cfg.exit_light.pedestrian and cfg.ref_light.position == 300.0 and cfg.cycle == 60.0
+    assert cfg.extra_lights == (pedestrian,)

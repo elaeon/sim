@@ -34,6 +34,12 @@ free_lanes = []         # carriles sin semáforo (0 = derecho), p. ej. [0] para 
                         #   [[traffic_light]]          # el del final del tramo
                         #   red = 25.0
                         #   green = 35.0
+# pedestrian = false    # true = semáforo peatonal: verde para los vehículos mientras no haya peatones esperando; con
+                        # alguno en la cola, pasa a amarillo (yellow) y a rojo (red = lo que dura el cruce), y vuelve a
+                        # verde. No es inmediato: espera el verde mínimo (green) entre dos cruces y, si hay otro
+                        # semáforo de ciclo fijo antes de él, a que ese esté en rojo. No lleva start_phase.
+# pedestrian_crossing = {min = 0.5, max = 3, mean = 1.5, std = 1}   # peatones/min que llegan a la cola: normal(mean, std)
+                        # truncada a [min, max], resorteada cada [demand] rate_interval (llegadas Poisson); es el valor por omisión
 
 [demand]                # llegadas Poisson en veh/min, un diccionario por tipo: {min, max, mean, std}.
                         # La tasa es una normal(mean, std) truncada a [min, max] que se vuelve a sortear
@@ -63,8 +69,20 @@ storage = 60            # m que mide la cola de salida de cada carril (número o
                         # cierra para él; una cola vacía acepta a cualquiera.
 
 [speed_bump]            # tope (reductor de velocidad): quien lo pisa no rebasa el speed_bump_kmh de su tipo
-# position = 60.0       # m desde el inicio del tramo; sin ella, no hay tope. Una lista ([35, 70]) pone varios topes
+# position = 60.0       # m desde el inicio del tramo (un número); sin ella, no hay tope. Para varios topes, una sección
+                        # [[speed_bump]] por tope, cada uno con su position, lanes y peatones. Ejemplo:
+                        #   [[speed_bump]]
+                        #   position = 35.0
+                        #   lanes = [1, 2]
+                        #   [[speed_bump]]
+                        #   position = 70.0
+                        #   pedestrian = true
 # lanes = [1, 2]        # carriles con tope (0 = derecho); sin ella, todos
+# pedestrian = false    # true = cada tope es también un paso peatonal: aparecen peatones que cruzan y los vehículos se
+                        # detienen del todo mientras cruza alguno (los tipos sin speed_bump_kmh también)
+# pedestrian_crossing = {min = 0.5, max = 3, mean = 1.5, std = 1}   # peatones/min que llegan al paso (cada tope sortea los
+                        # suyos): normal(mean, std) truncada a [min, max], resorteada cada [demand] rate_interval
+# pedestrian_time = 10.0   # s que tarda cada peatón en cruzar (múltiplo de 0.1); espera 3 s en la orilla antes de cruzar
 
 [fuel]                  # combustible: el consumo sale del CO2 emitido (g de CO2 por litro de cada combustible)
 price = {gasolina = 23.99, diesel = 26.99}   # precio por litro: mediana de la regular y del diésel en las

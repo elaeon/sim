@@ -11,8 +11,8 @@ from pathlib import Path
 
 from trafico import __version__
 from trafico.config import (
-    DEFAULT_RATES, DEFAULT_SPECS, DT, FUELS, MAX_TYPES, POLLUTANTS, Behavior, Bottleneck, Light, Rate, SimConfig,
-    SpeedBump, VehicleSpec,
+    DEFAULT_RATES, DEFAULT_SPECS, DT, FUELS, MAX_TYPES, PEDESTRIAN_RATE, PEDESTRIAN_TIME, POLLUTANTS, Behavior,
+    Bottleneck, Light, Rate, SimConfig, SpeedBump, VehicleSpec,
 )
 from trafico.emission_sets import EMISSION_SETS
 
@@ -204,10 +204,7 @@ def parse_settings(text: str, path: Path) -> Settings:
         stop_lanes=r.get(("bottleneck", "stop_lanes"), INTS, bn.stop_lanes),
         stop_zone=_zone(r.get(("bottleneck", "stop_zone"), FLOATS, bn.stop_zone)),
     )
-    speed_bump = SpeedBump(
-        position=r.get(("speed_bump", "position"), FLOATS, None),
-        lanes=r.get(("speed_bump", "lanes"), INTS, None),
-    )
+    speed_bumps, bump_notices = _speed_bumps(r)
 
     d = SimConfig()
     occupancy = r.get(("initial", "occupancy"), FLOATS, d.initial_occupancy)
@@ -218,6 +215,7 @@ def parse_settings(text: str, path: Path) -> Settings:
     # número de carriles, para que esas copias carguen con los mismos carriles.
     congestion = r.get(("behavior", "congestion_factor"), FLOATS, None)
     lanes, speed_limit, notices = _lanes(r, occupancy, d.lanes, exit_capacity, exit_storage, congestion)
+    notices += bump_notices
     if congestion is not None:
         notices += ("Aviso: [behavior] congestion_factor se eliminó y se ignora (no cambia la velocidad); puedes "
                     "quitarla del archivo",)  # fmt: skip
@@ -250,6 +248,8 @@ def parse_settings(text: str, path: Path) -> Settings:
         start_phase=exit_light.start_phase,
         traffic_light=exit_light.enabled,
         free_lanes=exit_light.free_lanes,
+        light_pedestrian=exit_light.pedestrian,
+        light_pedestrian_crossing=exit_light.pedestrian_crossing,
         extra_lights=extra_lights,
         # Solo con alguna tasa variable hace falta la distribución; si todas son fijas, basta su valor.
         **({"rate_dists": rates} if any(rate.variable for rate in rates) else {"rates": tuple(r.expected for r in rates)}),
@@ -263,7 +263,7 @@ def parse_settings(text: str, path: Path) -> Settings:
         specs=specs,
         behavior=behavior,
         bottleneck=bottleneck,
-        speed_bump=speed_bump,
+        speed_bumps=speed_bumps,
         **_fuel(r, d),
     )
 
@@ -519,31 +519,40 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
 def _lights(r: _Reader, length: float, d: SimConfig) -> tuple[Light, tuple[Light, ...]]:
     """[traffic_light]: un semáforo al final del tramo (una sección) o varios ([[traffic_light]], uno por semáforo).
     Cada uno lleva `position` (m desde el inicio; sin ella o igual a `length`, el del final del tramo), `enabled`,
-    `red`, `green`, `yellow`, `start_phase` y `free_lanes`. Devuelve (el del final del tramo, los intermedios);
-    si hay semáforos pero ninguno en el final del tramo, este queda desactivado."""
+    `red`, `green`, `yellow`, `start_phase`, `free_lanes` y, si es peatonal, `pedestrian` y `pedestrian_crossing`.
+    Devuelve (el del final del tramo, los intermedios); si hay semáforos pero ninguno en el final del tramo, este
+    queda desactivado."""
     table = r.data.get("traffic_light")
     if table is None:
         return d.exit_light, ()
     if isinstance(table, dict):
-        entries = [lambda key, kind, default: r.get(("traffic_light", key), kind, default)]
-        checks = []
+        readers, checks = [r], []
     elif isinstance(table, list) and all(isinstance(e, dict) for e in table):
         r.used.add(("traffic_light",))
-        entries, checks = [], []
+        readers, checks = [], []
         for i, entry in enumerate(table, 1):
             sub = _Reader({"traffic_light": entry})
-            entries.append(lambda key, kind, default, sub=sub: sub.get(("traffic_light", key), kind, default))
+            readers.append(sub)
             checks.append((i, sub))
     else:
         raise ConfigError("[traffic_light] debe ser una sección o una lista de secciones ([[traffic_light]])")
     lights = []
-    for read in entries:
+    for reader in readers:
+        def read(key, kind, default, reader=reader):
+            return reader.get(("traffic_light", key), kind, default)
+
         position = read("position", float, None)
+        pedestrian = read("pedestrian", bool, False)
+        start_phase = read("start_phase", str, None)
+        if pedestrian and start_phase is not None:
+            raise ConfigError("[traffic_light] start_phase no aplica a un semáforo con pedestrian = true (siempre "
+                              "empieza en verde): quítala")  # fmt: skip
         lights.append(Light(
             position=length if position is None else position,
             red=read("red", float, d.red), green=read("green", float, d.green),
-            yellow=read("yellow", float, d.yellow), start_phase=read("start_phase", str, d.start_phase),
+            yellow=read("yellow", float, d.yellow), start_phase=start_phase or d.start_phase,
             enabled=read("enabled", bool, d.traffic_light), free_lanes=read("free_lanes", INTS, d.free_lanes),
+            pedestrian=pedestrian, pedestrian_crossing=_crossing(reader, ("traffic_light",)),
         ))  # fmt: skip
     for i, sub in checks:
         unknown = sub.unknown()
@@ -556,6 +565,67 @@ def _lights(r: _Reader, length: float, d: SimConfig) -> tuple[Light, tuple[Light
                           "position): solo puede haber uno")  # fmt: skip
     extra = tuple(sorted((lt for lt in lights if lt not in at_exit), key=lambda lt: lt.position))
     return (at_exit[0] if at_exit else replace(d.exit_light, enabled=False)), extra
+
+
+def _speed_bumps(r: _Reader) -> tuple[tuple[SpeedBump, ...], tuple[str, ...]]:
+    """[speed_bump]: un tope (una sección) o varios ([[speed_bump]], uno por tope), cada uno con su `position` (m desde
+    el inicio, un número), `lanes`, `pedestrian`, `pedestrian_crossing` y `pedestrian_time`. Sin la sección no hay
+    topes; una sección sin `position` ni otra clave tampoco. Devuelve (topes, avisos). `position` como lista
+    (el formato anterior) se acepta con un aviso: cada posición es un tope con las demás claves de la sección."""
+    table = r.data.get("speed_bump")
+    if table is None:
+        return (), ()
+    if isinstance(table, dict):
+        readers, checks = [r], []
+    elif isinstance(table, list) and all(isinstance(e, dict) for e in table):
+        r.used.add(("speed_bump",))
+        readers, checks = [], []
+        for i, entry in enumerate(table, 1):
+            sub = _Reader({"speed_bump": entry})
+            readers.append(sub)
+            checks.append((i, sub))
+    else:
+        raise ConfigError("[speed_bump] debe ser una sección o una lista de secciones ([[speed_bump]])")
+    bumps, notices = [], ()
+    for n, reader in enumerate(readers, 1):
+        legacy = isinstance(table, dict)
+        value = reader.get(("speed_bump", "position"), FLOATS, None)
+        lanes = reader.get(("speed_bump", "lanes"), INTS, None)
+        pedestrian = reader.get(("speed_bump", "pedestrian"), bool, False)
+        rate = _crossing(reader, ("speed_bump",))
+        time = reader.get(("speed_bump", "pedestrian_time"), float, PEDESTRIAN_TIME)
+        if isinstance(value, tuple):
+            if not legacy:
+                raise ConfigError(f"[[speed_bump]] position del tope {n} debe ser un número (un tope por sección); "
+                                  "para varios topes, una sección [[speed_bump]] cada uno")  # fmt: skip
+            notices = ("Aviso: [speed_bump] position como lista se reemplazó por una sección [[speed_bump]] por tope; "
+                       "se usa cada posición como un tope con las mismas claves, pero cámbiala en el archivo",)
+            positions = value
+        else:
+            positions = () if value is None else (value,)
+        if not positions:
+            if lanes is not None or pedestrian:  # claves de un tope sin dónde está
+                where = "[speed_bump]" if legacy else f"[[speed_bump]] del tope {n}"
+                key = "lanes" if lanes is not None else "pedestrian"
+                raise ConfigError(f"{where}: {key} requiere position (dónde está el tope)")
+            if not legacy:
+                raise ConfigError(f"[[speed_bump]] falta position en el tope {n}")
+        bumps += [SpeedBump(p, lanes, pedestrian, rate, time) for p in positions]
+    for i, sub in checks:
+        unknown = sub.unknown()
+        if unknown:
+            raise ConfigError(f"claves desconocidas en el tope {i} de [[speed_bump]]: "
+                              + ", ".join(u.replace("[speed_bump] ", "") for u in unknown))  # fmt: skip
+    return tuple(sorted(bumps, key=lambda b: b.position)), notices
+
+
+def _crossing(r: _Reader, section: tuple[str, ...]) -> Rate:
+    """`pedestrian_crossing` de una sección ([speed_bump] o un [[traffic_light]]): la aparición de peatones, un
+    diccionario {min, max, mean, std} en peatones/min. Sin ella, PEDESTRIAN_RATE. Se valida solo si la sección tiene
+    pedestrian = true (en `validate_config`)."""
+    values = _dist(r, (*section, "pedestrian_crossing"), _RATE_KINDS,
+                   "{min = 0.5, max = 3, mean = 1.5, std = 1} (peatones/min)")  # fmt: skip
+    return PEDESTRIAN_RATE if values is None else Rate(**values)
 
 
 def _fuel(r: _Reader, d: SimConfig) -> dict:
@@ -706,14 +776,19 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
                                                                 for e in sim.extra_lights)]:  # fmt: skip
         check(lt.red >= 0, f"{where} red no puede ser negativo")
         check(lt.yellow >= 0, f"{where} yellow no puede ser negativo")
-        # Con los tres en 0 no hay semáforo (como enabled = false); si no, hace falta verde.
-        check(not lt.active or lt.green > 0,
+        # Con los tres en 0 no hay semáforo (como enabled = false); si no, hace falta verde. El peatonal usa
+        # green como verde mínimo entre dos cruces (puede ser 0) y red como lo que dura el cruce.
+        check(not lt.active or lt.pedestrian or lt.green > 0,
               f"{where} green debe ser mayor que 0 (o red, green y yellow en 0, o enabled = false, para no tener "
               "semáforo)")  # fmt: skip
+        if lt.pedestrian and lt.enabled:
+            check(lt.red > 0, f"{where} red debe ser mayor que 0 con pedestrian = true (es lo que dura el cruce)")
+            _check_rate(f"{where} pedestrian_crossing", lt.pedestrian_crossing)
         check(lt.start_phase in ("red", "green"), f'{where} start_phase debe ser "red" o "green"')
         for name, value in (("red", lt.red), ("green", lt.green), ("yellow", lt.yellow)):
             check(abs(value / DT - round(value / DT)) < 1e-9, f"{where} {name} debe ser múltiplo de {DT} s")
-    positions = [e.position for e in sim.extra_lights]
+    # Un semáforo desactivado (enabled = false, o sus fases en 0) no está en la calle: su posición no se revisa.
+    positions = [e.position for e in sim.extra_lights if e.active]
     check(all(0 < p < sim.length for p in positions),
           f"[[traffic_light]] position: cada semáforo intermedio debe estar entre 0 y {sim.length:g} m ([road] "
           "length), sin incluirlos (el del final del tramo va sin position)")  # fmt: skip
@@ -744,19 +819,21 @@ def _validate_speed_bump(sim: SimConfig, check) -> None:
     for spec in sim.specs:
         check(spec.speed_bump_kmh is None or spec.speed_bump_kmh > 0,
               f"[vehicles.{spec.key}] speed_bump_kmh debe ser mayor que 0 km/h")  # fmt: skip
-    bump = sim.speed_bump
-    if bump.position is None:
-        check(bump.lanes is None, "[speed_bump] lanes requiere position (dónde está el tope)")
-        return
-    positions = bump.positions
+    positions = [b.position for b in sim.speed_bumps]
     check(all(0 < p < sim.length for p in positions),
           f"[speed_bump] position debe estar entre 0 y {sim.length:g} m ([road] length), sin incluirlos (cada tope)")  # fmt: skip
     check(len(set(positions)) == len(positions), "[speed_bump] position: hay topes en la misma posición")
-    lanes = bump.lanes or ()
-    for lane in lanes:
-        check(0 <= lane < sim.lanes, f"[speed_bump] lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
-    check(len(set(lanes)) == len(lanes), "[speed_bump] lanes: hay carriles repetidos")
-    check(bump.lanes is None or len(lanes) > 0, "[speed_bump] lanes no puede estar vacía (sin ella, todos los carriles)")
+    for bump in sim.speed_bumps:
+        where = f"[speed_bump] a {bump.position:g} m"
+        lanes = bump.lanes or ()
+        for lane in lanes:
+            check(0 <= lane < sim.lanes, f"{where} lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
+        check(len(set(lanes)) == len(lanes), f"{where} lanes: hay carriles repetidos")
+        check(bump.lanes is None or len(lanes) > 0, f"{where} lanes no puede estar vacía (sin ella, todos los carriles)")
+        if bump.pedestrian:
+            check(bump.pedestrian_time >= DT and abs(bump.pedestrian_time / DT - round(bump.pedestrian_time / DT)) < 1e-9,
+                  f"{where} pedestrian_time debe ser un múltiplo de {DT} s, al menos {DT} s")  # fmt: skip
+            _check_rate(f"{where} pedestrian_crossing", bump.pedestrian_crossing)
 
 
 def _validate_bottleneck(sim: SimConfig, check) -> None:

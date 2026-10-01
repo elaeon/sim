@@ -11,7 +11,9 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import DT, FUEL_CO2_G_PER_L, FUEL_LABELS, MAX_TYPES, POLLUTANT_LABELS, POLLUTANTS, SpeedBump
+from trafico.config import (
+    DT, FUEL_CO2_G_PER_L, FUEL_LABELS, MAX_TYPES, PEDESTRIAN_YIELD, POLLUTANT_LABELS, POLLUTANTS, as_positions,
+)
 from trafico.emissions import EMIS_BIN, acceleration_table, emissions_label, emitted, unit
 from trafico.fuel import constant_speed_table, cost, liters
 from trafico.metrics import (
@@ -131,6 +133,7 @@ def format_summary(agg: Aggregate) -> str:
         lines.append("Línea cerrada por la cola de salida (% del tiempo, el siguiente no cabe): " + " · ".join(
             f"{lane}: {_fmt(100 * v)}" for lane, v in enumerate(s["exit_blocked"])
             if cfg.lane_exit_capacity[lane] > 0))  # fmt: skip
+    lines += _pedestrian_lines(cfg, s)
     lines += _acceleration_lines(cfg)
     lines += _cruise_lines(cfg)
     lines += [
@@ -142,6 +145,22 @@ def format_summary(agg: Aggregate) -> str:
         f"Memoria máxima (RSS) por proceso: {agg.max_rss_kb / 1024:.1f} MiB",
     ]
     return "\n".join(lines)
+
+
+def _pedestrian_lines(cfg, s: dict) -> list[str]:
+    """Peatones de cada semáforo peatonal y de cada tope con paso peatonal: cuántos cruzaron, cuántas veces se cerró el
+    paso, la espera media de quien cruzó y el tiempo que estuvo cerrado a los vehículos (en rojo)."""
+    spots = cfg.pedestrian_spots
+    if not spots or "pedestrians" not in s:
+        return []
+    lines = ["", "Peatones (media por réplica):"]
+    for (kind, pos), (crossed, closings, closed, wait) in zip(spots, s["pedestrians"]):
+        name = "semáforo peatonal" if kind == "semáforo" else "paso peatonal del tope"
+        mean_wait = wait / crossed if crossed > 0 else np.nan
+        lines.append(f"  {name} a {pos:g} m: {_fmt(crossed)} cruzaron en {_fmt(closings)} cierres · espera media "
+                     f"{_fmt(mean_wait)} s · en rojo para los vehículos {_fmt(closed)} s "
+                     f"({_fmt(100 * closed / cfg.sim_seconds)} % del tiempo)")  # fmt: skip
+    return lines
 
 
 def _emission_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int]]:
@@ -311,22 +330,43 @@ def write_csv(agg: Aggregate, path: Path) -> None:
     np.savetxt(path, np.column_stack(cols), delimiter=",", header=",".join(header), comments="", fmt="%.6g")
 
 
+def _rate_text(rate) -> str:
+    """Una tasa variable o fija, p. ej. «1.5 ± 1 en [0.5, 3], media 1.6»."""
+    if not rate.variable:
+        return f"{rate.expected:g}"
+    return f"{rate.mean:g} ± {rate.std:g} en [{rate.min:g}, {rate.max:g}], media {rate.expected:.3g}"
+
+
 def _lane_lines(cfg) -> list[str]:
     """Límite de velocidad, carriles sin semáforo, paradas y demás ajustes por carril o por tipo."""
     lines = []
     if cfg.lane_speed_limit is not None:
         limits = " · ".join(f"{i}: {v:g}" for i, v in enumerate(cfg.lane_max_kmh))
         lines.append(f"Límite de velocidad por carril (km/h, 0 = derecho): {limits}")
-    bump_lanes = cfg.speed_bump_lanes()
-    if bump_lanes:
+    bumps = cfg.bumps
+    if bumps:
         slow = [f"{sp.name} ≤ {sp.speed_bump_kmh:g}" for k, sp in enumerate(cfg.specs)
                 if sp.speed_bump_kmh is not None and cfg.rates[k] > 0]  # fmt: skip
-        where = "todos los carriles" if len(bump_lanes) == cfg.lanes else (
-            ("carril " if len(bump_lanes) == 1 else "carriles ") + ", ".join(map(str, bump_lanes)))
-        at = " y ".join(f"{p:g}" for p in cfg.speed_bump.positions)
-        lines.append(f"{'Topes' if len(cfg.speed_bump.positions) > 1 else 'Tope'} a {at} m ({where}), km/h al pasarlo: "
+
+        def where(bump) -> str:
+            lanes = cfg.bump_lanes(bump)
+            return "todos los carriles" if len(lanes) == cfg.lanes else (
+                ("carril " if len(lanes) == 1 else "carriles ") + ", ".join(map(str, lanes)))
+
+        at = " · ".join(f"{b.position:g} m ({where(b)})" for b in bumps)
+        lines.append(f"{'Topes' if len(bumps) > 1 else 'Tope'} a {at}, km/h al pasarlo: "
                      + (" · ".join(slow) if slow else "ningún tipo frena (sin speed_bump_kmh)"))  # fmt: skip
+    for bump in cfg.crossings:
+        lines.append(f"Paso peatonal en el tope a {bump.position:g} m (peatones/min "
+                     f"{_rate_text(bump.pedestrian_crossing)}; espera {PEDESTRIAN_YIELD:g} s y cruza en "
+                     f"{bump.pedestrian_time:g} s): los vehículos se detienen del todo mientras cruza alguien")  # fmt: skip
     for light in cfg.lights:
+        if light.pedestrian:
+            prev = cfg.previous_light(light)
+            when = (f"con el semáforo de {prev.position:g} m en rojo" if prev else "sin esperar a otro semáforo")
+            lines.append(f"Semáforo peatonal a {light.position:g} m (peatones/min {_rate_text(light.pedestrian_crossing)}): "
+                         f"verde para los vehículos salvo con peatones en espera, {when}; amarillo {light.yellow:g} s, "
+                         f"rojo {light.red:g} s, verde mínimo {light.green:g} s entre cruces")  # fmt: skip
         free = [f"{sp.name} (carril {sp.lane})" for k, sp in enumerate(cfg.specs)
                 if cfg.ignores_light(k, light) and cfg.rates[k] > 0]  # fmt: skip
         if free:
@@ -698,10 +738,10 @@ def build_emissions_parser() -> argparse.ArgumentParser:
     p.add_argument("--topes", nargs="+", metavar="M|M,M|sin",
                    help="topes de cada escenario: la posición (m desde la entrada), varias separadas por comas "
                         "(35,70: dos topes en el mismo escenario) o «sin» (por defecto, sin tope y con los de "
-                        "[speed_bump]; si no hay, uno a la mitad del tramo)")  # fmt: skip
+                        "[[speed_bump]]; si no hay, uno a la mitad del tramo)")  # fmt: skip
     p.add_argument("--carriles-tope", type=int, nargs="+", metavar="N",
                    help="carriles con tope, en la numeración después de --carriles (por defecto, los de "
-                        "[speed_bump] lanes; sin ella, todos)")  # fmt: skip
+                        "[[speed_bump]] lanes de cada tope; sin ella, todos)")  # fmt: skip
     p.add_argument("--semaforo", choices=("config", "si", "no", "ambos"), default="config",
                    help="semáforo en todos los escenarios: como en la configuración, activado, desactivado o ambos "
                         "(cada tope con y sin semáforo)")  # fmt: skip
@@ -718,11 +758,11 @@ def build_emissions_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _bumps(values: list[str] | None, config_bump, length: float) -> tuple[tuple[float, ...], ...]:
+def _bumps(values: list[str] | None, config_positions, length: float) -> tuple[tuple[float, ...], ...]:
     """Topes de cada escenario: «sin» (ninguno), una posición en m o varias separadas por comas (p. ej. 35,70).
-    Por defecto, sin tope y con los de [speed_bump] (o uno a la mitad del tramo si no hay)."""
+    Por defecto, sin tope y con los de [[speed_bump]] (o uno a la mitad del tramo si no hay)."""
     if values is None:
-        configured = SpeedBump(position=config_bump).positions
+        configured = as_positions(config_positions)
         return ((), configured or (length / 2,))
     out: list[tuple[float, ...]] = []
     for text in values:
@@ -767,8 +807,8 @@ def emissions(argv: list[str] | None = None) -> Path:
         length = args.largo if args.largo is not None else reduced.length
         lights = {"config": (None,), "si": (True,), "no": (False,), "ambos": (True, False)}[args.semaforo]
         s = Scenarios(
-            bumps=_bumps(args.topes, reduced.speed_bump.position, length),
-            bump_lanes=tuple(args.carriles_tope) if args.carriles_tope else reduced.speed_bump.lanes,
+            bumps=_bumps(args.topes, tuple(b.position for b in reduced.bumps), length),
+            bump_lanes=tuple(args.carriles_tope) if args.carriles_tope else None,
             lights=lights, length=args.largo, lanes=lanes, without=tuple(args.sin),
             replicas=args.replicas if args.replicas is not None else opts.replicas,
             run=args.run if args.run is not None else base.run,

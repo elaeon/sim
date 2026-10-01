@@ -18,6 +18,9 @@ Modelo por paso de DT segundos (actualización paralela con posiciones previas):
     cada uno con sus fases, su fase inicial y sus `free_lanes`: se detienen en
     su línea como en la del final, pero el flujo y las colas se miden en la
     del final del tramo.
+  * Peatones (opcionales, `pedestrian`): un semáforo peatonal es verde para los vehículos hasta que hay peatones
+    esperando; un tope puede ser paso peatonal. Su calendario de fases (verde/amarillo/rojo) se calcula al crear la
+    réplica (pedestrians.py) y los vehículos lo obedecen como a un semáforo intermedio, en los carriles del tope.
   * Condición inicial (opcional): los carriles empiezan con vehículos en marcha
     que ocupan una fracción del tramo, para no esperar a que se llene.
   * Compresión: detrás de un líder detenido basta `gap_stop` (< `gap_run`).
@@ -41,7 +44,7 @@ Modelo por paso de DT segundos (actualización paralela con posiciones previas):
     (aunque esté en verde): se detiene en ella y arranca con su reacción cuando
     hay lugar; si llegan más de los que acepta, el carril se satura. Una cola
     vacía acepta a cualquiera.
-  * Topes (opcionales, [speed_bump]): en los carriles `lanes`, a `position` m (uno o varios) del
+  * Topes (opcionales, una sección [[speed_bump]] cada uno): en sus carriles `lanes`, a `position` m del
     inicio, quien lo pisa (del frente a la parte trasera) no rebasa el
     `speed_bump_kmh` de su tipo; sin `decel` baja de golpe, con `decel` frena
     antes para llegar a esa velocidad. Los tipos sin `speed_bump_kmh` no frenan.
@@ -80,13 +83,14 @@ from typing import NamedTuple
 
 import numpy as np
 
-from trafico.config import DT, GREEN, RED, YELLOW, SimConfig
+from trafico.config import DT, GREEN, PEDESTRIAN_YIELD, RED, YELLOW, SimConfig
 from trafico.distributions import (
     normal_ticks, reaction_ticks, sample_lengths, sample_passengers, sample_rates, sample_speeds, stop_ticks,
     uniform_ticks,
 )  # fmt: skip
 from trafico.emissions import EMIS_BIN, coefficient_table, emission_rate
 from trafico.metrics import Recorder
+from trafico.pedestrians import Schedule, arrivals, bump_schedule, fixed_phases, light_schedule
 
 EPS = 1e-6
 INF = np.inf
@@ -205,10 +209,13 @@ class Simulation:
         self.bn_time = [cfg.bottleneck_time(k) for k in range(self.n_types)]
         self.bn_type = self.bn_prob > 0  # tipos que pueden detenerse en un cuello de botella
         self.free_type = np.array([cfg.ignores_light(k) for k in range(self.n_types)], np.bool_)  # sin semáforo
-        # Semáforos intermedios: posición y tipos que no los obedecen (carril exclusivo en sus free_lanes).
-        self.inner_x = [float(lt.position) for lt in cfg.inner_lights]
-        self.inner_free = [np.array([cfg.ignores_light(k, lt) for k in range(self.n_types)], np.bool_)
-                           for lt in cfg.inner_lights]  # fmt: skip
+        # Líneas de alto intermedias (semáforos intermedios y pasos peatonales de los topes): posición, tipos que no
+        # las obedecen (carril exclusivo en los free_lanes del semáforo) y carriles donde rigen (None = todos).
+        self.lines = cfg.stop_lines
+        self.inner_x = [float(s.position) for s in self.lines]
+        self.inner_free = [np.array([s.light is not None and cfg.ignores_light(k, s.light) for k in range(self.n_types)],
+                                    np.bool_) for s in self.lines]  # fmt: skip
+        self.inner_lane = [None if s.lanes is None else np.isin(np.arange(cfg.lanes), s.lanes) for s in self.lines]
         self.bn_lane = np.zeros(cfg.lanes, np.bool_)
         self.bn_lane[list(cfg.bottleneck_lanes())] = True
         self.bn_zone = cfg.bottleneck_zone()
@@ -245,9 +252,10 @@ class Simulation:
         self.dyn_t = np.isfinite(self.acc_t) | np.isfinite(self.dec_t)  # tipos con dinámica gradual
         self.any_dynamics = bool(self.dyn_t.any())
         # Tope ([speed_bump]): posición, carriles donde está y velocidad máxima de cada tipo al pisarlo (m/paso).
-        self.bump_x = np.array(cfg.speed_bump.positions, dtype=np.float64)  # uno o varios topes
-        self.bump_lane = np.zeros(cfg.lanes, np.bool_)
-        self.bump_lane[list(cfg.speed_bump_lanes())] = True
+        self.bump_x = np.array([b.position for b in cfg.bumps], dtype=np.float64)  # uno o varios topes
+        self.bump_lane = np.zeros((len(cfg.bumps), cfg.lanes), np.bool_)  # carriles de cada tope
+        for i, b in enumerate(cfg.bumps):
+            self.bump_lane[i, list(cfg.bump_lanes(b))] = True
         self.bump_v_t = np.array([INF if s.speed_bump_kmh is None else s.speed_bump_kmh / 3.6 * DT for s in specs])
         self.any_bump = bool(self.bump_x.size and self.bump_lane.any() and np.isfinite(self.bump_v_t).any())
         # Emisiones (Int Panis et al., 2006): coeficientes por tipo y contaminante, límites de la aceleración que
@@ -318,9 +326,12 @@ class Simulation:
         self.initial_veh = np.zeros(self.n_types)  # vehículos de la condición inicial
         self.initial_pax = np.zeros(self.n_types)
         self.timed_veh = np.zeros(self.n_types)  # cruces con tiempo de recorrido (sin los iniciales)
+        # Generadores propios (hijos nuevos: no alteran los anteriores): el relleno inicial y los peatones. Se crean
+        # siempre, para que el índice de cada uno no dependa de la configuración.
+        fill_rng, ped_rng = rng.spawn(1)[0], rng.spawn(1)[0]
+        self._init_pedestrians(ped_rng)
         if any(v > 0 for v in cfg.lane_initial_occupancy):
-            # Generador propio (hijo nuevo: no altera los anteriores): con occupancy = 0 todo sigue igual.
-            self._initial_fill(rng.spawn(1)[0])
+            self._initial_fill(fill_rng)
 
     # ------------------------------------------------------------------ estado
 
@@ -465,23 +476,69 @@ class Simulation:
                         room = self.x[ahead] - self.vlen[ahead] - self.gap_run_t[k] - self.x[i]
                         v_ahead, dec_ahead = float(self.v_last[ahead]), self.dec_t[self.vtype[ahead]]
                     else:
-                        room = self.L - self.x[i] if cfg.phase(0) == RED and not self.free_type[k] else INF
+                        room = self.L - self.x[i] if self.exit_phase(0) == RED and not self.free_type[k] else INF
                         v_ahead, dec_ahead = 0.0, INF
                     if np.isfinite(room):
                         self.v_last[i] = min(self.v_last[i], _safe_speed_1(room, v_ahead, self.dec_t[k], dec_ahead))
-                    light = self._inner_room(k, self.x[i])
-                    if np.isfinite(light):  # semáforo intermedio en rojo al empezar
+                    light = self._line_room(k, self.x[i], lane)
+                    if np.isfinite(light):  # línea de alto intermedia en rojo al empezar
                         self.v_last[i] = min(self.v_last[i], _safe_speed_1(light, 0.0, self.dec_t[k], INF))
                     self.v_last[i] = min(self.v_last[i], self._bump_speed_1(k, lane, self.x[i], self.x[i] - length))
                 ahead = i
                 rear = self.x[i] - length
 
-    def _inner_room(self, k: int, x: float) -> float:
-        """Distancia desde `x` hasta el semáforo intermedio en rojo (al empezar la corrida) más cercano adelante que
-        obedece el tipo k; INF si no hay."""
-        phases = self.cfg.inner_phases(0)
-        return min((pos - x for pos, free, ph in zip(self.inner_x, self.inner_free, phases)
-                    if ph == RED and x <= pos and not free[k]), default=INF)  # fmt: skip
+    def _line_room(self, k: int, x: float, lane: int) -> float:
+        """Distancia desde `x` hasta la línea de alto intermedia (semáforo o paso peatonal) en rojo al empezar la
+        corrida más cercana adelante que obedece el tipo k en ese carril; INF si no hay."""
+        return min((pos - x for pos, free, ok, ph in zip(self.inner_x, self.inner_free, self.inner_lane, self.line_phases(0))
+                    if ph == RED and x <= pos and not free[k] and (ok is None or ok[lane])), default=INF)  # fmt: skip
+
+    # ---------------------------------------------------------------- peatones
+
+    def _init_pedestrians(self, rng: np.random.Generator) -> None:
+        """Calendario de peatones de la réplica (ver pedestrians.py): uno por semáforo peatonal y por tope con
+        peatones. Los generadores van por índice fijo —el semáforo del final del tramo, cada semáforo intermedio y
+        cada tope— así que quitar uno de los demás elementos no mueve los sorteos del resto."""
+        cfg = self.cfg
+        n = cfg.n_ticks
+        lights_rng, bumps_rng = rng.spawn(2)
+        light_gens = lights_rng.spawn(1 + len(cfg.extra_lights))
+        bump_gens = bumps_rng.spawn(len(cfg.bumps))
+
+        def light_schedule_of(light, gen) -> Schedule:
+            before = cfg.previous_light(light)
+            prev_red = fixed_phases(before, n + 1) == RED if before else None  # espera al rojo del anterior
+            counts = arrivals(*gen.spawn(2), light.pedestrian_crossing, cfg)
+            return light_schedule(counts, light, prev_red, n)
+
+        self.ped_schedules: dict[tuple[str, float], Schedule] = {}
+        self._exit_sched: Schedule | None = None
+        if cfg.exit_light.active and cfg.exit_light.pedestrian:
+            self._exit_sched = light_schedule_of(cfg.exit_light, light_gens[0])
+            self.ped_schedules[("semáforo", cfg.length)] = self._exit_sched
+        for i, lt in enumerate(cfg.extra_lights):
+            if lt.active and lt.pedestrian:
+                self.ped_schedules[("semáforo", lt.position)] = light_schedule_of(lt, light_gens[1 + i])
+        wait = round(PEDESTRIAN_YIELD / DT)
+        for bump, gen in zip(cfg.bumps, bump_gens):  # cada tope con peatones, con sus propios generadores
+            if bump.pedestrian:
+                counts = arrivals(*gen.spawn(2), bump.pedestrian_crossing, cfg)
+                cross = round(bump.pedestrian_time / DT)
+                self.ped_schedules[("tope", bump.position)] = bump_schedule(counts, cross, wait, n)
+        # Calendario de cada línea de alto intermedia (None = semáforo de ciclo fijo: sale de Light.phase).
+        self._line_sched = [self.ped_schedules.get((s.kind, s.position)) if s.pedestrian else None for s in self.lines]
+
+    def exit_phase(self, tick: int) -> int:
+        """Fase (RED, GREEN o YELLOW) del semáforo del final del tramo en el paso `tick`."""
+        if self._exit_sched is None:
+            return self.cfg.phase(tick)
+        return int(self._exit_sched.phases[min(tick, self.cfg.n_ticks)])
+
+    def line_phases(self, tick: int) -> tuple[int, ...]:
+        """Fase de cada línea de alto intermedia (`cfg.stop_lines`) en el paso `tick`."""
+        n = self.cfg.n_ticks
+        return tuple(int(sched.phases[min(tick, n)]) if sched is not None else line.light.phase(tick)
+                     for line, sched in zip(self.lines, self._line_sched))  # fmt: skip
 
     def occupancy(self) -> Occupancy:
         n = self.n
@@ -509,7 +566,7 @@ class Simulation:
         if self.any_exit:
             self._drain_exit()
         if self.n:
-            self._move(self.cfg.phase(self.tick), self.cfg.inner_phases(self.tick) if self.inner_x else ())
+            self._move(self.exit_phase(self.tick), self.line_phases(self.tick) if self.inner_x else ())
         self.tick += 1
         if self.n_lanes > 1 and self.n and self.tick % self.lc_every == 0:
             self._lane_changes()
@@ -635,12 +692,12 @@ class Simulation:
         antes de él, con frenado gradual, la que aún le permite llegar a ella frenando a `decel`; INF si no
         aplica (sin tope en el carril, ya los pasó o el tipo pasa sin frenar). Con varios, la menor."""
         vb = self.bump_v_t[k]
-        if not (np.isfinite(vb) and self.bump_lane[lane]):
+        if not np.isfinite(vb):
             return INF
         dec = self.dec_t[k]
         speed = INF
-        for bump in self.bump_x:
-            if rear >= bump:
+        for bump, lanes in zip(self.bump_x, self.bump_lane):
+            if rear >= bump or not lanes[lane]:
                 continue
             if front >= bump:
                 speed = min(speed, float(vb))
@@ -755,13 +812,17 @@ class Simulation:
                 vsafe = np.minimum(vsafe, np.where(ruled_out, INF, safe_line))
         if phase == RED:
             stop_space = np.minimum(stop_space, np.where(ruled_out, INF, self.L - x))
-        # Semáforos intermedios: en rojo, quien no los ha pasado (su frente) se detiene en la línea; en amarillo, se
-        # detiene si aún puede (con frenado gradual) o baja la velocidad cerca de ella, como en el del final.
+        # Líneas de alto intermedias (semáforos y pasos peatonales): en rojo, quien no las ha pasado (su frente) se
+        # detiene en la línea; en amarillo, se detiene si aún puede (con frenado gradual) o baja la velocidad cerca de
+        # ella, como en el semáforo del final. Un paso peatonal solo rige en los carriles de su tope.
         inner_yellow = []
-        for pos, free, ph in zip(self.inner_x, self.inner_free, inner_phases):
+        for pos, free, lane_ok, ph in zip(self.inner_x, self.inner_free, self.inner_lane, inner_phases):
             if ph == GREEN:
                 continue
             before = (x <= pos) & ~free[vt] if free.any() else x <= pos
+            if lane_ok is not None:
+                target = self.lc_target[:n]
+                before = before & (lane_ok[self.lane[:n]] | ((target >= 0) & lane_ok[np.maximum(target, 0)]))
             to_inner = np.where(before, pos - x, INF)
             if dynamics:
                 safe_inner = _safe_speed(to_inner, 0.0, dec_v, INF)
@@ -856,8 +917,8 @@ class Simulation:
             # y el destino si está cambiando.
             vb = self.bump_v_t[vt]
             tgt = self.lc_target[:n]
-            in_lane = self.bump_lane[self.lane[:n]] | ((tgt >= 0) & self.bump_lane[np.maximum(tgt, 0)])
-            for bump_x in self.bump_x:  # cada tope por separado; queda la menor de las velocidades
+            for bump_x, lane_ok in zip(self.bump_x, self.bump_lane):  # cada tope por separado; queda la menor velocidad
+                in_lane = lane_ok[self.lane[:n]] | ((tgt >= 0) & lane_ok[np.maximum(tgt, 0)])
                 before = in_lane & np.isfinite(vb) & (x - self.vlen[:n] < bump_x)  # aún no lo pasa entero
                 vcap = np.where(before & (x + vcap > bump_x), np.minimum(vcap, vb), vcap)
                 if dynamics:
@@ -1372,4 +1433,15 @@ class Simulation:
             "emissions": self.emis_g.copy(),  # g por tipo y contaminante (POLLUTANTS)
             "emissions_free": self.emis_free_g.copy(),  # g del mismo recorrido a velocidad constante
             "emissions_pos": self.emis_pos.copy(),  # g por contaminante, carril e intervalo de EMIS_BIN m
+            **self._pedestrian_summary(),
         }
+
+    def _pedestrian_summary(self) -> dict[str, np.ndarray]:
+        """Una fila por punto con peatones (`cfg.pedestrian_spots`): peatones que cruzaron, cierres del paso, s de
+        paso cerrado y espera total de los peatones (s). Vacío si no hay peatones."""
+        spots = self.cfg.pedestrian_spots
+        if not spots:
+            return {}
+        rows = [(s.crossed, s.crossings, s.closed_ticks * DT, s.wait_ticks * DT)
+                for s in (self.ped_schedules[spot] for spot in spots)]  # fmt: skip
+        return {"pedestrians": np.array(rows, dtype=np.float64)}

@@ -75,7 +75,7 @@ def test_command_errors(root):
 
 
 def test_scenarios_with_several_bumps(root):
-    """--topes 30,60 es un escenario con dos topes (los de [speed_bump] también pueden ser una lista)."""
+    """--topes 30,60 es un escenario con dos topes (también hay uno por cada sección [[speed_bump]])."""
     from trafico.cli import _bumps
     from trafico.emission_scenarios import scenario_label
 
@@ -109,3 +109,46 @@ def test_semaforo_option_switches_every_light(root):
     (on_name, on), (off_name, off) = build_configs(base, s)
     assert on.has_light and on.inner_lights and not off.has_light and not off.inner_lights and not off.any_light
     assert on_name == "sin tope · con semáforo" and off_name == "sin tope · sin semáforo"
+
+
+def test_scenarios_keep_the_pedestrian_crossing_of_the_bump():
+    """Los escenarios con tope conservan sus peatones ([speed_bump] pedestrian); «sin tope» no los tiene."""
+    from dataclasses import replace
+
+    from trafico.config import Rate, SimConfig, SpeedBump
+    from trafico.emission_scenarios import Scenarios, build_configs
+
+    bump = SpeedBump(60.0, pedestrian=True, pedestrian_crossing=Rate(2, 2, 2, 0), pedestrian_time=6.0)
+    base = SimConfig(length=150, lanes=2, rates=(10, 0, 0), run=3, traffic_light=False, speed_bumps=(bump,),
+                     specs=tuple(replace(s, accel=2.5, decel=4.5) if s.key == "car" else s
+                                 for s in SimConfig().specs))  # fmt: skip
+    s = Scenarios(bumps=(None, 60.0, (30.0, 90.0)), bump_lanes=None, lights=(None,), length=None, lanes=None,
+                  without=(), replicas=1, run=3.0)  # fmt: skip
+    (_, plain), (_, one), (_, two) = build_configs(base, s)
+    assert plain.pedestrian_spots == () and not plain.stop_lines
+    assert one.pedestrian_spots == (("tope", 60.0),) and one.speed_bumps == (bump,)
+    # Un tope en otra posición es como el configurado (con sus peatones); --carriles-tope reemplaza sus carriles.
+    assert two.pedestrian_spots == (("tope", 30.0), ("tope", 90.0)) and two.bumps[1].pedestrian_crossing.mean == 2
+
+
+def test_command_with_pedestrians_at_the_bump(root):
+    """Con peatones en el tope, los autos esperan más y emiten más que con el tope solo; sin tope no hay peatones. La
+    gráfica lo dice y los metadatos guardan la tasa."""
+    text = (root / CONFIG_NAME).read_text().replace(
+        "[speed_bump]\nposition = 80.0\n",
+        "[speed_bump]\nposition = 80.0\npedestrian = true\npedestrian_time = 8\n"
+        "pedestrian_crossing = {min = 4, max = 4, mean = 4, std = 0}\n",
+    )
+    (root / CONFIG_NAME).write_text(text, encoding="utf-8")
+    folder = emissions(["--replicas", "1"])
+    meta = json.loads((folder / META_NAME).read_text())
+    assert meta["peatones_tope"] == {"peatones_min": 4.0, "s_cruce": 8.0}
+    with np.load(folder / DATA_NAME) as d:
+        travel = d["travel_time"][:, CAR]
+    plain = (root / CONFIG_NAME).read_text().replace("pedestrian = true", "pedestrian = false")
+    (root / CONFIG_NAME).write_text(plain, encoding="utf-8")
+    folder_plain = emissions(["--replicas", "1"])
+    assert json.loads((folder_plain / META_NAME).read_text())["peatones_tope"] is None
+    with np.load(folder_plain / DATA_NAME) as d:
+        travel_plain = d["travel_time"][:, CAR]
+    assert travel[0] == pytest.approx(travel_plain[0]) and travel[1] > travel_plain[1]  # sin tope no cambia

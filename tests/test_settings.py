@@ -227,27 +227,60 @@ def test_invalid_emissions_are_rejected(text, message):
 
 def test_speed_bump_settings():
     sim = _parse("").sim
-    assert sim.speed_bump.position is None and sim.speed_bump_lanes() == ()
+    assert sim.speed_bumps == () and sim.bumps == () and sim.crossings == ()
     sim = _parse("[road]\nmax_line_speed = [20, 40, 50]\n[speed_bump]\nposition = 60\nlanes = [1, 2]\n"
                  "[vehicles.car]\nspeed_bump_kmh = 10\n").sim  # fmt: skip
-    assert sim.speed_bump.position == 60.0 and sim.speed_bump_lanes() == (1, 2)
+    assert [b.position for b in sim.speed_bumps] == [60.0] and sim.bump_lanes(sim.speed_bumps[0]) == (1, 2)
     assert sim.specs[0].speed_bump_kmh == 10.0 and sim.specs[1].speed_bump_kmh is None
-    assert _parse("[speed_bump]\nposition = 60\n").sim.speed_bump_lanes() == (0, 1)  # sin lanes: todos
+    sim = _parse("[speed_bump]\nposition = 60\n").sim
+    assert sim.bump_lanes(sim.speed_bumps[0]) == (0, 1)  # sin lanes: todos
+    assert _parse("[speed_bump]\n").sim.speed_bumps == ()  # sección vacía: sin tope
 
 
-def test_several_speed_bumps():
-    """position acepta una lista: varios topes en los mismos carriles, ordenados de la entrada a la salida."""
-    sim = _parse("[road]\nmax_line_speed = [20, 40, 50]\n[speed_bump]\nposition = [120, 40.5]\nlanes = [1]\n").sim
-    assert sim.speed_bump.positions == (40.5, 120.0) and sim.speed_bump_lanes() == (1,)
-    assert _parse("[speed_bump]\nposition = [60]\n").sim.speed_bump.positions == (60.0,)
-    assert _parse("").sim.speed_bump.positions == () and _parse("").sim.speed_bump_lanes() == ()
+def test_several_independent_speed_bumps():
+    """[[speed_bump]]: un tope por sección, cada uno con su position (un número), sus carriles y sus peatones;
+    ordenados de la entrada a la salida."""
+    text = """
+[road]
+max_line_speed = [20, 40, 50]
+[[speed_bump]]
+position = 120
+lanes = [1]
+[[speed_bump]]
+position = 40.5
+pedestrian = true
+pedestrian_time = 6
+"""
+    sim = _parse(text).sim
+    first, second = sim.bumps
+    assert (first.position, first.lanes, first.pedestrian) == (40.5, None, True) and first.pedestrian_time == 6.0
+    assert (second.position, second.lanes, second.pedestrian) == (120.0, (1,), False)
+    assert sim.bump_lanes(first) == (0, 1, 2) and sim.bump_lanes(second) == (1,)
+    assert [(b.position) for b in sim.crossings] == [40.5] and sim.pedestrian_spots == (("tope", 40.5),)
+    assert _parse("[[speed_bump]]\nposition = 60\n").sim.speed_bumps[0].position == 60.0
     for text, message in (
-        ("[speed_bump]\nposition = [60, 200]\n", "position debe estar entre 0 y 200 m"),
-        ("[speed_bump]\nposition = [60, 60]\n", "position: hay topes en la misma posición"),
-        ("[speed_bump]\nposition = [60, 'x']\n", "position debe ser un número o una lista de números"),
+        ("[[speed_bump]]\nposition = 60\n[[speed_bump]]\nposition = 200\n", "position debe estar entre 0 y 200 m"),
+        ("[[speed_bump]]\nposition = 60\n[[speed_bump]]\nposition = 60\n", "position: hay topes en la misma posición"),
+        ("[[speed_bump]]\nposition = [60, 80]\n", "[[speed_bump]] position del tope 1 debe ser un número"),
+        ("[[speed_bump]]\nlanes = [0]\n", "[[speed_bump]] del tope 1: lanes requiere position"),
+        ("[[speed_bump]]\n", "[[speed_bump]] falta position en el tope 1"),
+        ("[[speed_bump]]\nposition = 60\nfoo = 1\n", "claves desconocidas en el tope 1 de [[speed_bump]]: foo"),
+        ("[[speed_bump]]\nposition = 60\nlanes = [5]\n", "[speed_bump] a 60 m lanes: cada carril debe estar entre 0 y 1"),
+        ("speed_bump = 3\n", "[speed_bump] debe ser una sección o una lista de secciones"),
     ):
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
+
+
+def test_speed_bump_position_as_a_list_is_the_old_format():
+    """Las copias anteriores traen position = [35, 70] en [speed_bump]: cada posición es un tope con las mismas claves,
+    con un aviso."""
+    s = _parse("[road]\nmax_line_speed = [20, 40, 50]\n[speed_bump]\nposition = [120, 40.5]\nlanes = [1]\n")
+    assert [(b.position, b.lanes) for b in s.sim.bumps] == [(40.5, (1,)), (120.0, (1,))]
+    assert any("position como lista se reemplazó por una sección [[speed_bump]]" in n for n in s.notices)
+    assert not _parse("[speed_bump]\nposition = 60\n").notices
+    with pytest.raises(ConfigError, match="position debe ser un número o una lista de números"):
+        _parse("[speed_bump]\nposition = [60, 'x']\n")
 
 
 @pytest.mark.parametrize(
@@ -255,10 +288,10 @@ def test_several_speed_bumps():
     [
         ("[speed_bump]\nposition = 0\n", "[speed_bump] position debe estar entre 0 y 200 m"),
         ("[speed_bump]\nposition = 200\n", "[speed_bump] position debe estar entre 0 y 200 m"),
-        ("[speed_bump]\nposition = 60\nlanes = [2]\n", "[speed_bump] lanes: cada carril debe estar entre 0 y 1"),
-        ("[speed_bump]\nposition = 60\nlanes = [1, 1]\n", "[speed_bump] lanes: hay carriles repetidos"),
-        ("[speed_bump]\nposition = 60\nlanes = []\n", "[speed_bump] lanes no puede estar vacía"),
-        ("[speed_bump]\nlanes = [1]\n", "[speed_bump] lanes requiere position"),
+        ("[speed_bump]\nposition = 60\nlanes = [2]\n", "[speed_bump] a 60 m lanes: cada carril debe estar entre 0 y 1"),
+        ("[speed_bump]\nposition = 60\nlanes = [1, 1]\n", "[speed_bump] a 60 m lanes: hay carriles repetidos"),
+        ("[speed_bump]\nposition = 60\nlanes = []\n", "[speed_bump] a 60 m lanes no puede estar vacía"),
+        ("[speed_bump]\nlanes = [1]\n", "[speed_bump]: lanes requiere position"),
         ("[vehicles.car]\nspeed_bump_kmh = 0\n", "[vehicles.car] speed_bump_kmh debe ser mayor que 0"),
     ],
 )
@@ -868,3 +901,99 @@ def test_csv_options_in_output(root):
     assert not {"series.csv", "emisiones_posicion.csv"} & names and "emisiones_posicion.png" in names
     (root / CONFIG_NAME).write_text(FAST + "csv = false\n" + emits, encoding="utf-8")  # copia anterior
     assert "series.csv" not in {p.name for p in run([]).iterdir()}
+
+
+def test_pedestrian_options_are_read():
+    """pedestrian en [speed_bump] y en cada [[traffic_light]], con pedestrian_crossing {min, max, mean, std} (peatones/min,
+    por omisión PEDESTRIAN_RATE) y pedestrian_time (solo el tope)."""
+    from trafico.config import PEDESTRIAN_RATE, PEDESTRIAN_TIME
+
+    plain = _parse("").sim
+    default = _parse("[speed_bump]\nposition = 60\n").sim.speed_bumps[0]
+    assert not default.pedestrian and default.pedestrian_crossing == PEDESTRIAN_RATE
+    assert default.pedestrian_time == PEDESTRIAN_TIME and plain.stop_lines == () and plain.pedestrian_spots == ()
+    text = """
+[road]
+length = 300
+[[speed_bump]]
+position = 60
+pedestrian = true
+pedestrian_crossing = {min = 1, max = 5, mean = 2, std = 1}
+pedestrian_time = 7.5
+[[speed_bump]]
+position = 220
+pedestrian = true
+pedestrian_crossing = {min = 0, max = 1, mean = 0.5, std = 0.2}
+[[traffic_light]]
+position = 100
+red = 30
+green = 30
+[[traffic_light]]
+position = 160
+pedestrian = true
+pedestrian_crossing = {min = 0, max = 2, mean = 1, std = 0.5}
+red = 12
+green = 20
+yellow = 3
+[[traffic_light]]
+pedestrian = true
+red = 10
+"""
+    sim = _parse(text).sim
+    first, last = sim.bumps  # cada tope con su propia configuración
+    assert [b.position for b in sim.crossings] == [60.0, 220.0] and first.pedestrian_time == 7.5
+    assert first.pedestrian_crossing == Rate(1, 5, 2, 1) and last.pedestrian_crossing == Rate(0, 1, 0.5, 0.2)
+    assert last.pedestrian_time == PEDESTRIAN_TIME
+    mid = sim.extra_lights[1]
+    assert mid.pedestrian and mid.pedestrian_crossing == Rate(0, 2, 1, 0.5) and (mid.red, mid.green, mid.yellow) == (12, 20, 3)
+    assert not sim.extra_lights[0].pedestrian and sim.light_pedestrian and sim.light_pedestrian_crossing == PEDESTRIAN_RATE
+    assert [(s.kind, s.position) for s in sim.stop_lines] == [
+        ("tope", 60.0), ("semáforo", 100.0), ("semáforo", 160.0), ("tope", 220.0)]  # fmt: skip
+    # Solo los puntos con peatones (el semáforo de 100 m es de ciclo fijo), con el del final del tramo al último.
+    assert sim.pedestrian_spots == (("tope", 60.0), ("semáforo", 160.0), ("tope", 220.0), ("semáforo", 300.0))
+    assert sim.previous_light(mid).position == 100.0 and sim.previous_light(sim.extra_lights[0]) is None
+    assert sim.ref_light.position == 100.0 and sim.cycle == 60.0  # el peatonal no es el de referencia
+    # Con pedestrian = false (o sin ella), se leen y se ignoran sus claves.
+    off = _parse("[speed_bump]\nposition = 60\npedestrian = false\npedestrian_time = 5\n").sim
+    assert not off.speed_bumps[0].pedestrian and off.stop_lines == () and off.speed_bumps[0].pedestrian_time == 5.0
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("[speed_bump]\npedestrian = true\n", "[speed_bump]: pedestrian requiere position"),
+        ("[speed_bump]\nposition = 60\npedestrian = 1\n", "[speed_bump] pedestrian debe ser true o false"),
+        ("[speed_bump]\nposition = 60\npedestrian = true\npedestrian_time = 0.05\n", "pedestrian_time debe ser un múltiplo"),
+        ("[speed_bump]\nposition = 60\npedestrian = true\npedestrian_crossing = {min = 3, max = 1, mean = 2, std = 1}\n",
+         "[speed_bump] a 60 m pedestrian_crossing: debe cumplirse 0 ≤ min ≤ mean ≤ max"),
+        ("[speed_bump]\nposition = 60\npedestrian = true\npedestrian_crossing = {min = 1}\n",
+         "falta la clave obligatoria [speed_bump.pedestrian_crossing] max"),
+        ("[speed_bump]\nposition = 60\npedestrian = true\npedestrian_crossing = 2\n",
+         "[speed_bump] pedestrian_crossing debe ser un diccionario"),
+        ("[traffic_light]\npedestrian = true\nstart_phase = \"green\"\n", "start_phase no aplica a un semáforo con pedestrian"),
+        ("[traffic_light]\npedestrian = true\nred = 0\n", "red debe ser mayor que 0 con pedestrian = true"),
+        ("[traffic_light]\npedestrian = true\nred = 10\npedestrian_crossing = {min = 1, max = 2, mean = 5, std = 1}\n",
+         "[traffic_light] pedestrian_crossing: debe cumplirse 0 ≤ min ≤ mean ≤ max"),
+    ],
+)
+def test_invalid_pedestrian_options_are_rejected(text, message):
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        _parse("[road]\nlength = 200\n" + text)
+
+
+def test_disabled_intermediate_lights_skip_the_position_check():
+    """Un [[traffic_light]] con enabled = false (o con sus fases en 0) no está en la calle: su position no se revisa
+    (fuera del tramo o repetida); uno activado sí."""
+    head = "[road]\nlength = 200\n"
+    off = "[[traffic_light]]\nposition = 250\nenabled = false\n"
+    sim = _parse(head + off + "[[traffic_light]]\nposition = 250\nenabled = false\n[[traffic_light]]\nred = 10\ngreen = 10\n").sim
+    assert sim.has_light and sim.inner_lights == () and len(sim.extra_lights) == 2
+    assert _parse(head + "[[traffic_light]]\nposition = 300\nred = 0\ngreen = 0\nyellow = 0\n").sim.inner_lights == ()
+    # Uno activado en esa posición sigue rechazándose, y una repetida entre dos activados también.
+    with pytest.raises(ConfigError, match="cada semáforo intermedio debe estar entre 0 y 200 m"):
+        _parse(head + off + "[[traffic_light]]\nposition = 250\n")
+    with pytest.raises(ConfigError, match="hay semáforos en la misma posición"):
+        _parse(head + "[[traffic_light]]\nposition = 50\nenabled = false\n[[traffic_light]]\nposition = 50\n"
+               "[[traffic_light]]\nposition = 50\n")  # fmt: skip
+    # Desactivado y activado en la misma posición no chocan.
+    _parse(head + "[[traffic_light]]\nposition = 50\nenabled = false\n[[traffic_light]]\nposition = 50\n")

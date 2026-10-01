@@ -125,6 +125,7 @@
   <a href="#initial">[initial]</a>
   <a href="#exit">[exit]</a>
   <a href="#speed_bump">[speed_bump]</a>
+  <a href="#pedestrians">Peatones</a>
   <a href="#bottleneck">[bottleneck]</a>
   <a href="#execution">[execution]</a>
   <a href="#output">[output]</a>
@@ -217,6 +218,11 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       <code>red</code>, <code>green</code> y <code>yellow</code>, su <code>start_phase</code> y sus
       <code>free_lanes</code>. El que no tiene <code>position</code> es el del final del tramo, donde se miden los
       flujos y las colas.</li>
+    <li>Nueva opción <a href="#pedestrians"><code>pedestrian</code></a> en <code>[speed_bump]</code> y en cada
+      <code>[[traffic_light]]</code>. Con ella un tope es también un paso peatonal (los vehículos se detienen del todo
+      mientras cruza alguien) y un semáforo es peatonal (verde para los vehículos salvo con peatones esperando, y solo
+      cuando el semáforo anterior está en rojo). La aparición de peatones es la variable aleatoria
+      <code>pedestrian_crossing</code> (peatones/min). Sin <code>pedestrian</code> los resultados no cambian.</li>
     <li>Nuevos <a href="#emission-sets">conjuntos de coeficientes</a> con nombre, que se eligen con
       <code>[vehicles.&lt;clave&gt;.emissions] source</code>: <code>int_panis_2006</code> (los originales) y
       <code>sedema_cdmx_2018</code> (recalibrados con la verificación vehicular de la CDMX: auto, taxi, pickup y
@@ -230,9 +236,11 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       <code>resumen.txt</code> (por km, por recorrido, exceso frente a flujo libre y tabla al acelerar de 0 a 80
       km/h), en la gráfica y en <code>emisiones_posicion.png</code>/<code>.csv</code>. Requieren <code>accel</code> y
       <code>decel</code>.</li>
-    <li><a href="#speed_bump"><code>[speed_bump] position</code></a> acepta una lista: una calle puede tener varios
-      topes (<code>position = [35, 70]</code>, todos en los mismos <code>lanes</code>). En
-      <code>trafico-emisiones</code>, <code>--topes 35,70</code> es un escenario con dos topes.</li>
+    <li><a href="#speed_bump">Varios topes independientes</a>: una calle puede tener más de uno
+      (<code>[[speed_bump]]</code>, una sección por tope), cada uno con su <code>position</code> (ahora un número, no
+      una lista), sus <code>lanes</code> y sus <a href="#pedestrians">peatones</a>. Las copias anteriores con
+      <code>position = [35, 70]</code> siguen cargando: cada posición es un tope con las demás claves de la sección, con
+      un aviso. En <code>trafico-emisiones</code>, <code>--topes 35,70</code> es un escenario con dos topes.</li>
     <li>Nueva sección <a href="#speed_bump"><code>[speed_bump]</code></a> (tope en <code>position</code> m, en los
       carriles <code>lanes</code>) y clave <code>[vehicles.&lt;clave&gt;] speed_bump_kmh</code>: la velocidad máxima
       a la que cada tipo pasa el tope. <code>trafico-variantes --carriles</code> conserva el tope en los carriles
@@ -311,9 +319,9 @@ uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code
       <tr><td><code>--topes M|M,M|sin …</code></td><td>Un escenario por valor: la posición del tope en m desde la
         entrada, varias separadas por comas (<code>35,70</code>: dos topes en el mismo escenario) o <code>sin</code>
         para ninguno. El primero es la referencia de los cambios en %.</td>
-        <td><code>sin</code> y los de <code>[speed_bump] position</code> (si no hay, uno a la mitad del tramo)</td></tr>
+        <td><code>sin</code> y los de <code>[[speed_bump]] position</code> (si no hay, uno a la mitad del tramo)</td></tr>
       <tr><td><code>--carriles-tope N …</code></td><td>Carriles con tope, en la numeración después de
-        <code>--carriles</code>.</td><td><code>[speed_bump] lanes</code>; sin ella, todos</td></tr>
+        <code>--carriles</code>.</td><td><code>lanes</code> de cada tope; sin ella, todos</td></tr>
       <tr><td><code>--semaforo config|si|no|ambos</code></td><td>Semáforo de todos los escenarios: como en la
         configuración, activado, desactivado o ambos (cada tope con y sin semáforo; hasta 8 escenarios).</td>
         <td><code>config</code></td></tr>
@@ -430,7 +438,16 @@ stop_time_std = 5.0</code></pre>
       <tr><td><code>position</code></td><td>número</td><td class="num">(el final del tramo)</td>
         <td>Dónde está el semáforo, en metros desde el inicio del tramo. Sin ella (o igual a <code>[road] length</code>)
           es el semáforo del final del tramo; con ella, un <a href="#several_lights">semáforo intermedio</a>.</td>
-        <td>Entre 0 y <code>[road] length</code>, sin incluirlos, si es intermedio.</td></tr>
+        <td>Entre 0 y <code>[road] length</code>, sin incluirlos, si es intermedio (y sin repetir). Un semáforo con
+          <code>enabled = false</code> no se revisa: su posición puede ser cualquiera.</td></tr>
+      <tr><td><code>pedestrian</code></td><td>true/false</td><td class="num">false</td>
+        <td>Semáforo peatonal: verde para los vehículos mientras no haya peatones esperando, y rojo (<code>red</code>)
+          solo para que crucen. No tiene ciclo ni <code>start_phase</code>. Ver <a href="#pedestrians">Peatones</a>.</td>
+        <td>Con <code>pedestrian = true</code>, <code>red</code> &gt; 0 y sin <code>start_phase</code>.</td></tr>
+      <tr><td><code>pedestrian_crossing</code></td><td>diccionario</td><td class="num">{0.5, 3, 1.5, 1}</td>
+        <td>Peatones por minuto que llegan a la cola del semáforo: <code>{min, max, mean, std}</code>, normal truncada,
+          como las tasas de <a href="#demand">[demand]</a>. Solo se usa con <code>pedestrian = true</code>.</td>
+        <td>0 ≤ <code>min</code> ≤ <code>mean</code> ≤ <code>max</code>, <code>std</code> ≥ 0.</td></tr>
     </tbody>
   </table></div>
 
@@ -623,19 +640,32 @@ bus_rate = {min = 0.25, max = 0.25, mean = 0.25, std = 0}  # fija: 1 cada 4 min<
   <p class="lead">Uno o varios topes (reductores de velocidad) a lo ancho de uno o varios carriles. Mientras un vehículo
     pisa uno (desde que su frente llega al tope hasta que lo pasa su parte trasera) no rebasa la velocidad
     <code>speed_bump_kmh</code> de su tipo (ver <a href="#vehicles">[vehicles.&lt;clave&gt;]</a>); los tipos sin ella
-    pasan sin frenar.</p>
+    pasan sin frenar. Con un solo tope basta la sección <code>[speed_bump]</code>; para varios, una sección
+    <code>[[speed_bump]]</code> (doble corchete) por tope, cada una con las claves de la tabla y independiente de las
+    demás.</p>
   <div class="table-scroll"><table>
     <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
     <tbody>
-      <tr><td><code>position</code></td><td>número o lista de números</td><td class="num">(sin tope)</td>
-        <td>Dónde está el tope, en metros desde el inicio del tramo (el semáforo está en <code>length</code>). Una
-          lista, p. ej. <code>[35, 70]</code>, pone varios topes en la misma calle; todos están en los mismos
-          <code>lanes</code>. Sin ella no hay tope.</td>
-        <td>Cada uno entre 0 y <code>[road] length</code>, sin incluirlos y sin repetir.</td></tr>
+      <tr><td><code>position</code></td><td>número</td><td class="num">(sin tope)</td>
+        <td>Dónde está el tope, en metros desde el inicio del tramo (el semáforo está en <code>length</code>). Un
+          número por tope; para varios, una sección <code>[[speed_bump]]</code> cada uno. Sin la sección no hay tope;
+          en <code>[[speed_bump]]</code> es obligatoria.</td>
+        <td>Entre 0 y <code>[road] length</code>, sin incluirlos y sin repetir entre topes.</td></tr>
       <tr><td><code>lanes</code></td><td>lista de enteros</td><td class="num">(todos)</td>
         <td>Carriles donde está instalado, empezando por el derecho (carril 0), p. ej. <code>[1, 2]</code>. Sin
           ella, en todos los carriles.</td>
         <td>Cada carril entre 0 y el número de carriles − 1, sin repetir; requiere <code>position</code>.</td></tr>
+      <tr><td><code>pedestrian</code></td><td>true/false</td><td class="num">false</td>
+        <td>Cada tope es además un paso peatonal: aparecen peatones que cruzan y los vehículos de sus
+          <code>lanes</code> se detienen del todo mientras cruza alguno. Ver <a href="#pedestrians">Peatones</a>.</td>
+        <td>Requiere <code>position</code>.</td></tr>
+      <tr><td><code>pedestrian_crossing</code></td><td>diccionario</td><td class="num">{0.5, 3, 1.5, 1}</td>
+        <td>Peatones por minuto que llegan a cada paso: <code>{min, max, mean, std}</code>, normal truncada resorteada
+          cada <code>[demand] rate_interval</code>. Cada tope sortea sus propios peatones.</td>
+        <td>0 ≤ <code>min</code> ≤ <code>mean</code> ≤ <code>max</code>, <code>std</code> ≥ 0.</td></tr>
+      <tr><td><code>pedestrian_time</code></td><td>número</td><td class="num">10.0</td>
+        <td>Segundos que tarda cada peatón en cruzar.</td>
+        <td>≥ 0.1, múltiplo de 0.1.</td></tr>
     </tbody>
   </table></div>
   <p>Cómo funciona:</p>
@@ -650,17 +680,102 @@ bus_rate = {min = 0.25, max = 0.25, mean = 0.25, std = 0}  # fija: 1 cada 4 min<
       entre ellos (si la distancia alcanza; con topes muy juntos apenas acelera) y pasa cada uno a lo más a su
       <code>speed_bump_kmh</code>. Cada tope suma su propio frenado y arranque en las
       <a href="#emissions">emisiones</a> y el combustible.</li>
+    <li>Los topes son independientes: cada uno tiene sus propios <code>lanes</code> y, si es paso peatonal, su
+      <code>pedestrian_crossing</code> y <code>pedestrian_time</code> y sus propios peatones.</li>
     <li>La cabecera de la corrida indica las posiciones, los carriles y la velocidad de cada tipo; en el video cada tope
       es una franja rayada y en el diagrama espacio-tiempo, una línea «tope» en sus carriles.</li>
+    <li><code>position = [35, 70]</code> (el formato anterior) sigue cargando con un aviso: cada posición es un tope
+      con las mismas demás claves. Cámbialo a una sección <code>[[speed_bump]]</code> por tope.</li>
   </ul>
-  <pre><code>[speed_bump]
-position = 60.0      # m desde el inicio del tramo; una lista ([35, 70]) pone varios topes
+  <pre><code>[[speed_bump]]
+position = 35.0      # m desde el inicio del tramo (un número)
 lanes = [1, 2]       # sin ella, todos los carriles
+
+[[speed_bump]]
+position = 70.0      # otro tope, con su propia configuración
+pedestrian = true    # paso peatonal (ver Peatones)
 
 [vehicles.car]
 speed_bump_kmh = 10.0
 [vehicles.motorbike]
 speed_bump_kmh = 15.0</code></pre>
+</section>
+
+<section id="pedestrians">
+  <h2>Peatones: <code>pedestrian</code></h2>
+  <p class="lead">Un tope (<a href="#speed_bump">[[speed_bump]]</a>) o un semáforo (<a href="#traffic_light">[[traffic_light]]</a>)
+    con <code>pedestrian = true</code> deja cruzar peatones. Los peatones aparecen al azar y no dependen de los
+    vehículos: <code>pedestrian_crossing</code> es su variable aleatoria, en peatones por minuto, con el mismo
+    formato que las tasas de <a href="#demand">[demand]</a> (normal(<code>mean</code>, <code>std</code>) truncada a
+    [<code>min</code>, <code>max</code>], que se vuelve a sortear cada <code>rate_interval</code>; dentro del intervalo las
+    llegadas son Poisson). Todo el calendario de una réplica se calcula al crearla, con generadores propios: activar
+    peatones no cambia las llegadas de vehículos ni sus sorteos, así que la comparación con la misma semilla sigue
+    valiendo.</p>
+
+  <h3>Paso peatonal en un tope</h3>
+  <ul>
+    <li>Cada peatón espera 3 s en la orilla (fase amarilla: los vehículos lo ven) y cruza en
+      <code>pedestrian_time</code> s (fase roja). El paso está cerrado <strong>mientras cruza alguien</strong>: quien
+      llega durante el cruce lo alarga, así que varios peatones seguidos lo mantienen cerrado más tiempo.</li>
+    <li>En amarillo, quien todavía puede frenar a su <code>decel</code> se detiene con el frente en el tope; quien ya no
+      puede, pasa (la misma regla del amarillo de un semáforo). Los tipos sin <code>decel</code> se detienen en seco.</li>
+    <li>En rojo se detienen <strong>todos</strong> los tipos con el frente antes del tope, aunque no tengan
+      <code>speed_bump_kmh</code>, y solo en los <code>lanes</code> del tope. Al terminar el cruce arrancan con su
+      tiempo de reacción de siempre ([behavior] <code>reaction</code>).</li>
+    <li>Con varios topes, cada uno ([[speed_bump]]) tiene su propia configuración y sus propios peatones.</li>
+  </ul>
+
+  <h3>Semáforo peatonal</h3>
+  <ul>
+    <li>Está en verde para los vehículos mientras nadie espere. Los peatones que llegan hacen cola; con alguno en la
+      cola el semáforo pasa a amarillo (<code>yellow</code>), luego a rojo (<code>red</code>: lo que dura el cruce de
+      todos los que esperan al empezar el rojo) y vuelve a verde. Los que llegan durante el rojo esperan al siguiente
+      cruce.</li>
+    <li><strong>No se activa de inmediato.</strong> Antes de pasar a amarillo debe haber pasado el verde mínimo
+      <code>green</code> desde el cruce anterior (con <code>green = 0</code>, ninguno), y, si hay otro semáforo de ciclo
+      fijo antes de él (hacia la entrada del tramo), ese debe estar <strong>en rojo</strong>. Sin semáforo anterior solo
+      espera el amarillo. Otros semáforos peatonales no cuentan como anterior, porque no tienen ciclo.</li>
+    <li>Puede ser intermedio o el del final del tramo. No lleva <code>start_phase</code> (siempre empieza en verde) y
+      no es el semáforo de referencia de las gráficas: no define la ventana del flujo ni el sombreado de fases, que
+      siguen el último semáforo de ciclo fijo.</li>
+    <li><code>free_lanes</code> funciona igual que en un semáforo normal.</li>
+  </ul>
+  <pre><code>[[traffic_light]]
+position = 150.0          # semáforo de ciclo fijo
+red = 30.0
+green = 30.0
+yellow = 3.0
+start_phase = "red"
+
+[[traffic_light]]
+position = 400.0          # peatonal: espera el rojo del de 150 m
+pedestrian = true
+pedestrian_crossing = {min = 1, max = 4, mean = 2, std = 1}   # peatones/min
+red = 15.0                # s que dura el cruce (rojo para los vehículos)
+green = 20.0              # verde mínimo entre dos cruces
+yellow = 3.0
+
+[speed_bump]
+position = 60.0           # paso peatonal en el tope
+pedestrian = true
+pedestrian_time = 8.0     # s por peatón</code></pre>
+
+  <h3>Qué muestra la corrida</h3>
+  <ul>
+    <li>La cabecera describe el paso peatonal o el semáforo peatonal y con qué semáforo se coordina.
+      <code>resumen.txt</code> trae un bloque «Peatones» por punto: cuántos cruzaron, cuántos cierres, la espera media,
+      y los segundos y el porcentaje del tiempo en que estuvo en rojo para los vehículos (media entre réplicas).</li>
+    <li>El diagrama espacio-tiempo marca el amarillo y el rojo de cada paso peatonal y semáforo sobre su línea, con las
+      fases de la réplica grabada (cambian con los peatones de cada réplica). El video pinta el paso del color de su fase.</li>
+    <li>Los cruces suman paradas y arranques, así que suben el tiempo de recorrido, las <a href="#emissions">emisiones</a>
+      y el <a href="#fuel">combustible</a>. <code>trafico-emisiones</code> conserva los peatones del tope en cada
+      escenario con tope y no los tiene en el escenario «sin tope». <code>trafico-variantes</code> reemplaza el semáforo
+      del final del tramo por uno de ciclo fijo, aunque sea peatonal.</li>
+  </ul>
+
+  <div class="note"><p><strong>Limitaciones.</strong> El peatón es exógeno: cruza aunque haya un vehículo ya sobre el
+    paso (el modelo no lo hace esperar), y quien pasa durante el amarillo no lo ve. Todos los peatones tardan lo mismo
+    en cruzar. No hay carril ni acera: solo el tiempo que el paso está cerrado.</p></div>
 </section>
 
 <section id="bottleneck">

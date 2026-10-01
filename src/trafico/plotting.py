@@ -9,7 +9,7 @@ import numpy as np
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-from trafico.config import POLLUTANT_LABELS, POLLUTANTS, SpeedBump
+from trafico.config import POLLUTANT_LABELS, POLLUTANTS, as_positions
 from trafico.emissions import EMIS_BIN, emitted
 from trafico.emissions import unit as pollutant_unit
 from trafico.metrics import EMIS_SERIES, ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, SPEED_BIN
@@ -105,8 +105,18 @@ def shade_phases(ax, spans) -> None:
 
 def phase_handles(cfg, per_light: bool = False) -> list:
     """Entradas de leyenda de las fases sombreadas (ninguna sin semáforo). Con varios semáforos, el sombreado es el
-    del último; `per_light` (el diagrama espacio-tiempo, que marca las fases de cada semáforo en su línea) no
-    nombra cuál."""
+    del último de ciclo fijo; `per_light` (el diagrama espacio-tiempo, que marca las fases de cada semáforo y de cada
+    paso peatonal en su línea) no nombra cuál."""
+    if per_light:
+        lights = cfg.lights
+        crossings = bool(cfg.crossings)
+        if not lights and not crossings:
+            return []
+        what = "semáforo" if lights and not crossings else "paso peatonal" if crossings and not lights else "alto"
+        handles = [Patch(facecolor=RED_PHASE, alpha=0.2, label=f"{what} en rojo")]
+        if crossings or any(lt.yellow > 0 for lt in lights):
+            handles.append(Patch(facecolor=YELLOW_PHASE, alpha=0.3, label="en amarillo"))
+        return handles
     ref = cfg.ref_light
     if ref is None:
         return []
@@ -302,13 +312,16 @@ def plot_emissions_by_position(agg: Aggregate, path: Path, footer: str | None = 
     x = (np.arange(pos.shape[2]) + 0.5) * EMIS_BIN
     fig = Figure(figsize=(11, 1.9 + 2.9 * len(pols)), facecolor=SURFACE)
     axes = fig.subplots(len(pols), 1, sharex=True, squeeze=False, gridspec_kw={"hspace": 0.45})[:, 0]
-    marks = [(cfg.length, "semáforo" if cfg.has_light else "final del tramo", INK_2)]
-    marks += [(light.position, "semáforo", INK_2) for light in cfg.inner_lights]
-    bump_lanes = cfg.speed_bump_lanes()
-    if bump_lanes:
+    def light_name(light) -> str:
+        return "semáforo peatonal" if light.pedestrian else "semáforo"
+
+    marks = [(cfg.length, light_name(cfg.exit_light) if cfg.has_light else "final del tramo", INK_2)]
+    marks += [(light.position, light_name(light), INK_2) for light in cfg.inner_lights]
+    for bump in cfg.bumps:
+        bump_lanes = cfg.bump_lanes(bump)
         where = "" if len(bump_lanes) == cfg.lanes else (
             (" (carril " if len(bump_lanes) == 1 else " (carriles ") + ", ".join(map(str, bump_lanes)) + ")")
-        marks += [(pos, "tope" + where, YELLOW_PHASE) for pos in cfg.speed_bump.positions]
+        marks.append((bump.position, "tope" + (" · peatones" if bump.pedestrian else "") + where, YELLOW_PHASE))
     marks += [(cfg.specs[k].stop_position, f"parada {cfg.specs[k].name}", TYPE_COLORS[k])
               for k in active if cfg.specs[k].stop_position is not None]  # fmt: skip
     for ax, p in zip(axes, pols):
@@ -911,8 +924,8 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
     pos = data["emissions_pos"].sum(axis=2) / EMIS_BIN / (meta["s_simulados"] / 3600.0)  # (escenario, pol, x)
     x = (np.arange(pos.shape[2]) + 0.5) * EMIS_BIN
     # topes_m: por escenario, una lista de posiciones (en los datos anteriores, una posición o null)
-    marks = [(m, "tope") for m in sorted({p for b in meta["topes_m"] for p in SpeedBump(position=b).positions})]
-    marks_bumps = {len(SpeedBump(position=b).positions) for b in meta["topes_m"]}
+    marks = [(m, "tope") for m in sorted({p for b in meta["topes_m"] for p in as_positions(b)})]
+    marks_bumps = {len(as_positions(b)) for b in meta["topes_m"]}
     marks_bumps = range(max(marks_bumps, default=0))  # cuántos topes tiene el escenario con más
     marks += [(m, f"parada {name}") for name, m in meta["paradas_m"].items()]
     span = ncols // max(1, len(pos_pols))
@@ -942,9 +955,13 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
     lanes = meta["carriles_tope"]
     where = "todos los carriles" if lanes is None or len(lanes) == len(meta["carriles"]) else (
         ("carril " if len(lanes) == 1 else "carriles ") + ", ".join(map(str, lanes)))
+    ped = meta.get("peatones_tope")  # ausente en los datos anteriores
+    walkers = (f" · con peatones ({ped['peatones_min']:.3g}/min, cruzan en {ped['s_cruce']:g} s: los vehículos se "
+               "detienen del todo)") if ped else ""  # fmt: skip
     lines = [
         f"Tramo {meta['largo_m']:g} m · {', '.join(meta['carriles'])} · {rates}",
-        f"{'Topes' if len(marks_bumps) > 1 else 'Tope'} en {where}: {bump_speed or 'ningún tipo frena (sin speed_bump_kmh)'}",
+        f"{'Topes' if len(marks_bumps) > 1 else 'Tope'} en {where}: "
+        f"{bump_speed or 'ningún tipo frena (sin speed_bump_kmh)'}{walkers}",
         f"{meta['s_simulados']:,.0f} s simulados · media de {meta['replicas']} réplicas con la misma semilla "
         f"({meta['semilla']}) · emisiones por km recorrido en el tramo, modelo de Int Panis et al. (2006)",
     ]

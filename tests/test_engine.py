@@ -5,7 +5,7 @@ import pytest
 
 from trafico.config import (
     BIKE, BUS, CAR, DEFAULT_SPECS, DT, GREEN, POLLUTANTS, RED, YELLOW, Behavior, Bottleneck, Rate, Light, SimConfig,
-    SpeedBump, VehicleSpec,
+    SpeedBump, VehicleSpec, as_positions,
 )  # fmt: skip
 from trafico.engine import Simulation
 
@@ -107,7 +107,7 @@ def test_invariants_every_step(lanes, extra, separate, bus_stop, abreast, overta
         initial_occupancy=0.4 if overtake else 0.0,
         bottleneck=Bottleneck(stop_lanes=(1, 2)) if overtake else Bottleneck(),
         free_lanes=(0,) if overtake and lanes == 4 else (),  # carril sin semáforo
-        speed_bump=SpeedBump(position=80.0, lanes=(1, 2)) if overtake else SpeedBump(),  # tope para los autos
+        speed_bumps=(SpeedBump(80.0, (1, 2)),) if overtake else (),  # tope para los autos
         run=30, specs=specs,
     )  # fmt: skip
     sim = Simulation(cfg, np.random.default_rng(7))
@@ -337,7 +337,7 @@ def _bump_run(gradual: bool, lanes: int = 1, bump_lanes=None, lane: int = 0, vt:
     if gradual:
         specs = tuple(_gradual(s) for s in specs)
     sim = _empty_sim(length=150, lanes=lanes, red=0, green=60, run=10, specs=specs,
-                     speed_bump=SpeedBump(position=position, lanes=bump_lanes))  # fmt: skip
+                     speed_bumps=tuple(SpeedBump(p, bump_lanes) for p in as_positions(position)))  # fmt: skip
     i = _place(sim, vt, 20.0, lane=lane)
     vid = sim.vid[i]
     steps = []
@@ -372,7 +372,7 @@ def test_several_speed_bumps_each_slow_the_vehicle(gradual):
     """Con dos topes (40 y 100 m) el auto pisa cada uno a lo más a 10 km/h, recupera su velocidad entre ellos y
     tarda más que con uno solo."""
     steps, sim = _bump_run(gradual, position=(100.0, 40.0))  # sin orden
-    assert sim.cfg.speed_bump.positions == (40.0, 100.0)
+    assert [b.position for b in sim.cfg.bumps] == [40.0, 100.0]
     vb, vlen = 10 / 3.6 * DT, sim.cfg.specs[CAR].length
     for at in (40.0, 100.0):
         on = [adv for x0, x1, adv in steps if x0 - vlen < at and x1 > at]
@@ -440,7 +440,7 @@ def test_emissions_excess_over_free_flow():
     assert free["emissions"][CAR, co2] == pytest.approx(free["emissions_free"][CAR, co2], rel=1e-6)
     np.testing.assert_allclose(free["emissions_pos"].sum(axis=(1, 2)), free["emissions"].sum(axis=0))
     excess = {}
-    for name, kw in (("tope", dict(speed_bump=SpeedBump(position=100.0))), ("rojo", dict(red=20, green=40))):
+    for name, kw in (("tope", dict(speed_bumps=(SpeedBump(100.0),))), ("rojo", dict(red=20, green=40))):
         s = _emission_run(**kw)
         excess[name] = s["emissions"][CAR, co2] / s["emissions_free"][CAR, co2] - 1
     assert excess["tope"] > 0.3 and excess["rojo"] > 0.3
