@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import POLLUTANT_LABELS, POLLUTANTS, SimConfig, SpeedBump
+from trafico.config import POLLUTANT_LABELS, POLLUTANTS, SimConfig, SpeedBump, as_positions
 from trafico.emissions import EMIS_BIN, emitted, unit
 from trafico.metrics import LANE_EXIT_FLOW
 from trafico.runner import run_parallel
@@ -39,7 +39,7 @@ class Scenarios:
 
     # Topes de cada escenario: una posición (m), varias (tupla) o None / vacía = sin tope.
     bumps: tuple[float | tuple[float, ...] | None, ...]
-    bump_lanes: tuple[int, ...] | None  # carriles del tope (ya renumerados); None = todos
+    bump_lanes: tuple[int, ...] | None  # carriles de todos los topes (ya renumerados); None = los de cada tope
     lights: tuple[bool | None, ...]  # semáforo activado en cada variante; None = como en la configuración
     length: float | None  # m del tramo; None = [road] length
     lanes: tuple[int, ...] | None  # carriles de la configuración base que se conservan; None = todos
@@ -50,7 +50,7 @@ class Scenarios:
 
 def bump_positions(bump: float | tuple[float, ...] | None) -> tuple[float, ...]:
     """Posiciones (m) de los topes de un escenario, de la entrada a la salida (vacía = sin tope)."""
-    return SpeedBump(position=bump).positions
+    return as_positions(bump)
 
 
 def scenario_label(bump: float | tuple[float, ...] | None, light: bool | None) -> str:
@@ -63,6 +63,16 @@ def scenario_label(bump: float | tuple[float, ...] | None, light: bool | None) -
     return name
 
 
+def scenario_bumps(base: SimConfig, positions: tuple[float, ...], lanes: tuple[int, ...] | None) -> tuple[SpeedBump, ...]:
+    """Topes de un escenario en esas posiciones: el de la configuración que está ahí (con sus carriles y peatones) o,
+    si no hay, uno nuevo como el primero de la configuración (o sin peatones, si no hay ninguno). `lanes` reemplaza
+    los carriles de todos; sin posiciones no hay tope ni paso peatonal."""
+    configured = {b.position: b for b in base.bumps}
+    template = base.bumps[0] if base.bumps else SpeedBump(0.0)
+    bumps = (configured.get(p) or replace(template, position=p) for p in positions)
+    return tuple(replace(b, lanes=lanes) if lanes is not None else b for b in bumps)
+
+
 def build_configs(base: SimConfig, s: Scenarios) -> list[tuple[str, SimConfig]]:
     """(nombre, configuración validada) de cada escenario: cada semáforo por cada tope."""
     reduced = reduce_config(base, s.lanes, s.without)
@@ -71,10 +81,8 @@ def build_configs(base: SimConfig, s: Scenarios) -> list[tuple[str, SimConfig]]:
     out = []
     for light in s.lights:
         for bump in s.bumps:
-            cfg = replace(
-                reduced if light is None else reduced.with_lights(light), run=s.run,
-                speed_bump=SpeedBump(position=bump_positions(bump) or None, lanes=s.bump_lanes if bump_positions(bump) else None),
-            )  # fmt: skip
+            cfg = replace(reduced if light is None else reduced.with_lights(light), run=s.run,
+                          speed_bumps=scenario_bumps(reduced, bump_positions(bump), s.bump_lanes))  # fmt: skip
             name = scenario_label(bump, cfg.any_light if len(s.lights) > 1 else None)
             try:
                 validate_config(cfg, RunOptions(replicas=s.replicas))
@@ -119,9 +127,13 @@ def metadata(base: SimConfig, s: Scenarios, configs: list[tuple[str, SimConfig]]
         "comando": "uv run trafico-emisiones " + " ".join(argv),
         "semilla": seed,
         "escenarios": [name for name, _ in configs],
-        "topes_m": [list(c.speed_bump.positions) for _, c in configs],
+        "topes_m": [[b.position for b in c.bumps] for _, c in configs],
         "semaforo": [c.any_light for _, c in configs],
-        "carriles_tope": list(configs[-1][1].speed_bump_lanes()) or None,
+        "carriles_tope": sorted({ln for _, c in configs for b in c.bumps for ln in c.bump_lanes(b)}) or None,
+        # Peatones en los topes ([[speed_bump]] pedestrian): tasa media (peatones/min) y s por cruce del primero con
+        # peatones; None = sin peatones.
+        "peatones_tope": next(({"peatones_min": b.pedestrian_crossing.expected, "s_cruce": b.pedestrian_time}
+                               for _, c in configs for b in c.crossings), None),  # fmt: skip
         "largo_m": cfg.length,
         "carriles_base": list(range(base.lanes)) if s.lanes is None else list(s.lanes),
         "carriles": [f"carril {i} ({limits[i]:g} km/h)" if np.isfinite(limits[i]) else f"carril {i}"

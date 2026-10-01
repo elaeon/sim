@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from trafico.cli import CONFIG_NAME, run, view
-from trafico.config import GREEN, SimConfig
+from trafico.config import DT, GREEN, RED, SimConfig
 from trafico.engine import Simulation
 from trafico.movement import record
 from trafico.settings import AnimationOptions, ConfigError, parse_settings
@@ -216,3 +216,35 @@ def test_outputs_with_several_lights(root):
     traj = record(cfg, seed=1, replica=1, start=0, end=25)
     assert traj.inner_phase.shape == (traj.n_frames, 1)
     assert traj.inner_phase[0, 0] == GREEN and (traj.inner_phase[:, 0] != GREEN).any()  # empieza en verde
+
+
+def test_outputs_with_pedestrians(root):
+    """Con un tope peatonal y un semáforo peatonal: la cabecera los describe, el resumen trae el bloque «Peatones», y la
+    vista (diagrama espacio-tiempo y video) dibuja las fases grabadas de cada uno."""
+    text = (root / CONFIG_NAME).read_text().replace(
+        "[traffic_light]\nred = 10\ngreen = 10\n",
+        "[[traffic_light]]\nposition = 100\nred = 10\ngreen = 10\nyellow = 2\n"
+        "[[traffic_light]]\nposition = 60\npedestrian = true\nred = 6\ngreen = 4\nyellow = 2\n"
+        "pedestrian_crossing = {min = 6, max = 6, mean = 6, std = 0}\n"
+        "[speed_bump]\nposition = 30\npedestrian = true\npedestrian_time = 5\n"
+        "pedestrian_crossing = {min = 6, max = 6, mean = 6, std = 0}\n"
+        "[vehicles.car]\naccel = 2.5\ndecel = 4.5\n",
+    )
+    (root / CONFIG_NAME).write_text(text, encoding="utf-8")
+    run_dir = run([])
+    summary = (run_dir / "resumen.txt").read_text(encoding="utf-8")
+    assert "peatonal: rojo 6 s con peatones en espera, verde mínimo 4 s, amarillo 2 s" in summary
+    assert "Paso peatonal en el tope" in summary and "Semáforo peatonal a 60 m" in summary
+    assert "con el semáforo de" not in summary.split("Semáforo peatonal a 60 m")[0]  # no hay anterior a 60 m
+    block = summary.split("Peatones (media por réplica):")[1].splitlines()
+    assert "paso peatonal del tope a 30 m" in block[1] and "semáforo peatonal a 60 m" in block[2]
+    paths = view([str(run_dir), "--duracion", "2"])
+    assert all(p.stat().st_size > 1000 for p in paths)
+    cfg = parse_settings((root / CONFIG_NAME).read_text(encoding="utf-8"), Path("x.toml")).sim
+    traj = record(cfg, seed=1, replica=1, start=0, end=30)
+    assert traj.inner_phase.shape == (traj.n_frames, 3)  # tope a 30 m, semáforo peatonal a 60 m, semáforo a 100 m
+    assert (traj.inner_phase[:, 0] == RED).any() and (traj.inner_phase[:, 1] == RED).any()
+    assert (traj.inner_phase[:, 2] == RED).any()
+    # Las fases grabadas son las de la simulación (no las del config): coinciden con la réplica que corrió.
+    sim = Simulation(cfg, np.random.default_rng(np.random.SeedSequence(1).spawn(1)[0]))
+    assert [int(sim.line_phases(round(t / DT))[0]) for t in traj.t[:50]] == traj.inner_phase[:50, 0].tolist()

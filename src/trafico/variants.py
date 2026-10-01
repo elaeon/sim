@@ -88,12 +88,14 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
         raise ConfigError("no queda ningún tipo con tasa > 0 (revisa --sin y [demand])")
 
     bn_lanes = base.bottleneck.stop_lanes
-    bump_lanes = base.speed_bump.lanes
-    if bump_lanes is not None:  # si no queda ninguno de sus carriles, no hay tope
-        bump_lanes = tuple(new_of[ln] for ln in bump_lanes if ln in new_of)
-        if not bump_lanes:
-            base = replace(base, speed_bump=replace(base.speed_bump, position=None))
-            bump_lanes = None
+    bumps = []
+    for bump in base.speed_bumps:  # cada tope conserva sus carriles; si no queda ninguno, no hay tope
+        if bump.lanes is None:
+            bumps.append(bump)
+            continue
+        kept = tuple(new_of[ln] for ln in bump.lanes if ln in new_of)
+        if kept:
+            bumps.append(replace(bump, lanes=kept))
     if bn_lanes is not None:
         bn_lanes = tuple(new_of[ln] for ln in bn_lanes if ln in new_of)  # () = en ninguno
     return replace(
@@ -111,14 +113,15 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
             for lt in base.extra_lights
         ),  # fmt: skip
         bottleneck=replace(base.bottleneck, stop_lanes=bn_lanes),
-        speed_bump=replace(base.speed_bump, lanes=bump_lanes),
+        speed_bumps=tuple(bumps),
     )  # fmt: skip
 
 
 def scenario(reduced: SimConfig, v: Variants, length: float, red: float, green: float) -> SimConfig:
     """Un escenario validado: la configuración reducida con ese largo, semáforo y duración. El reparto `red`/`green`
-    es el del semáforo del final del tramo; los intermedios conservan sus fases y su posición."""
-    cfg = replace(reduced, length=length, red=red, green=green, traffic_light=True, run=v.run)
+    es el del semáforo del final del tramo (de ciclo fijo, aunque en la configuración sea peatonal); los intermedios
+    conservan sus fases y su posición."""
+    cfg = replace(reduced, length=length, red=red, green=green, traffic_light=True, light_pedestrian=False, run=v.run)
     try:
         validate_config(cfg, RunOptions(replicas=v.replicas))
     except ConfigError as exc:
