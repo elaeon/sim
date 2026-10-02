@@ -83,12 +83,12 @@ from typing import NamedTuple
 
 import numpy as np
 
-from trafico.config import DT, GREEN, PEDESTRIAN_YIELD, RED, YELLOW, SimConfig
+from trafico.config import DT, EMISSION_DECEL, GREEN, PEDESTRIAN_YIELD, RED, YELLOW, SimConfig
 from trafico.distributions import (
     normal_ticks, reaction_ticks, sample_lengths, sample_passengers, sample_rates, sample_speeds, stop_ticks,
     uniform_ticks,
 )  # fmt: skip
-from trafico.emissions import EMIS_BIN, coefficient_table, emission_rate
+from trafico.emissions import EMIS_BIN, coefficient_table
 from trafico.metrics import Recorder
 from trafico.pedestrians import Schedule, arrivals, bump_schedule, fixed_phases, light_schedule
 
@@ -98,6 +98,7 @@ SIDE_EPS = 0.01  # m que queda atrás el frente de quien se detiene al lado (con
 ARRIVAL_CHUNK = 1024  # pasos por bloque de sorteo de llegadas
 PER_TYPE_STREAMS = 5  # generadores aleatorios por tipo de vehículo
 MAX_PAX = 255  # cota de pasajeros por vehículo (pax es uint8)
+_TRUE = np.ones(1, np.bool_)  # para concatenar (np.r_ es varias veces más lento en arreglos chicos)
 INITIAL_MISSES = 30  # sorteos seguidos que no caben antes de dar por lleno un carril en la condición inicial
 
 
@@ -117,6 +118,21 @@ def _safe_speed(space, v_lead, dec, dec_lead) -> np.ndarray:
         lead = np.where(np.isfinite(dec_lead), v_lead * v_lead * dec / np.maximum(dec_lead, dec), 0.0)
         out = -dec + np.sqrt(dec * dec + 2 * dec * np.maximum(space, 0.0) + lead)
     return np.where(np.isnan(out), INF, out)
+
+
+def _gipps(space, lead, dec, finite) -> np.ndarray:
+    """La velocidad de `_safe_speed` sin `errstate` ni NaN, para el paso: `lead` es el término del de adelante
+    (v_lead²·dec/max(dec_lead, dec), o 0 si no cuenta), `dec` no tiene infinitos (donde el frenado del tipo es
+    infinito trae un valor positivo cualquiera) y `finite` marca dónde es finito; None = en todos. Da los mismos
+    números que `_safe_speed`: sumar el término 0 no cambia nada y −dec + raíz = raíz − dec."""
+    out = np.sqrt(dec * dec + 2 * dec * np.maximum(space, 0.0) + lead) - dec
+    return out if finite is None else np.where(finite, out, INF)
+
+
+def _cruise_rate(c: np.ndarray, v) -> np.ndarray:
+    """emission_rate(coef, v, 0.0) con `c` = los coeficientes del juego de a ≥ −0.5, sin los términos de la aceleración
+    (con a = 0 suman ±0, que no cambia el resultado): la tasa a velocidad constante de `_emit`."""
+    return np.maximum(c[..., 0] + c[..., 1] * v + c[..., 2] * v * v, 0.0)
 
 
 def _safe_speed_1(space: float, v_lead: float, dec: float, dec_lead: float) -> float:
@@ -250,6 +266,8 @@ class Simulation:
         self.acc_t = np.array([INF if s.accel is None else s.accel * DT * DT for s in specs])
         self.dec_t = np.array([INF if s.decel is None else s.decel * DT * DT for s in specs])
         self.dyn_t = np.isfinite(self.acc_t) | np.isfinite(self.dec_t)  # tipos con dinámica gradual
+        self.dec_fin_t = np.isfinite(self.dec_t)
+        self.dec_safe_t = np.where(self.dec_fin_t, self.dec_t, 1.0)  # sin infinitos, para _gipps
         self.any_dynamics = bool(self.dyn_t.any())
         # Tope ([speed_bump]): posición, carriles donde está y velocidad máxima de cada tipo al pisarlo (m/paso).
         self.bump_x = np.array([b.position for b in cfg.bumps], dtype=np.float64)  # uno o varios topes
@@ -263,6 +281,9 @@ class Simulation:
         # constante), en el intervalo de muestreo y por posición (contaminante × carril × intervalo de EMIS_BIN m).
         self.emis_coef, self.emis_on = coefficient_table(specs)
         self.any_emissions = bool(self.emis_on.any())
+        self.emits_t = self.emis_on.any(axis=1)  # el tipo emite algún contaminante
+        # Coeficientes por (tipo, juego): la fila 2·tipo es la de a ≥ −0.5 y la 2·tipo + 1 la de a < −0.5.
+        self._coef_sets = np.ascontiguousarray(self.emis_coef.transpose(0, 2, 1, 3)).reshape(-1, *self.emis_coef.shape[1::2])
         self.emis_amax = np.array([s.accel or 0.0 for s in specs])
         self.emis_dmax = np.array([s.decel or 0.0 for s in specs])
         n_pol = self.emis_on.shape[1]
@@ -270,6 +291,7 @@ class Simulation:
         self.emis_free_g = np.zeros((self.n_types, n_pol))
         self.emis_interval = np.zeros((self.n_types, n_pol))
         self.emis_pos = np.zeros((n_pol, cfg.lanes, max(1, math.ceil(cfg.length / EMIS_BIN))))
+        self._pol_idx = np.arange(n_pol)  # índice de cada contaminante, para aplanar (tipo o carril, contaminante)
         self.veh_m = np.zeros(self.n_types)  # m recorridos dentro del tramo, por tipo
         # Sin límites distintos entre carriles no hay a dónde subir.
         self.any_rise = len(set(cfg.lane_max_kmh)) > 1
@@ -311,6 +333,8 @@ class Simulation:
         # Cola de salida por carril: vehículos que acepta por paso (inf = sin cola de salida).
         exit_cap = np.array(cfg.lane_exit_capacity, dtype=np.float64)
         self.exit_rate = np.where(exit_cap > 0, exit_cap / 60.0 * DT, INF)
+        self._exit_limited = np.isfinite(self.exit_rate)  # carriles con cola de salida
+        self._exit_add = np.where(self._exit_limited, self.exit_rate, 0.0)  # salidas que acepta por paso
         # m de cada cola de salida; sin cola de salida, sin límite.
         self.exit_storage = np.where(exit_cap > 0, np.array(cfg.lane_exit_storage, dtype=np.float64), INF)
         self.any_exit = bool((exit_cap > 0).any())
@@ -542,7 +566,7 @@ class Simulation:
 
     def occupancy(self) -> Occupancy:
         n = self.n
-        changing = np.flatnonzero(self.lc_target[:n] >= 0)
+        changing = (self.lc_target[:n] >= 0).nonzero()[0]
         veh = np.concatenate((np.arange(n), changing))
         lane = np.concatenate((self.lane[:n], self.lc_target[changing])).astype(np.int64)
         x = self.x[veh]
@@ -637,7 +661,7 @@ class Simulation:
         rear = self.x[:n] - self.vlen[:n]
         lane, tgt = self.lane[:n], self.lc_target[:n]
         for ln in range(self.n_lanes):
-            occ = np.flatnonzero((lane == ln) | (tgt == ln))
+            occ = ((lane == ln) | (tgt == ln)).nonzero()[0]
             if occ.size:
                 j = occ[np.argmin(rear[occ])]
                 rear_min[ln] = rear[j]
@@ -751,7 +775,7 @@ class Simulation:
             # gap_run a quien estaba a gap_stop.
             own = self.v_last[occ.veh] / np.minimum(self.vmax[occ.veh], self.lane_vmax[occ.lane])
             gradual = self.dyn_t[svt] & ~lead_stop
-            ramp = self.gap_stop_t[svt] + (self.gap_run_t[svt] - self.gap_stop_t[svt]) * np.clip(own, 0.0, 1.0)
+            ramp = self.gap_stop_t[svt] + (self.gap_run_t[svt] - self.gap_stop_t[svt]) * np.minimum(np.maximum(own, 0.0), 1.0)
             gap_need = np.where(gradual, ramp, gap_need)
         s = self.x[lead] - self.vlen[lead] - gap_need - occ.x
         if passing is not None:
@@ -793,16 +817,23 @@ class Simulation:
             if yielding is not None:
                 v_lead = np.where(yielding, np.minimum(v_lead, self.v_last[occ.leader]), v_lead)
             safe_e = np.empty(occ.order.size)
-            safe_e[occ.order] = np.where(
-                has_lead, _safe_speed(s, v_lead, self.dec_t[svt], self.dec_t[self.vtype[lead]]), INF
+            fin_e = self.dec_fin_t[svt]
+            dec_e = self.dec_safe_t[svt]
+            vt_lead = self.vtype[lead]
+            lead_term = np.where(
+                self.dec_fin_t[vt_lead], v_lead * v_lead * dec_e / np.maximum(self.dec_t[vt_lead], dec_e), 0.0
             )
+            safe_e[occ.order] = np.where(has_lead, _gipps(s, lead_term, dec_e, None if fin_e.all() else fin_e), INF)
             vsafe = safe_e[:n].copy()
             if ch.size:
                 vsafe[ch] = np.minimum(vsafe[ch], safe_e[n:])
             dec_v = self.dec_t[vt]
+            fin_v = self.dec_fin_t[vt]
+            fin_v = None if fin_v.all() else fin_v  # para _gipps
+            dec_vf = self.dec_safe_t[vt]
             v_prev = self.v_last[:n]
             to_line = np.where(crossed, INF, self.L - x)
-            safe_line = _safe_speed(to_line, 0.0, dec_v, INF)
+            safe_line = _gipps(to_line, 0.0, dec_vf, fin_v)
             if phase == YELLOW:
                 # Amarillo: quien todavía puede detenerse antes de la línea (frenando a decel) se detiene.
                 halt = np.isfinite(dec_v) & ~ruled_out & (v_prev - dec_v <= safe_line + EPS)
@@ -825,7 +856,7 @@ class Simulation:
                 before = before & (lane_ok[self.lane[:n]] | ((target >= 0) & lane_ok[np.maximum(target, 0)]))
             to_inner = np.where(before, pos - x, INF)
             if dynamics:
-                safe_inner = _safe_speed(to_inner, 0.0, dec_v, INF)
+                safe_inner = _gipps(to_inner, 0.0, dec_vf, fin_v)
                 if ph == YELLOW:
                     halt = np.isfinite(dec_v) & before & (v_prev - dec_v <= safe_inner + EPS)
                     stop_space = np.minimum(stop_space, np.where(halt, to_inner, INF))
@@ -850,11 +881,12 @@ class Simulation:
             closed = ~crossed & (no_room(self.lane[:n]) | ((tgt >= 0) & no_room(np.maximum(tgt, 0))))
             # Línea cerrada en el carril si no cabe el siguiente en cruzar (el de adelante que no ha cruzado).
             self.exit_closed[:] = False
-            waiting = np.flatnonzero(~crossed)
+            waiting = (~crossed).nonzero()[0]
             if waiting.size:
                 lane_w = self.lane[:n][waiting]
                 order = np.lexsort((x[waiting], lane_w))
-                last = np.r_[lane_w[order][1:] != lane_w[order][:-1], True]
+                lane_o = lane_w[order]
+                last = np.concatenate((lane_o[1:] != lane_o[:-1], _TRUE))
                 front = waiting[order][last]
                 self.exit_closed[self.lane[:n][front]] = closed[front]
             self.exit_blocked_ticks += self.exit_closed
@@ -881,7 +913,7 @@ class Simulation:
             pending = (stop_state == self.AT_STOP) | ((stop_state == self.STOP_AHEAD) & ~bn_skip)
             stop_space = np.minimum(stop_space, np.where(pending, stop_pos - x, INF))
             if dynamics:
-                vsafe = np.minimum(vsafe, np.where(pending, _safe_speed(stop_pos - x, 0.0, dec_v, INF), INF))
+                vsafe = np.minimum(vsafe, np.where(pending, _gipps(stop_pos - x, 0.0, dec_vf, fin_v), INF))
         space = np.minimum(stop_space, move_space)
         binding_stop = stop_space <= move_space
 
@@ -923,7 +955,8 @@ class Simulation:
                 vcap = np.where(before & (x + vcap > bump_x), np.minimum(vcap, vb), vcap)
                 if dynamics:
                     ahead = before & (x < bump_x)
-                    vsafe = np.minimum(vsafe, np.where(ahead, _safe_speed(bump_x - x, vb, dec_v, dec_v), INF))
+                    lead_term = vb * vb * dec_vf / dec_vf  # el de adelante es el tope: frena como él
+                    vsafe = np.minimum(vsafe, np.where(ahead, _gipps(bump_x - x, lead_term, dec_vf, fin_v), INF))
         if phase == YELLOW:  # quien se aproxima a la línea de alto baja la velocidad
             near = ~ruled_out & (self.L - x <= b.yellow_approach)
             if dynamics:
@@ -970,7 +1003,7 @@ class Simulation:
         # Llegada a la parada: queda detenido el tiempo de descenso y ascenso.
         if self.any_stop:
             arrive = (stop_state == self.STOP_AHEAD) & (x >= stop_pos - EPS)
-            for i in np.flatnonzero(arrive):
+            for i in arrive.nonzero()[0]:
                 if self.stop_kind[i] == self.BOTTLENECK_STOP:
                     if bn_skip[i]:  # pasó el punto fuera de los carriles de la detención: no se detiene
                         stop_state[i] = self.NO_STOP
@@ -1019,7 +1052,7 @@ class Simulation:
             self.lane_cross += by_lane
             self.lane_crossed += by_lane
             if self.any_exit:
-                for i in np.flatnonzero(newly):
+                for i in newly.nonzero()[0]:
                     ln = self.lane[i]
                     if np.isfinite(self.exit_rate[ln]):
                         size = float(self.vlen[i] + self.gap_stop_t[vt[i]])
@@ -1036,33 +1069,41 @@ class Simulation:
         su aceleración respecto al paso anterior, acotada a [−decel, accel] de su tipo (un frenado de emergencia
         no dispara el término a²). También lo que emitiría recorriendo lo mismo a flujo libre (a velocidad
         constante: su máxima dentro del límite del carril) y dónde lo emite."""
-        idx = np.flatnonzero(~crossed & self.emis_on[vt].any(axis=1))
+        idx = (~crossed & self.emits_t[vt]).nonzero()[0]
         if idx.size == 0:
             return
         t = vt[idx]
         step = adv[idx]
         v = step / DT
-        a = np.clip((step - self.v_last[idx]) / (DT * DT), -self.emis_dmax[t], self.emis_amax[t])
+        a = np.minimum(np.maximum((step - self.v_last[idx]) / (DT * DT), -self.emis_dmax[t]), self.emis_amax[t])
         on = self.emis_on[t]
-        coef = self.emis_coef[t]
-        grams = emission_rate(coef, v[:, None], a[:, None]) * DT * on
+        # La misma cuenta que emission_rate, eligiendo el juego de cada vehículo con un índice en vez de np.where.
+        c = self._coef_sets[2 * t + ~(a >= EMISSION_DECEL)]
+        v1, a1 = v[:, None], a[:, None]
+        e = c[..., 0] + c[..., 1] * v1 + c[..., 2] * v1 * v1 + c[..., 3] * a1 + c[..., 4] * a1 * a1 + c[..., 5] * v1 * a1
+        grams = np.maximum(e, 0.0) * DT * on
         vf = np.minimum(self.vmax[idx], self.lane_vmax[self.lane[idx]])  # m/paso
-        free = emission_rate(coef, (vf / DT)[:, None], 0.0) * DT * (step / vf)[:, None] * on
-        lanes = self.lane[idx].astype(np.int64)
-        bins = np.clip((x[idx] / EMIS_BIN).astype(np.int64), 0, self.emis_pos.shape[2] - 1)
-        for p in range(grams.shape[1]):
-            by_type = np.bincount(t, weights=grams[:, p], minlength=self.n_types)
-            self.emis_g[:, p] += by_type
-            self.emis_interval[:, p] += by_type
-            self.emis_free_g[:, p] += np.bincount(t, weights=free[:, p], minlength=self.n_types)
-            np.add.at(self.emis_pos[p], (lanes, bins), grams[:, p])
+        free = _cruise_rate(self._coef_sets[2 * t], (vf / DT)[:, None]) * DT * (step / vf)[:, None] * on
+        # Todos los contaminantes de una vez, con índices aplanados: cada celda suma a los vehículos en el mismo
+        # orden que un bincount (o un add.at) por contaminante, así que los totales son idénticos.
+        n_pol = grams.shape[1]
+        cell = (t[:, None] * n_pol + self._pol_idx).ravel()
+        size = self.n_types * n_pol
+        by_type = np.bincount(cell, weights=grams.ravel(), minlength=size).reshape(self.n_types, n_pol)
+        self.emis_g += by_type
+        self.emis_interval += by_type
+        self.emis_free_g += np.bincount(cell, weights=free.ravel(), minlength=size).reshape(self.n_types, n_pol)
+        _, n_lanes, n_bins = self.emis_pos.shape
+        bins = np.minimum(np.maximum((x[idx] / EMIS_BIN).astype(np.int64), 0), n_bins - 1)
+        where = (self._pol_idx * n_lanes + self.lane[idx].astype(np.int64)[:, None]) * n_bins + bins[:, None]
+        np.add.at(self.emis_pos.reshape(-1), where.ravel(), grams.ravel())
 
     def _drain_exit(self) -> None:
         """Salen de cada cola de salida los vehículos que acepta su capacidad en este paso. Sin cola, la
         fracción acumulada no pasa de una salida (no se ahorran salidas para después)."""
-        limited = np.isfinite(self.exit_rate)
-        self.exit_credit += np.where(limited, self.exit_rate, 0.0)
-        for ln in np.flatnonzero(limited & (self.exit_credit >= 1)):
+        limited = self._exit_limited
+        self.exit_credit += self._exit_add
+        for ln in (limited & (self.exit_credit >= 1)).nonzero()[0]:
             items = self.exit_items[ln]
             while items and self.exit_credit[ln] >= 1:
                 self.exit_q[ln] -= items.popleft()
@@ -1082,7 +1123,7 @@ class Simulation:
         new_row = np.ones(m, np.bool_)
         new_row[1:] = ~beside[:-1]  # la entrada i+1 sigue en la fila de i si i está junto a ella
         rid = np.cumsum(new_row) - 1
-        last = np.flatnonzero(np.append(new_row[1:], True))  # último índice de cada fila
+        last = np.concatenate((new_row[1:], _TRUE)).nonzero()[0]  # último índice de cada fila
         return beside, rid, last[rid]
 
     def row_positions(self) -> tuple[np.ndarray, np.ndarray]:
@@ -1095,7 +1136,7 @@ class Simulation:
         occ = self.occupancy()
         _, rid, row_last = self.rows(occ)
         idx = np.arange(occ.order.size)
-        first = np.flatnonzero(np.r_[True, rid[1:] != rid[:-1]])[rid]
+        first = np.concatenate((_TRUE, rid[1:] != rid[:-1])).nonzero()[0][rid]
         primary = occ.order < n  # quien cambia de carril aparece dos veces; se usa su carril actual
         rank[occ.veh[primary]] = (row_last - idx)[primary]
         size[occ.veh[primary]] = (row_last - first + 1)[primary]
@@ -1116,7 +1157,7 @@ class Simulation:
         beside, rid, row_last = self.rows(occ) if rows is None else rows
         nxt = np.minimum(np.arange(m) + 1, m - 1)  # entrada del líder (la siguiente en el orden)
         ahead = row_last[nxt] - np.arange(m)  # vehículos de la fila del líder que van delante
-        starts = np.flatnonzero(np.r_[True, rid[1:] != rid[:-1]])
+        starts = np.concatenate((_TRUE, rid[1:] != rid[:-1])).nonzero()[0]
         row_lo = np.minimum.reduceat(svt, starts)[rid[nxt]]
         row_hi = np.maximum.reduceat(svt, starts)[rid[nxt]]
         changing = self.lc_target[:n] >= 0

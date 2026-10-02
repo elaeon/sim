@@ -164,3 +164,22 @@ def test_emission_outputs(tmp_path):
     assert (tmp_path / "pos.png").stat().st_size > 10_000
     quiet = run_parallel(SimConfig(length=150, lanes=2, rates=(10, 2, 0), run=10), 1, 1, 5)
     assert "CO2" not in format_summary(quiet) and "Combustible" not in format_summary(quiet)
+
+
+def test_run_many_matches_separate_runs_in_any_worker_count():
+    """Un solo grupo de procesos para varias configuraciones da lo mismo que correr cada una por separado (mismas
+    semillas), en serie o en paralelo: en serie, cada configuración recibe semillas nuevas (una SeedSequence cuenta
+    los hijos que deriva y la réplica deriva los suyos)."""
+    from trafico.config import SpeedBump
+    from trafico.runner import run_many
+
+    cfgs = [SimConfig(length=150, lanes=2, run=3), SimConfig(length=150, lanes=2, run=3, speed_bumps=(SpeedBump(60.0),))]
+    alone = [run_parallel(cfg, 2, 1, 9) for cfg in cfgs]
+    calls = []
+    for workers in (1, 3):
+        together = run_many(cfgs, 2, workers, 9, progress=lambda i, d, n: calls.append((i, d, n)))
+        assert [a.replicas for a in together] == [2, 2] and together[0].workers == workers
+        for a, b in zip(alone, together):
+            for key, stats in a.summary.items():
+                np.testing.assert_array_equal(stats.mean, b.summary[key].mean)
+    assert calls[:4] == [(0, 1, 2), (0, 2, 2), (1, 1, 2), (1, 2, 2)]  # progreso en orden

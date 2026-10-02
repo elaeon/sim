@@ -237,6 +237,10 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       <code>resumen.txt</code> (por km, por recorrido, exceso frente a flujo libre y tabla al acelerar de 0 a 80
       km/h), en la gráfica y en <code>emisiones_posicion.png</code>/<code>.csv</code>. Requieren <code>accel</code> y
       <code>decel</code>.</li>
+    <li>Más rápido: <code>trafico-emisiones</code> (también con <code>--separacion</code>) reparte las réplicas de
+      todos los escenarios en un solo grupo de procesos y respeta <code>[execution] workers = 0</code> (tantos como
+      CPU; antes corría en un solo proceso), y cada paso del motor es ~20 % más rápido con aceleración y frenado
+      graduales. Los resultados son idénticos a los de antes con la misma semilla.</li>
     <li>Nueva <a href="#api">API de Python (<code>trafico.api</code>) y <code>resultados.json</code></a>: cada corrida
       escribe un resumen en JSON de formato estable y los comandos aceptan <code>--json</code> (imprime ese JSON en
       stdout); la API corre lo mismo que los comandos con argumentos con nombre y devuelve el resultado ya leído.</li>
