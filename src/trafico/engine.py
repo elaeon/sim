@@ -217,6 +217,10 @@ class Simulation:
         self.length_t = np.array([s.length for s in specs])  # largo medio; el de cada vehículo está en vlen
         self.gap_run_t = np.array([s.gap_run for s in specs])
         self.gap_stop_t = np.array([s.gap_stop for s in specs])
+        # Intervalo de seguimiento (s) de los tipos con time_headway: en marcha, gap_stop + time_headway · v.
+        self.has_headway_t = np.array([s.time_headway is not None for s in specs])
+        self.headway_t = np.array([s.time_headway or 0.0 for s in specs])
+        self.any_headway = bool(self.has_headway_t.any())
         self.can_change = np.array([s.can_change_lane for s in specs])
         self.stop_x = np.array([np.inf if s.stop_position is None else s.stop_position for s in specs])
         self.has_stop = np.isfinite(self.stop_x)
@@ -477,7 +481,9 @@ class Simulation:
             # Espacio sobre el mínimo (gap_stop detrás de cada líder; el primero no tiene líder).
             kinds = np.array([k for k, *_ in chosen])
             pool = self.L - sum(length for _, _, length, *_ in chosen) - self.gap_stop_t[kinds[1:]].sum()
-            need = np.r_[0.0, self.gap_run_t[kinds[1:]] - self.gap_stop_t[kinds[1:]]]  # hasta el gap_run
+            # hasta el gap en marcha (gap_run, o el de time_headway a su velocidad deseada)
+            run_gap = [self._run_gap(k, min(speed / 3.6 * DT, self.lane_vmax[lane])) for k, *_, speed in chosen]
+            need = np.r_[0.0, np.array(run_gap[1:]) - self.gap_stop_t[kinds[1:]]]
             if pool >= need.sum():
                 spare = np.diff(np.sort(rng.uniform(0.0, pool - need.sum(), len(chosen))), prepend=0.0)
                 extra = need + spare
@@ -490,14 +496,14 @@ class Simulation:
                 gap = (self.gap_stop_t[k] if idx else 0.0) + free
                 self._add(k, pax, lane, length, x=rear - gap, bottleneck_at=at, speed_kmh=speed)
                 i = self.n - 1
-                if idx and gap < self.gap_run_t[k] - EPS:
+                if idx and gap < run_gap[idx] - EPS:
                     self.stopped[i] = True
                     self.v_last[i] = 0.0
                 elif self.dyn_t[k]:
                     # Con frenado gradual empieza a la velocidad con la que aún frena detrás del de adelante
                     # (o antes de la línea si la corrida empieza en rojo), no de golpe en el primer paso.
                     if ahead >= 0:
-                        room = self.x[ahead] - self.vlen[ahead] - self.gap_run_t[k] - self.x[i]
+                        room = self.x[ahead] - self.vlen[ahead] - run_gap[idx] - self.x[i]
                         v_ahead, dec_ahead = float(self.v_last[ahead]), self.dec_t[self.vtype[ahead]]
                     else:
                         room = self.L - self.x[i] if self.exit_phase(0) == RED and not self.free_type[k] else INF
@@ -510,6 +516,13 @@ class Simulation:
                     self.v_last[i] = min(self.v_last[i], self._bump_speed_1(k, lane, self.x[i], self.x[i] - length))
                 ahead = i
                 rear = self.x[i] - length
+
+    def _run_gap(self, k: int, v_step: float) -> float:
+        """Gap (m) que guarda un vehículo del tipo k detrás de un líder en marcha yendo a `v_step` m/paso: gap_run o, con
+        time_headway, gap_stop más lo que recorre en ese tiempo."""
+        if not self.has_headway_t[k]:
+            return float(self.gap_run_t[k])
+        return float(self.gap_stop_t[k] + self.headway_t[k] * v_step / DT)
 
     def _line_room(self, k: int, x: float, lane: int) -> float:
         """Distancia desde `x` hasta la línea de alto intermedia (semáforo o paso peatonal) en rojo al empezar la
@@ -678,7 +691,12 @@ class Simulation:
             if not q:
                 continue
             vt, pax, length, at, speed, arrived = q[0]
-            gap = self.gap_stop_t[vt] if tail_stopped[ln] else self.gap_run_t[vt]
+            if tail_stopped[ln]:
+                gap = self.gap_stop_t[vt]
+            elif self.has_headway_t[vt]:  # entra a su velocidad deseada: guarda el gap de time_headway a ella
+                gap = self._run_gap(vt, min(speed / 3.6 * DT, self.lane_vmax[ln]))
+            else:
+                gap = self.gap_run_t[vt]
             fits = rear_min[ln] >= length + gap
             from_stop = queue_reaction and self.queue_stopped[ln]
             if from_stop and not self._queue_ready(ln, vt, fits, tail_stopped[ln]):
@@ -777,6 +795,14 @@ class Simulation:
             gradual = self.dyn_t[svt] & ~lead_stop
             ramp = self.gap_stop_t[svt] + (self.gap_run_t[svt] - self.gap_stop_t[svt]) * np.minimum(np.maximum(own, 0.0), 1.0)
             gap_need = np.where(gradual, ramp, gap_need)
+        if self.any_headway:
+            # Con time_headway, detrás de un líder en marcha guarda gap_stop más lo que recorre en ese tiempo a su
+            # velocidad: la real del paso anterior con dinámica gradual; sin ella, la deseada (que alcanza de golpe).
+            hw = self.has_headway_t[svt] & ~lead_stop
+            if hw.any():
+                v_own = np.where(self.dyn_t[svt], self.v_last[occ.veh],
+                                 np.minimum(self.vmax[occ.veh], self.lane_vmax[occ.lane]))  # fmt: skip
+                gap_need = np.where(hw, self.gap_stop_t[svt] + self.headway_t[svt] * v_own / DT, gap_need)
         s = self.x[lead] - self.vlen[lead] - gap_need - occ.x
         if passing is not None:
             # Quien deja pasar puede quedar al lado del que se le adelanta, pero no volver a rebasarlo; si

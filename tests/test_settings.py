@@ -448,6 +448,15 @@ def test_gradual_dynamics_settings():
             _parse(text)
 
 
+def test_time_headway_settings():
+    assert _parse("").sim.specs[0].time_headway is None  # por defecto, gap_run fijo como antes
+    car = _parse("[vehicles.car]\ntime_headway = 1.1\n").sim.specs[0]
+    assert car.time_headway == 1.1
+    for text in ("[vehicles.car]\ntime_headway = 0\n", "[vehicles.car]\ntime_headway = 6\n"):
+        with pytest.raises(ConfigError, match=re.escape("[vehicles.car] time_headway debe estar entre 0 y 5 s")):
+            _parse(text)
+
+
 def test_exit_queue_settings():
     sim = _parse("").sim
     assert sim.lane_exit_capacity == (0.0, 0.0)  # por defecto, sin cola de salida

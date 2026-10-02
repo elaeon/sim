@@ -1037,3 +1037,70 @@ def _bump_spacing(args, argv, parser, target, settings, reduced, lanes, length) 
 
 def emissions_main(argv: list[str] | None = None) -> None:
     emissions(argv)
+
+
+# ------------------------------------------------------------------ trafico-calibrar
+
+CALIBRATION_NAME = "calibracion"
+
+
+def build_calibration_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="trafico-calibrar",
+        description=(
+            "Mide un tipo de vehículo de la configuración en situaciones estándar (descarga de una cola en verde, "
+            "flujo continuo con demanda creciente, cola detenida) y lo compara con valores de referencia publicados "
+            "(flujo de saturación, tiempo perdido al arrancar, capacidad, densidad de embotellamiento). Guarda la "
+            "gráfica, tablas, el resumen y resultados.json en <output.dir>/<fecha-hora>_<nombre>/."
+        ),
+    )
+    p.add_argument(
+        "target", nargs="?", default=None, metavar="nombre | carpeta",
+        help=f"como en `trafico`: una carpeta de la que se lee su {CONFIG_NAME}, o el nombre de la calibración "
+             f"(por defecto, {CALIBRATION_NAME}) con {default_config_path()}",
+    )  # fmt: skip
+    p.add_argument("--tipo", default="car", metavar="CLAVE",
+                   help="tipo de vehículo que se mide (por defecto car; las referencias son de autos)")  # fmt: skip
+    p.add_argument("--colas", type=int, default=30, metavar="N",
+                   help="colas que se descargan, cada una con su semilla (por defecto 30)")  # fmt: skip
+    _add_json(p)
+    return p
+
+
+@_json_aware
+def calibrate(argv: list[str] | None = None) -> Path:
+    """Corre una calibración y devuelve su carpeta."""
+    from trafico.calibration import FLOW_RATES, PLOT_NAME as CAL_PLOT, compare, measure, results_metrics, write_outputs
+    from trafico.plotting import plot_calibration
+    from trafico.settings import _set_key
+
+    argv = sys.argv[1:] if argv is None else argv
+    parser = build_calibration_parser()
+    args = parser.parse_args(argv)
+    command = ("uv run trafico-calibrar " + " ".join(argv)).strip()
+    try:
+        target = resolve_target(args.target)
+        settings = load_settings(target.config)
+        base, opts = settings.sim, settings.run
+        seed = opts.seed if opts.seed is not None else secrets.randbelow(2**32)
+        print(f"Calibración de {args.tipo} · configuración {target.config} · semilla {seed}")
+        print(f"  {args.colas} colas que se descargan en verde y {len(FLOW_RATES)} demandas en flujo continuo…")
+        m = measure(base, args.tipo, queues=args.colas, seed=seed, workers=opts.workers)
+    except ConfigError as exc:
+        parser.error(str(exc))
+    rows = compare(m)
+    folder = make_run_dir(resolve_output_dir(opts.output_dir), safe_name(target.name or CALIBRATION_NAME), datetime.now())
+    text = settings.text if opts.seed is not None else _set_key(settings.text, "execution", "seed", seed, "semilla usada")
+    (folder / "config_base.toml").write_text(
+        f"# Configuración de la calibración {folder.name}\n# {command}\n\n{text}", encoding="utf-8"
+    )
+    print("\n" + write_outputs(folder, m, rows))
+    plot_calibration(folder / CAL_PLOT, m, rows)
+    write_results(folder, document("calibracion", folder, command=command, seed=seed, replicas=m["colas"],
+                                   sim_seconds=m["s_simulados"], metrics=results_metrics(m, rows)))  # fmt: skip
+    print(f"\nResultados en {folder}")
+    return folder
+
+
+def calibrate_main(argv: list[str] | None = None) -> None:
+    calibrate(argv)
