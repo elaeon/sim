@@ -239,6 +239,34 @@ def summary_text(meta: dict, data: dict[str, np.ndarray]) -> str:
     ])  # fmt: skip
 
 
+def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
+    """Métricas de `resultados.json`: por escenario y tipo, vehículos por minuto, tiempo de recorrido, velocidad media y,
+    por contaminante emitido, lo emitido por km, su cambio frente al primer escenario y su exceso frente a flujo libre."""
+    minutes = meta["s_simulados"] / 60
+    km = per_km(data, meta)
+    scenarios = []
+    for si, name in enumerate(meta["escenarios"]):
+        types = {}
+        for k in meta["activos"]:
+            row = {"veh_min": data["crossed_veh"][si, k] / minutes, "tiempo_recorrido_s": data["travel_time"][si, k],
+                   "velocidad_media_kmh": data["mean_speed"][si, k]}  # fmt: skip
+            for pol in meta["contaminantes"]:
+                p = POLLUTANTS.index(pol)
+                v, ref, free = km[si, k, p], km[0, k, p], data["emissions_free"][si, k, p]
+                if not np.isfinite(v):
+                    continue
+                row[pol] = {
+                    "unidad": f"{unit(pol)[0]}/km", "por_km": v,
+                    "cambio_pct": 100 * (v / ref - 1) if ref > 0 else None,
+                    "exceso_flujo_libre_pct": 100 * (data["emissions"][si, k, p] / free - 1) if free > 0 else None,
+                }  # fmt: skip
+            types[meta["tipos"][k]] = row
+        scenarios.append({"nombre": name, "topes_m": meta["topes_m"][si], "semaforo": meta["semaforo"][si],
+                          "tipos": types})  # fmt: skip
+    return {"referencia": meta["escenarios"][0], "contaminantes": meta["contaminantes"], "escenarios": scenarios,
+            "parametros": meta}  # fmt: skip
+
+
 def load(folder: Path) -> tuple[dict, dict[str, np.ndarray]]:
     """Parámetros y datos de una comparación ya corrida."""
     meta_path, data_path = folder / META_NAME, folder / DATA_NAME

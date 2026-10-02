@@ -250,6 +250,25 @@ def summary_text(meta: dict, speed: np.ndarray, queue: np.ndarray, queue_label: 
                       " al final (media de las réplicas):", "", *lines])  # fmt: skip
 
 
+def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
+    """Métricas de `resultados.json`: por tramo y reparto del semáforo, la velocidad media de cada carril y la cola de
+    entrada (al final y máxima, media de las réplicas) de los tipos que se cuentan en ella."""
+    speed, crossed = data["speed"], data["crossed"]
+    queue = data["queue"][:, :, :, meta["cola_tipos"]].sum(axis=3)  # (largo, semáforo, réplica, muestra)
+    scenarios = []
+    for li, length in enumerate(meta["largos_m"]):
+        for vi, light in enumerate(meta["semaforos"]):
+            q = queue[li, vi]
+            scenarios.append({
+                "largo_m": length, "semaforo": light,
+                "velocidad_kmh_por_carril": [float(np.nanmean(speed[li, vi, :, k])) for k in range(speed.shape[3])],
+                "cola_final": float(q[:, -1].mean()), "cola_maxima": float(q.max(axis=1).mean()),
+                "cruzan": float(crossed[li, vi][:, meta["cola_tipos"]].sum(axis=1).mean()),
+            })  # fmt: skip
+    return {"carriles": meta["carriles"], "cola_tipos": [meta["tipos"][k] for k in meta["cola_tipos"]],
+            "escenarios": scenarios, "parametros": meta}  # fmt: skip
+
+
 def load(folder: Path) -> tuple[dict, dict[str, np.ndarray]]:
     """Parámetros y datos de una comparación ya corrida."""
     meta_path, data_path = folder / META_NAME, folder / DATA_NAME

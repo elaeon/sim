@@ -119,6 +119,7 @@
 
 <nav>
   <a href="#uso">Uso</a>
+  <a href="#api">API y JSON</a>
   <a href="#road">[road]</a>
   <a href="#traffic_light">[traffic_light]</a>
   <a href="#demand">[demand]</a>
@@ -236,6 +237,12 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       <code>resumen.txt</code> (por km, por recorrido, exceso frente a flujo libre y tabla al acelerar de 0 a 80
       km/h), en la gráfica y en <code>emisiones_posicion.png</code>/<code>.csv</code>. Requieren <code>accel</code> y
       <code>decel</code>.</li>
+    <li>Nueva <a href="#api">API de Python (<code>trafico.api</code>) y <code>resultados.json</code></a>: cada corrida
+      escribe un resumen en JSON de formato estable y los comandos aceptan <code>--json</code> (imprime ese JSON en
+      stdout); la API corre lo mismo que los comandos con argumentos con nombre y devuelve el resultado ya leído.</li>
+    <li>Nueva opción <a href="#spacing"><code>trafico-emisiones --separacion</code></a>: barrido de la distancia entre dos
+      topes que calcula la aditividad de sus emisiones, la media en el tramo, el exceso entre ellos, el gradiente en el tramo, el costo de cada tope añadido, la
+      huella de un tope y la separación mínima para diluirla, con una figura y tablas.</li>
     <li><a href="#speed_bump">Varios topes independientes</a>: una calle puede tener más de uno
       (<code>[[speed_bump]]</code>, una sección por tope), cada uno con su <code>position</code> (ahora un número, no
       una lista), sus <code>lanes</code> y sus <a href="#pedestrians">peatones</a>. Las copias anteriores con
@@ -309,6 +316,9 @@ uv run trafico-emisiones calle200 --topes sin 100 --semaforo no --largo 200 --ca
 uv run trafico-emisiones --topes sin 50 100 150            # dónde conviene poner el tope
 uv run trafico-emisiones --topes sin 100 50,100 25,50,75   # uno, dos o tres topes en la misma calle
 uv run trafico-emisiones --semaforo ambos                  # cada tope con y sin semáforo
+uv run trafico-emisiones --separacion                      # ¿cuánto separar dos topes para diluir la huella?
+uv run trafico-emisiones --separacion 30 50 70 --primer-tope 35
+uv run trafico-emisiones --separacion 10 20 30 40 --cadena 4   # cadena de 4 topes: costo de cada tope añadido
 uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code></pre>
   <div class="table-scroll"><table>
     <thead><tr><th>Opción</th><th>Descripción</th><th>Por defecto</th></tr></thead>
@@ -331,7 +341,20 @@ uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code
       <tr><td><code>--replicas N</code>, <code>--run S</code></td><td>Réplicas por escenario y s de proceso de cada
         una (× <code>time_scale</code> = s simulados).</td><td><code>[execution] replicas</code> y
         <code>run</code></td></tr>
-      <tr><td><code>--redibujar CARPETA</code></td><td>No simula: vuelve a dibujar la gráfica en un archivo nuevo.</td>
+      <tr><td><code>--separacion [D …]</code></td><td>Cambia la comparación por el <a href="#spacing">barrido de la
+        separación entre dos topes</a>: corre sin tope, con un tope y con dos topes separados <code>D</code> m. Sin
+        valores usa <code>10 15 20 25 30 40 50 60 80 100</code>. No se combina con <code>--topes</code> ni con
+        <code>--semaforo ambos</code>.</td><td>—</td></tr>
+      <tr><td><code>--primer-tope M</code></td><td>Con <code>--separacion</code>, posición del primer tope en m.</td>
+        <td>El primer <code>[[speed_bump]]</code>; si no hay, un cuarto del tramo</td></tr>
+      <tr><td><code>--cadena N</code></td><td>Con <code>--separacion</code>, topes de cada cadena: <code>N</code> topes
+        en <code>P1</code>, <code>P1 + d</code>, …, <code>P1 + (N − 1)·d</code>. Con 2 es la pareja de siempre; con más
+        mide el costo de cada tope añadido a una zona de topes juntos.</td><td><code>2</code></td></tr>
+      <tr><td><code>--tolerancia T</code>, <code>--umbral U</code></td><td>Con <code>--separacion</code>: cuánto puede
+        apartarse la cadena de <code>N</code> topes aislados para llamarla aditiva, y qué fracción del pico de un tope solo
+        cuenta como huella diluida.</td><td><code>0.05</code> y <code>0.10</code></td></tr>
+      <tr><td><code>--redibujar CARPETA</code></td><td>No simula: vuelve a dibujar la gráfica en un archivo nuevo (también
+        la de un barrido de <code>--separacion</code>).</td>
         <td>—</td></tr>
     </tbody>
   </table></div>
@@ -343,6 +366,146 @@ uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code
     frente a flujo libre), <code>emisiones_posicion.csv</code> (g/(m·h) por escenario y contaminante a lo largo de la
     calle), <code>datos.npz</code>, <code>escenarios.json</code> (parámetros, semilla y comando) y
     <code>config_base.toml</code>.</p>
+
+  <h3 id="spacing">Separación entre topes: <code>--separacion</code></h3>
+  <p>Un tope deja una <strong>huella</strong> en el perfil de emisiones: justo antes baja (el auto frena y emite menos que a
+    crucero), justo después se dispara (acelera) y la estela decae hasta que el vehículo recupera su velocidad. Si el
+    segundo tope cae dentro de esa estela, las huellas se solapan. <code>--separacion</code> busca la menor distancia que
+    las separa. Corre, con la misma semilla, la calle sin tope, con un tope en <code>--primer-tope</code> (<code>P1</code>)
+    y con dos topes en <code>P1</code> y <code>P1 + d</code> para cada <code>d</code> (con <code>--cadena N</code>, con
+    <code>N</code> topes en <code>P1</code>, <code>P1 + d</code>, …). Cada tope es el de
+    <code>[[speed_bump]]</code> que esté en esa posición o, si no hay, una copia del primero (carriles y peatones). Una
+    <code>d</code> que no cabe en el tramo (el último tope debe quedar a 5 m o más del final) se omite con un aviso.</p>
+  <p>Con el perfil de emisiones de cada escenario (g/(m·h), todos los carriles), <code>E</code>, y el de la calle sin
+    tope, <code>base</code>, para cada contaminante:</p>
+  <ul>
+    <li><strong>Aditividad</strong> <code>R(d) = N(d) / (n·N1)</code>, con <code>n</code> los topes de la cadena (2 por
+      omisión), <code>N</code> el exceso neto <code>∫ (E − base) dx</code> de la cadena y <code>N1</code> el de un tope
+      solo. 1 = la cadena emite como <code>n</code> topes aislados; menos de 1, las estelas se solapan (el auto no
+      llega a recuperar su velocidad).</li>
+    <li><strong>Costo de cada tope añadido</strong> <code>(N − N1) / ((n − 1)·N1)</code>, en topes aislados, y por metro
+      de separación (<code>100 · costo / d</code>, en % de un tope aislado). Es lo que emite de más un tope pegado a los
+      anteriores: 1 = tanto como uno solo. En la pareja vale <code>2R − 1</code>. Crece con <code>d</code> y llega a 1
+      donde la cadena es aditiva; el costo por metro mide la penalización de la zona lenta que añade cada separación.</li>
+    <li><strong>Huella</strong>: distancia, tras un tope solo, hasta que su exceso baja del umbral (por defecto el 10 %) de
+      su pico. Es del orden de la distancia en que el vehículo acelera de la velocidad del tope a la de crucero.</li>
+    <li><strong>Media en el tramo</strong>: la media de <code>E</code> en <code>[P1, Pn + huella]</code> (<code>Pn</code>, el último tope) dividida por la de
+      la calle sin tope en el mismo tramo.</li>
+    <li><strong>Exceso entre topes</strong>: la media de <code>E − base</code> entre el primer y el segundo tope (sin 5 m junto a cada uno)
+      como % del pico de un tope solo.</li>
+    <li><strong>Gradiente</strong>: la media de <code>|dE/dx|</code> (intervalos de 5 m) en todo el tramo
+      <code>[P1, Pn + huella]</code>, el mismo de la media. No usa ventanas interiores, así que no cambia de golpe cuando
+      el borde de una ventana cae en la rampa de frenado o en la estela de un tope; se define también cuando los topes
+      están pegados. Es la <em>variación media</em> del perfil: sube y baja cuentan igual, y baja con la separación
+      porque los mismos picos se reparten en un tramo más largo. Por eso no tiene un mínimo propio y no entra en la
+      separación mínima. En la figura va como % de la pendiente máxima de un tope solo.</li>
+  </ul>
+  <p>La <strong>separación mínima</strong> es la menor de la lista donde la pareja es aditiva (<code>|R − 1| ≤
+    tolerancia</code>) <em>y</em> el segundo tope queda fuera de la huella del primero (<code>d ≥ huella</code>); se
+    toma la mayor entre los contaminantes. La aditividad exige algo más que la huella (en el ejemplo, 60 contra 48 m)
+    porque el segundo tope empieza a frenar al auto unos 15–20 m antes de llegar a él. No se interpola: si ninguna de la lista cumple, se dice y conviene ampliar
+    <code>--separacion</code>. Separaciones menores suelen emitir <em>menos en total</em> (solo se acelera una vez) pero
+    dejan una meseta alta y sin recuperación entre los topes.</p>
+  <p>La carpeta trae <code>separacion_topes.png</code> (aditividad, media en el tramo, exceso entre topes, gradiente en el tramo y costo de cada tope añadido, total y por
+    metro, contra la separación, una línea por contaminante, y el perfil de CO₂ de algunas separaciones), <code>resumen.txt</code>,
+    <code>separacion_topes.csv</code> (métricas por separación y contaminante), <code>perfiles_separacion.csv</code>,
+    <code>datos.npz</code>, <code>escenarios.json</code> (con <code>"modo": "separacion"</code>) y
+    <code>config_base.toml</code>. Son 2 + (número de separaciones) escenarios por réplicas: con <code>--replicas</code>
+    y <code>--run</code> se acorta. Los valores valen para la velocidad de crucero, <code>accel</code> y
+    <code>speed_bump_kmh</code> de la configuración.</p>
+</section>
+
+<section id="api">
+  <h2>API de Python y <code>resultados.json</code></h2>
+  <p>Para usar el simulador desde un programa (un script, un notebook, un agente) sin leer texto ni abrir CSV, hay dos
+    cosas que no cambian entre versiones mientras no suba su número: el archivo <code>resultados.json</code> de cada
+    carpeta de resultados y el módulo <code>trafico.api</code>.</p>
+
+  <h3 id="results-json"><code>resultados.json</code> y <code>--json</code></h3>
+  <p>Cada comando (<code>trafico</code>, <code>trafico-variantes</code>, <code>trafico-emisiones</code>, con o sin
+    <code>--separacion</code>) escribe <code>resultados.json</code> al terminar. Con <code>--json</code>, el comando
+    imprime ese mismo JSON en stdout y manda todo lo demás (resumen, progreso, avisos) a stderr:</p>
+  <pre><code>uv run trafico-emisiones --separacion 20 40 60 --cadena 3 --json 2&gt;/dev/null | python -c "import json,sys; print(json.load(sys.stdin)['metricas']['recomendada_m'])"
+uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes --json    # también con comparaciones ya corridas</code></pre>
+  <p>La cabecera es la misma en todos los modos:</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Contenido</th></tr></thead>
+    <tbody>
+      <tr><td><code>schema</code></td><td>Versión del formato (hoy 1).</td></tr>
+      <tr><td><code>modo</code></td><td><code>"corrida"</code> (<code>trafico</code>), <code>"variantes"</code>,
+        <code>"emisiones"</code> o <code>"separacion"</code>.</td></tr>
+      <tr><td><code>id</code>, <code>carpeta</code>, <code>creado</code></td><td>Nombre de la carpeta, su ruta absoluta y la
+        fecha y hora (ISO 8601).</td></tr>
+      <tr><td><code>comando</code>, <code>semilla</code>, <code>replicas</code>, <code>s_simulados</code></td>
+        <td>Con qué se corrió (la semilla usada, aunque fuera aleatoria).</td></tr>
+      <tr><td><code>archivos</code></td><td>Archivos de la carpeta (nombres relativos).</td></tr>
+      <tr><td><code>metricas</code></td><td>Lo propio de cada modo (abajo).</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong><code>corrida</code></strong>: <code>tipos</code> (por clave de tipo, <code>car</code>, <code>bus</code>…:
+      los estadísticos de la tabla del resumen, media entre réplicas, con claves como <code>vehiculos_cruzan</code>,
+      <code>pasajeros_min</code>, <code>tiempo_recorrido_s</code>, <code>velocidad_media_kmh</code>,
+      <code>co2_g_km</code>, <code>co2_exceso_flujo_libre_pct</code>, <code>combustible_l_100km</code>),
+      <code>carriles</code> (<code>cruzan_veh_min</code>, <code>linea_cerrada_pct</code>), <code>peatones</code> (cruces de
+      cada tope y semáforo peatonal), <code>cambios_carril_por_replica</code> y <code>ejecucion</code>.</li>
+    <li><strong><code>emisiones</code></strong>: <code>escenarios</code>, cada uno con <code>nombre</code>,
+      <code>topes_m</code>, <code>semaforo</code> y, por tipo, <code>veh_min</code>, <code>tiempo_recorrido_s</code>,
+      <code>velocidad_media_kmh</code> y por contaminante <code>por_km</code>, <code>cambio_pct</code> (frente al
+      escenario <code>referencia</code>) y <code>exceso_flujo_libre_pct</code>; <code>parametros</code> es el
+      <code>escenarios.json</code>.</li>
+    <li><strong><code>separacion</code></strong>: <code>distancias_m</code>, <code>recomendada_m</code>,
+      <code>huella_m</code>, <code>topes_por_cadena</code> y, por contaminante, un valor por separación de
+      <code>aditividad</code>, <code>media_tramo</code>, <code>exceso_entre</code>, <code>gradiente_tramo</code>,
+      <code>costo_tope</code> y <code>costo_por_m</code> (ver <a href="#spacing">separación entre topes</a>), más
+      <code>d_aditiva</code>, <code>d_huella</code> y <code>d_minima</code>.</li>
+    <li><strong><code>variantes</code></strong>: <code>escenarios</code> por tramo y semáforo, con
+      <code>velocidad_kmh_por_carril</code>, <code>cola_final</code>, <code>cola_maxima</code> y <code>cruzan</code>.</li>
+  </ul>
+  <p>Reglas del formato: las claves son ASCII en minúsculas con la unidad al final (<code>_s</code>, <code>_m</code>,
+    <code>_kmh</code>, <code>_pct</code>); NaN e infinitos salen como <code>null</code> (JSON estricto); una clave
+    no cambia de significado ni de unidad, y se pueden añadir claves nuevas sin cambiar <code>schema</code>. Las
+    carpetas de comparaciones y barridos hechas antes de esta versión no lo tienen: la API lo reconstruye de sus datos
+    crudos sin escribir nada; las corridas antiguas de <code>trafico</code> hay que volver a correrlas.</p>
+
+  <h3 id="python-api"><code>trafico.api</code></h3>
+  <pre><code>from trafico import api
+
+run = api.simulate()                                                   # como `uv run trafico`
+run.results["metricas"]["tipos"]["car"]["tiempo_recorrido_s"]
+run = api.compare_emissions(bumps=["sin", 35, (35, 70)], replicas=4)   # trafico-emisiones
+run = api.bump_spacing(distances=[20, 40, 60], chain=3)                # trafico-emisiones --separacion
+run = api.compare_variants(lengths=[100, 200], lights=[(40, 20), "30/30"])
+api.list_runs(mode="separacion", limit=5)                              # carpetas, de la más reciente
+api.read_results("resultados/&lt;ID&gt;_separacion_topes")                    # su resultados.json
+api.redraw("resultados/&lt;ID&gt;_separacion_topes")                          # gráfica nueva, sin simular
+api.describe_config()                                                  # la configuración leída y validada</code></pre>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Función</th><th>Qué hace</th></tr></thead>
+    <tbody>
+      <tr><td><code>simulate(config=None, *, name=None)</code></td><td>Una corrida de <code>trafico</code>.</td></tr>
+      <tr><td><code>compare_emissions(config=None, *, name, bumps, lights, lanes, without, length, bump_lanes, replicas,
+        run)</code></td><td><code>trafico-emisiones</code>. <code>bumps</code>: por escenario, <code>None</code>/<code>"sin"</code>,
+        una posición o una lista de posiciones.</td></tr>
+      <tr><td><code>bump_spacing(config=None, *, name, distances, chain, first, tolerance, threshold, lights, lanes,
+        without, length, bump_lanes, replicas, run)</code></td><td><code>trafico-emisiones --separacion</code>.</td></tr>
+      <tr><td><code>compare_variants(config=None, *, name, lengths, lights, lanes, without, queue, replicas,
+        run)</code></td><td><code>trafico-variantes</code>. <code>lights</code>: pares <code>(rojo, verde)</code> o
+        textos <code>"40/20"</code>.</td></tr>
+      <tr><td><code>redraw(folder)</code>, <code>read_results(folder)</code>, <code>list_runs(output_dir=None, mode=None,
+        limit=None)</code>, <code>describe_config(config=None)</code></td><td>Consulta y redibujo, sin simular.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Las funciones de corrida devuelven un <code>Run</code> con <code>folder</code>, <code>mode</code>,
+    <code>results</code> (el <code>resultados.json</code>), <code>files</code>, <code>path(nombre)</code> y
+    <code>log</code> (lo que el comando habría impreso). <code>config</code> es <code>None</code> (el
+    <code>config.toml</code> de la raíz), una carpeta con su <code>config.toml</code> (p. ej. una de resultados, para
+    repetir la corrida) o la ruta de un <code>config.toml</code>; <code>name</code> solo se admite sin
+    <code>config</code>. Los errores de configuración o de argumentos son <code>ConfigError</code> (subclase de
+    <code>ValueError</code>); una carpeta inexistente, <code>FileNotFoundError</code>. Las funciones no imprimen ni leen
+    <code>sys.argv</code>; capturan stdout y stderr mientras corren, así que no se llaman desde varios hilos a la vez
+    (varios procesos sí). Cada una acepta los mismos argumentos que su opción de línea de comandos, con el mismo
+    significado; los nombres y las claves del JSON no cambian mientras <code>api.API_VERSION</code> sea 1.</p>
 </section>
 
 <section id="road">

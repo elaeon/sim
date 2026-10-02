@@ -974,3 +974,123 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
     fig.subplots_adjust(left=0.06, right=0.98, top=1 - (1.9 + 0.25 * legend_rows) / fh, bottom=0.55 / fh)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, facecolor=SURFACE)
+
+
+def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
+    """Resultados de `trafico-emisiones --separacion`: cuánto deben separarse dos topes (o los de una cadena) para que la
+    huella de emisiones del primero se diluya. Cinco métricas contra la separación (aditividad, media en el tramo, exceso
+    entre los topes, gradiente y costo de cada tope añadido, total y por metro), una línea por contaminante, y el perfil a
+    lo largo de la calle para algunas separaciones."""
+    from matplotlib.figure import Figure
+    from matplotlib.lines import Line2D
+
+    from trafico.bump_spacing import profiles
+
+    dist = np.array(result["distancias_m"])
+    pols = list(result["pollutants"])
+    colors = {pol: TYPE_COLORS[i] for i, pol in enumerate(pols)}
+    height = 12.6
+    k = 9.4 / height  # los márgenes y el encabezado se calcularon para 9.4 in de alto: se conservan en pulgadas
+    n = int(meta.get("topes_por_cadena", 2))
+    fig = Figure(figsize=(13.5, height), facecolor=SURFACE)
+    grid = fig.add_gridspec(3, 3, hspace=0.5, wspace=0.28, left=0.06, right=0.98, top=1 - 0.22 * k, bottom=0.07 * k,
+                            height_ratios=(1, 1, 1.15))  # fmt: skip
+    rec, huella = result["recomendada_m"], result["huella_m"]
+
+    def panel(ax, key: str, title: str, ylabel: str, fmt: str, scale: float = 1.0, marks=(), ref=None, band=None):
+        _style_axis(ax, fmt)
+        if band is not None:
+            ax.axhspan(*band, color=GRID, alpha=0.6, linewidth=0, zorder=0)
+        if ref is not None:
+            ax.axhline(ref, color=MUTED, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
+        for pol in pols:
+            y = np.array(result["pollutants"][pol][key]) * scale
+            ax.plot(dist, y, color=colors[pol], linewidth=2, marker="o", markersize=4, markeredgewidth=0)
+        xmax = dist.max() * 1.02
+        for at, label, color in marks:
+            if at is not None:
+                ax.axvline(at, color=color, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
+                left = at > 0.7 * xmax  # cerca del borde derecho, el rótulo va a la izquierda de la línea
+                ax.annotate(label, (at, 1.0), xycoords=("data", "axes fraction"), xytext=(-4 if left else 4, -3),
+                            textcoords="offset points", ha="right" if left else "left", va="top", fontsize=8,
+                            color=INK_2)  # fmt: skip
+        ax.set_xlim(dist.min() * 0.9, xmax)
+        ax.set_xlabel("separación entre los topes (m)", color=INK_2, fontsize=9)
+        ax.set_ylabel(ylabel, color=INK_2, fontsize=9)
+        ax.set_title(title, loc="left", fontsize=10.5, color=INK, pad=8)
+
+    tol, thr = meta["tolerancia"], meta["umbral"]
+    r_add = [r["d_aditiva"] for r in result["pollutants"].values() if r["d_aditiva"] is not None]
+    add_mark = [(max(r_add) if r_add else None, "aditiva", INK_2)]
+    flat_mark = [(huella, "fin de la huella", INK_2)]
+    ax = fig.add_subplot(grid[0, 0])
+    panel(ax, "aditividad", "Los dos topes frente a dos topes aislados" if n == 2 else f"Los {n} topes frente a {n} topes aislados", f"emisión extra ÷ ({n} × un tope)", "{:.2f}",
+          marks=add_mark, ref=1.0, band=(1 - tol, 1 + tol))  # fmt: skip
+    ax = fig.add_subplot(grid[0, 1])
+    panel(ax, "media_tramo", "Media en el tramo de los topes", "× la calle sin topes", "{:.1f}", marks=add_mark, ref=1.0)
+    ax = fig.add_subplot(grid[0, 2])
+    panel(ax, "exceso_entre", "Exceso medio entre los topes", "% del pico de un tope solo", "{:.0f}", scale=100,
+          marks=flat_mark, ref=100 * thr)  # fmt: skip
+    ax = fig.add_subplot(grid[1, 0])
+    for pol in pols:  # cada contaminante en su unidad: se normaliza por la pendiente máxima de un tope solo
+        r = result["pollutants"][pol]
+        r["gradiente_rel"] = np.array(r["gradiente_tramo"]) / r["pendiente_tope_solo"] * 100
+    panel(ax, "gradiente_rel", "Gradiente medio en el tramo de los topes", "% de la pendiente máxima de un tope solo", "{:.0f}")
+    ax = fig.add_subplot(grid[1, 1])
+    panel(ax, "costo_tope", "Costo de cada tope añadido", "× un tope aislado (1 = emite como uno solo)", "{:.2f}",
+          marks=add_mark, ref=1.0)  # fmt: skip
+    ax = fig.add_subplot(grid[1, 2])
+    panel(ax, "costo_por_m", "Costo por metro de separación", "% de un tope aislado por m", "{:.2f}")
+
+    # Perfil del primer contaminante (CO2 si se emite) para algunas separaciones, con el tope solo y la línea base.
+    ax = fig.add_subplot(grid[2, :])
+    _style_axis(ax, "{:,.0f}")
+    pi = pols.index("co2") if "co2" in pols else 0
+    prof = profiles(meta, data)
+    x = result["x_m"]
+    picks = sorted({int(np.argmin(np.abs(dist - target))) for target in np.quantile(dist, [0.15, 0.4, 0.65, 0.9])})
+    first = meta["primer_tope_m"]
+    ax.plot(x, prof[0, pi], color=MUTED, linewidth=1.5, label="sin tope")
+    ax.plot(x, prof[1, pi], color=INK_2, linewidth=1.5, linestyle=(0, (4, 3)), label="un tope")
+    handles = [Line2D([], [], color=MUTED, linewidth=2, label="sin tope"),
+               Line2D([], [], color=INK_2, linewidth=2, linestyle=(0, (4, 3)), label="un tope")]  # fmt: skip
+    ax.axvline(first, color=BASELINE, linewidth=1, zorder=1)
+    ramp = ("#b9aee6", "#8d7fd1", "#6656bd", "#3d2f94")  # rampa de un tono: la separación es una magnitud
+    for i, j in enumerate(picks):
+        color = ramp[i + len(ramp) - len(picks)]
+        ax.plot(x, prof[2 + j, pi], color=color, linewidth=1.8)
+        ax.axvline(first + (n - 1) * dist[j], color=color, linewidth=1, linestyle=(0, (1, 2)), zorder=1)
+        handles.append(Line2D([], [], color=color, linewidth=2, label=f"d = {dist[j]:g} m"))
+    lo = max(0.0, first - 25)
+    hi = min(meta["largo_m"], first + (n - 1) * dist.max() + (huella or 50) + 15)
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(bottom=0)
+    ax.set_xlabel("posición en la calle (m desde la entrada)", color=INK_2, fontsize=9)
+    ax.set_ylabel(f"{POLLUTANT_LABELS[pols[pi]]}, g/(m·h) (todos los carriles)", color=INK_2, fontsize=9)
+    ax.set_title(f"Perfil de {POLLUTANT_LABELS[pols[pi]]} a lo largo de la calle según la separación", loc="left",
+                 fontsize=10.5, color=INK, pad=8)  # fmt: skip
+    ax.legend(handles=handles, loc="upper right", frameon=False, fontsize=8.5, labelcolor=INK_2, ncol=3)
+
+    legend = [Line2D([], [], color=colors[pol], linewidth=3, label=POLLUTANT_LABELS[pol]) for pol in pols]
+    fig.legend(handles=legend, loc="upper left", bbox_to_anchor=(0.055, 1 - 0.138 * k), ncol=len(pols), frameon=False,
+               fontsize=9.5, labelcolor=INK_2, handlelength=1.6)  # fmt: skip
+    verdict = (f"Separación mínima entre topes ≈ {rec:g} m" if rec is not None
+               else "Ninguna separación de la lista diluye la huella: amplía --separacion")
+    fig.suptitle(verdict, x=0.06, y=1 - 0.025 * k, ha="left", fontsize=15, color=INK, fontweight="bold")
+    rates = " · ".join(f"{meta['nombres'][k]} {meta['tasas'][k]:.3g} veh/min" for k in meta["activos"])
+    speed = " · ".join(f"{n} ≤ {v:g} km/h" for n, v in meta["velocidad_tope_kmh"].items() if v is not None)
+    ped = meta.get("peatones_tope")
+    lines = [
+        f"Huella de un tope ≈ {huella:.0f} m (hasta que su exceso baja de {100 * thr:g} % del pico) · aditiva si "
+        + ("la pareja emite" if n == 2 else f"la cadena de {n} topes emite")
+        + f" lo mismo que {'dos' if n == 2 else n} topes aislados ±{100 * tol:g} %" if huella is not None else "Sin huella medible",
+        f"{'Primer tope a' if n == 2 else f'Cadena de {n} topes desde'} {first:g} m · tramo {meta['largo_m']:g} m · {rates}",
+        f"Velocidad en el tope: {speed or 'sin speed_bump_kmh'}"
+        + (f" · con peatones ({ped['peatones_min']:.3g}/min, {ped['s_cruce']:g} s por cruce)" if ped else ""),
+        f"{meta['s_simulados']:,.0f} s simulados · media de {meta['replicas']} réplicas con la misma semilla "
+        f"({meta['semilla']}) · modelo de emisiones de Int Panis et al. (2006)",
+    ]  # fmt: skip
+    for i, line in enumerate(lines):
+        fig.text(0.06, 1 - (0.055 + 0.022 * i) * k, line, ha="left", va="top", fontsize=9, color=INK_2)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=150, facecolor=SURFACE)

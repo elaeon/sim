@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import functools
+import json
 import os
 import secrets
 import sys
@@ -19,6 +22,7 @@ from trafico.fuel import constant_speed_table, cost, liters
 from trafico.metrics import (
     EMIS_SERIES, ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, LANE_SPEED, SERIES,
 )
+from trafico.results import document, read_results, write_results
 from trafico.runner import Aggregate, run_parallel
 from trafico.settings import (
     CONFIG_NAME,
@@ -60,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
             f"o el nombre de la corrida, que se agrega a la carpeta de resultados y usa {default_config_path()}"
         ),
     )
+    _add_json(p)
     return p
 
 
@@ -76,55 +81,65 @@ def _fmt(value: float, digits: int = 1) -> str:
     return "—" if not np.isfinite(value) else f"{value:,.{digits}f}"
 
 
-def format_summary(agg: Aggregate) -> str:
+def summary_rows(agg: Aggregate) -> tuple[list[tuple[str, np.ndarray, int, str]], dict]:
+    """Filas de la tabla del resumen, (etiqueta, valor por tipo, decimales, clave de resultados.json), y las medias entre
+    réplicas de cada estadístico."""
     cfg = agg.cfg
     s = {k: v.mean for k, v in agg.summary.items()}
     sd = {k: v.std for k, v in agg.summary.items()}
     minutes = cfg.sim_seconds / 60.0
     footprint = np.array([sp.length + sp.gap_run for sp in cfg.specs])
     rows = [
-        ("Llegadas (veh/min)", s["arrived_veh"] / minutes, 1),
-        ("Vehículos que cruzan", s["crossed_veh"], 1),
-        ("Pasajeros que cruzan", s["crossed_pax"], 1),
-        ("  ± σ entre réplicas", sd["crossed_pax"], 1),
-        ("Pasajeros/min cruzando", s["crossed_pax"] / minutes, 1),
-        ("Pasajeros por vehículo", s["pax_per_veh"], 2),
-        ("Pax/m de carril en marcha", s["pax_per_veh"] / footprint, 2),
-        ("T. recorrido medio (s)", s["travel_time"], 1),
-        ("T. medio en cola de entrada (s)", s["queue_wait"], 1),
+        ("Llegadas (veh/min)", s["arrived_veh"] / minutes, 1, "llegadas_veh_min"),
+        ("Vehículos que cruzan", s["crossed_veh"], 1, "vehiculos_cruzan"),
+        ("Pasajeros que cruzan", s["crossed_pax"], 1, "pasajeros_cruzan"),
+        ("  ± σ entre réplicas", sd["crossed_pax"], 1, "pasajeros_cruzan_sd"),
+        ("Pasajeros/min cruzando", s["crossed_pax"] / minutes, 1, "pasajeros_min"),
+        ("Pasajeros por vehículo", s["pax_per_veh"], 2, "pasajeros_por_vehiculo"),
+        ("Pax/m de carril en marcha", s["pax_per_veh"] / footprint, 2, "pasajeros_por_m_carril"),
+        ("T. recorrido medio (s)", s["travel_time"], 1, "tiempo_recorrido_s"),
+        ("T. medio en cola de entrada (s)", s["queue_wait"], 1, "tiempo_cola_entrada_s"),
         ("T. a flujo libre (s)", np.array([cfg.free_flow_time(k) + sp.expected_stop_time
-                                           for k, sp in enumerate(cfg.specs)]), 1),
-        ("Velocidad media (km/h)", s["mean_speed"], 1),
-        ("En el tramo al final", s["on_road"], 1),
-        ("En cola de entrada al final", s["queued"], 1),
-        *([("En el tramo al inicio", s["initial_veh"], 1)] if any(cfg.lane_initial_occupancy) else []),
+                                           for k, sp in enumerate(cfg.specs)]), 1, "tiempo_flujo_libre_s"),
+        ("Velocidad media (km/h)", s["mean_speed"], 1, "velocidad_media_kmh"),
+        ("En el tramo al final", s["on_road"], 1, "en_tramo_final"),
+        ("En cola de entrada al final", s["queued"], 1, "en_cola_final"),
+        *([("En el tramo al inicio", s["initial_veh"], 1, "en_tramo_inicio")] if any(cfg.lane_initial_occupancy) else []),
         ("Cambios de carril/veh", np.divide(s["lane_changes_type"], s["entered_veh"], out=np.full(cfg.n_types, np.nan),
-                                            where=s["entered_veh"] > 0), 2),  # fmt: skip
+                                            where=s["entered_veh"] > 0), 2, "cambios_carril_por_veh"),  # fmt: skip
     ]
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0]  # tipos que participan
     if any(cfg.specs[k].stop_position is not None for k in active):
-        rows.insert(9, ("T. medio en la parada (s)", s["stop_time"], 1))
+        rows.insert(9, ("T. medio en la parada (s)", s["stop_time"], 1, "tiempo_parada_s"))
     if cfg.bottleneck_active:
-        rows.append(("Detenciones (bottleneck)", s["bottleneck_stops"], 1))
-        rows.append(("T. medio detenido (s)", s["bottleneck_time"], 1))
+        rows.append(("Detenciones (bottleneck)", s["bottleneck_stops"], 1, "detenciones_bottleneck"))
+        rows.append(("T. medio detenido (s)", s["bottleneck_time"], 1, "tiempo_detenido_s"))
     passers = np.array([sp.pass_in_lane for sp in cfg.specs])
     if passers[active].any():
         # Rebases dentro del carril por vehículo que entró; «—» para los tipos que no rebasan así.
         per_veh = np.divide(s["in_lane_passes"], s["entered_veh"], out=np.full(cfg.n_types, np.nan),
                             where=passers & (s["entered_veh"] > 0))  # fmt: skip
-        rows.append(("Rebases en el carril/veh", per_veh, 2))
+        rows.append(("Rebases en el carril/veh", per_veh, 2, "rebases_carril_por_veh"))
     if any(cfg.specs[k].cargo_prob > 0 for k in active):
         # Los de mercancía cuentan como vehículos, pero no en las filas de pasajeros.
         cargo = np.divide(100.0 * s["arrived_cargo"], s["arrived_veh"], out=np.full(cfg.n_types, np.nan),
                           where=s["arrived_veh"] > 0)  # fmt: skip
-        rows.insert(1, ("Con mercancía (%)", cargo, 1))
+        rows.insert(1, ("Con mercancía (%)", cargo, 1, "mercancia_pct"))
     rows += _emission_rows(cfg, s)
     rows += _fuel_rows(cfg, s)
+    return rows, {"s": s, "sd": sd}
+
+
+def format_summary(agg: Aggregate) -> str:
+    cfg = agg.cfg
+    rows, stats = summary_rows(agg)
+    s = stats["s"]
+    active = [k for k, rate in enumerate(cfg.rates) if rate > 0]  # tipos que participan
     w0 = max(len(r[0]) for r in rows) + 2
     widths = {k: max(10, len(cfg.specs[k].name) + 2) for k in active}
     speed = cfg.sim_seconds / agg.replica_wall.mean
     lines = ["", " " * w0 + "".join(f"{cfg.specs[k].name:>{widths[k]}}" for k in active)]
-    for label, values, digits in rows:
+    for label, values, digits, _ in rows:
         lines.append(f"{label:<{w0}}" + "".join(f"{_fmt(values[k], digits):>{widths[k]}}" for k in active))
     minutes_run = cfg.sim_seconds / 60.0
     lines += ["", f"Cruzan {cfg.line_name} por carril (veh/min): " + " · ".join(
@@ -163,7 +178,7 @@ def _pedestrian_lines(cfg, s: dict) -> list[str]:
     return lines
 
 
-def _emission_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int]]:
+def _emission_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int, str]]:
     """Por contaminante emitido: por km recorrido, por recorrido completo del tramo y el exceso frente al mismo
     recorrido a velocidad constante (paradas, arranques, tope, cola). «—» en los tipos que no lo emiten."""
     pols, types = emitted(cfg)
@@ -179,9 +194,10 @@ def _emission_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int]]:
         excess = np.divide(100.0 * grams, free, out=np.full(cfg.n_types, np.nan), where=emits & (free > 0)) - 100.0
         label = POLLUTANT_LABELS[pol]
         rows += [
-            (f"{label} ({name}/km)", per_km, 1 if scale == 1 else 0),
-            (f"{label} ({name} por recorrido del tramo)", per_km * cfg.length / 1000.0, 2 if scale == 1 else 1),
-            (f"{label} exceso vs flujo libre (%)", excess, 1),
+            (f"{label} ({name}/km)", per_km, 1 if scale == 1 else 0, f"{pol}_{name}_km"),
+            (f"{label} ({name} por recorrido del tramo)", per_km * cfg.length / 1000.0, 2 if scale == 1 else 1,
+             f"{pol}_{name}_recorrido"),
+            (f"{label} exceso vs flujo libre (%)", excess, 1, f"{pol}_exceso_flujo_libre_pct"),
         ]
     return rows
 
@@ -191,7 +207,7 @@ def _burners(cfg) -> list[int]:
     return [k for k, sp in enumerate(cfg.specs) if cfg.rates[k] > 0 and sp.burns]
 
 
-def _fuel_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int]]:
+def _fuel_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int, str]]:
     """Consumo (del CO2 emitido) y su costo: por km, por recorrido completo del tramo, lo que se gasta de más frente
     al mismo recorrido a velocidad constante y el total de la corrida. «—» en los tipos sin combustible o sin
     precio."""
@@ -215,13 +231,13 @@ def _fuel_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int]]:
     trip = cfg.length / 1000.0
     cur = cfg.currency
     return [
-        ("Combustible (L/100 km)", l_km * 100.0, 2),
-        ("Combustible por recorrido (mL)", l_km * trip * 1000.0, 1),
-        ("  de más vs flujo libre (mL)", extra_l * trip * 1000.0, 1),
-        (f"Costo por recorrido ({cur})", trip_cost, 3),
-        (f"  de más vs flujo libre ({cur})", extra_cost, 3),
-        ("Combustible en la corrida (L)", total_l, 2),
-        (f"Costo en la corrida ({cur})", total_cost, 2),
+        ("Combustible (L/100 km)", l_km * 100.0, 2, "combustible_l_100km"),
+        ("Combustible por recorrido (mL)", l_km * trip * 1000.0, 1, "combustible_recorrido_ml"),
+        ("  de más vs flujo libre (mL)", extra_l * trip * 1000.0, 1, "combustible_extra_recorrido_ml"),
+        (f"Costo por recorrido ({cur})", trip_cost, 3, "costo_recorrido"),
+        (f"  de más vs flujo libre ({cur})", extra_cost, 3, "costo_extra_recorrido"),
+        ("Combustible en la corrida (L)", total_l, 2, "combustible_corrida_l"),
+        (f"Costo en la corrida ({cur})", total_cost, 2, "costo_corrida"),
     ]
 
 
@@ -442,6 +458,59 @@ def _fuel_label(cfg) -> str | None:
         f" · sin consumo (sin CO2 o sin accel/decel): {', '.join(missing)}" if missing else "")
 
 
+def _json_aware(command):
+    """Añade `--json` a un comando: lo que imprime pasa a stderr y en stdout queda solo el `resultados.json` de la
+    carpeta que devuelve (sin `--json` no cambia nada). El comando recibe siempre la lista de argumentos."""
+
+    @functools.wraps(command)
+    def wrapper(argv: list[str] | None = None) -> Path:
+        argv = list(sys.argv[1:] if argv is None else argv)
+        if "--json" not in argv:
+            return command(argv)
+        argv = [a for a in argv if a != "--json"]
+        with contextlib.redirect_stdout(sys.stderr):
+            folder = command(argv)
+        print(json.dumps(read_results(folder), ensure_ascii=False, indent=2))
+        return folder
+
+    return wrapper
+
+
+def _add_json(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--json", action="store_true",
+                        help="imprime en stdout el resultados.json de la corrida (el resto de la salida va a stderr)")  # fmt: skip
+
+
+def run_metrics(agg: Aggregate) -> dict:
+    """Métricas de `resultados.json` de una corrida de `trafico`: por tipo los mismos estadísticos de la tabla del
+    resumen (media entre réplicas), por carril, peatones y la ejecución."""
+    cfg = agg.cfg
+    rows, stats = summary_rows(agg)
+    s = stats["s"]
+    minutes = cfg.sim_seconds / 60.0
+    active = [k for k, rate in enumerate(cfg.rates) if rate > 0]
+    types = {cfg.specs[k].key: {"nombre": cfg.specs[k].name, **{key: values[k] for _, values, _, key in rows}}
+             for k in active}  # fmt: skip
+    pedestrians = [
+        {"tipo": "semaforo" if kind == "semáforo" else "tope", "posicion_m": pos, "cruzaron": crossed,
+         "cierres": closings, "espera_media_s": wait / crossed if crossed > 0 else None, "rojo_s": closed,
+         "rojo_pct": 100 * closed / cfg.sim_seconds}
+        for (kind, pos), (crossed, closings, closed, wait) in zip(cfg.pedestrian_spots, s.get("pedestrians", []))
+    ]  # fmt: skip
+    return {
+        "tipos": types,
+        "carriles": {"cruzan_veh_min": [v / minutes for v in s["lane_crossed"]],
+                     "linea_cerrada_pct": [100 * v if cfg.lane_exit_capacity[i] > 0 else None
+                                           for i, v in enumerate(s["exit_blocked"])]},  # fmt: skip
+        "peatones": pedestrians,
+        "cambios_carril_por_replica": s["lane_changes"][0],
+        "ejecucion": {"tiempo_real_s": agg.wall, "procesos": agg.workers, "s_por_replica": float(agg.replica_wall.mean),
+                      "s_simulados_por_s_real": cfg.sim_seconds / float(agg.replica_wall.mean),
+                      "rss_max_mib": agg.max_rss_kb / 1024.0},  # fmt: skip
+    }
+
+
+@_json_aware
 def run(argv: list[str] | None = None) -> Path:
     """Ejecuta una corrida completa y devuelve su carpeta de resultados."""
     parser = build_parser()
@@ -503,6 +572,9 @@ def run(argv: list[str] | None = None) -> Path:
         print()
         for path in visualize(cfg, seed, settings.animation, run_dir, run_dir.name):
             print(f"  {path.name}")
+    write_results(run_dir, document(
+        "corrida", run_dir, command=("uv run trafico " + " ".join(argv)).strip(), seed=seed, replicas=opts.replicas,
+        sim_seconds=cfg.sim_seconds, metrics=run_metrics(agg)))  # fmt: skip
     print(f"\nResultados en {run_dir}")
     return run_dir
 
@@ -622,6 +694,7 @@ def build_variants_parser() -> argparse.ArgumentParser:
     p.add_argument("--run", type=float, help="s de proceso de cada réplica (por defecto, [execution] run)")
     p.add_argument("--redibujar", metavar="CARPETA",
                    help="no simula: vuelve a dibujar la gráfica de una comparación ya corrida (sin sobrescribir)")  # fmt: skip
+    _add_json(p)
     return p
 
 
@@ -641,6 +714,7 @@ def _lights(values: list[str] | None, red: float, green: float) -> tuple[tuple[f
     return tuple(out)
 
 
+@_json_aware
 def variants(argv: list[str] | None = None) -> Path:
     """Corre una comparación de variantes (o la redibuja) y devuelve su carpeta."""
     from trafico.movement import _free_path
@@ -650,6 +724,7 @@ def variants(argv: list[str] | None = None) -> Path:
         BASE_CONFIG_NAME, PLOT_NAME as VARIANTS_PLOT, SUMMARY_NAME as VARIANTS_SUMMARY, Variants, load, metadata,
         run_variants, write_outputs,
     )  # fmt: skip
+    from trafico.variants import results_metrics as variants_metrics
 
     argv = sys.argv[1:] if argv is None else argv
     parser = build_variants_parser()
@@ -708,6 +783,8 @@ def variants(argv: list[str] | None = None) -> Path:
     print("\n" + summary)
     (folder / VARIANTS_SUMMARY).write_text(f"{meta['comando']}\n\n{summary}\n", encoding="utf-8")
     plot_variants(folder / VARIANTS_PLOT, meta, data)
+    write_results(folder, document("variantes", folder, command=meta["comando"], seed=seed, replicas=v.replicas,
+                                   sim_seconds=meta["s_simulados"], metrics=variants_metrics(meta, data)))  # fmt: skip
     print(f"\nResultados en {folder}")
     return folder
 
@@ -717,6 +794,7 @@ def variants_main(argv: list[str] | None = None) -> None:
 
 
 EMISSIONS_NAME = "emisiones_topes"
+SPACING_NAME = "separacion_topes"
 
 
 def build_emissions_parser() -> argparse.ArgumentParser:
@@ -742,6 +820,22 @@ def build_emissions_parser() -> argparse.ArgumentParser:
     p.add_argument("--carriles-tope", type=int, nargs="+", metavar="N",
                    help="carriles con tope, en la numeración después de --carriles (por defecto, los de "
                         "[[speed_bump]] lanes de cada tope; sin ella, todos)")  # fmt: skip
+    p.add_argument("--separacion", nargs="*", type=float, default=None, metavar="D",
+                   help="en vez de la comparación normal, evalúa cuánto deben separarse dos topes para diluir la huella de "
+                        "emisiones: corre sin tope, con un tope y con dos topes (o --cadena N) separados D m (por omisión "
+                        "10 15 20 25 30 40 50 60 80 100) y grafica aditividad, media en el tramo, gradiente y costo de cada tope")  # fmt: skip
+    p.add_argument("--primer-tope", type=float, metavar="M",
+                   help="con --separacion, posición del primer tope en m (por omisión, el primer [[speed_bump]] o un cuarto "
+                        "del tramo)")  # fmt: skip
+    p.add_argument("--cadena", type=int, metavar="N",
+                   help="con --separacion, topes de cada cadena (por defecto 2, una pareja): N topes separados D m "
+                        "(P1, P1 + D, …); calcula también el costo de cada tope añadido")  # fmt: skip
+    p.add_argument("--tolerancia", type=float, default=0.05, metavar="T",
+                   help="con --separacion, cuánto puede apartarse la pareja de dos topes aislados para llamarla aditiva "
+                        "(por defecto 0.05)")  # fmt: skip
+    p.add_argument("--umbral", type=float, default=0.10, metavar="U",
+                   help="con --separacion, fracción del pico de un tope solo bajo la cual su exceso cuenta como diluido "
+                        "(por defecto 0.10)")  # fmt: skip
     p.add_argument("--semaforo", choices=("config", "si", "no", "ambos"), default="config",
                    help="semáforo en todos los escenarios: como en la configuración, activado, desactivado o ambos "
                         "(cada tope con y sin semáforo)")  # fmt: skip
@@ -755,6 +849,7 @@ def build_emissions_parser() -> argparse.ArgumentParser:
     p.add_argument("--run", type=float, help="s de proceso de cada réplica (por defecto, [execution] run)")
     p.add_argument("--redibujar", metavar="CARPETA",
                    help="no simula: vuelve a dibujar la gráfica de una comparación ya corrida (sin sobrescribir)")  # fmt: skip
+    _add_json(p)
     return p
 
 
@@ -777,12 +872,14 @@ def _bumps(values: list[str] | None, config_positions, length: float) -> tuple[t
     return tuple(out)
 
 
+@_json_aware
 def emissions(argv: list[str] | None = None) -> Path:
     """Corre una comparación de emisiones entre escenarios (o la redibuja) y devuelve su carpeta."""
     from trafico.emission_scenarios import (
         BASE_CONFIG_NAME, PLOT_NAME as EMIS_PLOT, SUMMARY_NAME as EMIS_SUMMARY, Scenarios, build_configs, load,
         metadata, run_scenarios, write_outputs,
     )  # fmt: skip
+    from trafico.emission_scenarios import results_metrics as emission_metrics
     from trafico.movement import _free_path
     from trafico.plotting import plot_emission_comparison
     from trafico.settings import _set_key
@@ -795,6 +892,14 @@ def emissions(argv: list[str] | None = None) -> Path:
         if args.redibujar:
             folder = Path(args.redibujar).expanduser()
             meta, data = load(folder)
+            if meta.get("modo") == "separacion":
+                from trafico.bump_spacing import PLOT_NAME as SPACING_PLOT, analyze
+                from trafico.plotting import plot_bump_spacing
+
+                path = _free_path(folder / SPACING_PLOT)
+                plot_bump_spacing(path, meta, data, analyze(meta, data))
+                print(f"Gráfica en {path}")
+                return folder
             path = _free_path(folder / EMIS_PLOT)
             plot_emission_comparison(path, meta, data)
             print(f"Gráfica en {path}")
@@ -805,6 +910,10 @@ def emissions(argv: list[str] | None = None) -> Path:
         lanes = tuple(args.carriles) if args.carriles else None
         reduced = reduce_config(base, lanes, tuple(args.sin))
         length = args.largo if args.largo is not None else reduced.length
+        if args.cadena is not None and args.separacion is None:
+            parser.error("--cadena requiere --separacion")
+        if args.separacion is not None:
+            return _bump_spacing(args, argv, parser, target, settings, reduced, lanes, length)
         lights = {"config": (None,), "si": (True,), "no": (False,), "ambos": (True, False)}[args.semaforo]
         s = Scenarios(
             bumps=_bumps(args.topes, tuple(b.position for b in reduced.bumps), length),
@@ -845,6 +954,83 @@ def emissions(argv: list[str] | None = None) -> Path:
     print("\n" + summary)
     (folder / EMIS_SUMMARY).write_text(f"{meta['comando']}\n\n{summary}\n", encoding="utf-8")
     plot_emission_comparison(folder / EMIS_PLOT, meta, data)
+    write_results(folder, document("emisiones", folder, command=meta["comando"], seed=seed, replicas=s.replicas,
+                                   sim_seconds=meta["s_simulados"], metrics=emission_metrics(meta, data)))  # fmt: skip
+    print(f"\nResultados en {folder}")
+    return folder
+
+
+def _bump_spacing(args, argv, parser, target, settings, reduced, lanes, length) -> Path:
+    """`trafico-emisiones --separacion`: barrido de la distancia entre dos topes (ver bump_spacing.py)."""
+    from trafico.bump_spacing import (
+        DEFAULT_DISTANCES, PLOT_NAME as SPACING_PLOT, SUMMARY_NAME as SPACING_SUMMARY, Spacing, analyze, build_configs,
+        metadata, write_outputs,
+    )  # fmt: skip
+    from trafico.bump_spacing import results_metrics as spacing_metrics
+    from trafico.emission_scenarios import BASE_CONFIG_NAME, Scenarios
+    from trafico.emission_scenarios import metadata as base_metadata
+    from trafico.emission_scenarios import run_scenarios
+    from trafico.movement import _free_path
+    from trafico.plotting import plot_bump_spacing
+    from trafico.settings import _set_key
+
+    base, opts = settings.sim, settings.run
+    try:
+        if args.topes is not None:
+            raise ConfigError("--separacion no se combina con --topes (los topes son el primero y el que se aleja)")
+        if args.semaforo == "ambos":
+            raise ConfigError("--separacion no admite --semaforo ambos (usa config, si o no)")
+        distances = tuple(args.separacion) or DEFAULT_DISTANCES
+        if any(d <= 0 for d in distances) or len(set(distances)) != len(distances):
+            raise ConfigError("--separacion: cada distancia debe ser mayor que 0 m y no repetirse")
+        if args.cadena is not None and args.cadena < 2:
+            raise ConfigError("--cadena debe ser de al menos 2 topes")
+        if not 0 < args.tolerancia < 1 or not 0 < args.umbral < 1:
+            raise ConfigError("--tolerancia y --umbral deben estar entre 0 y 1")
+        first = args.primer_tope if args.primer_tope is not None else (
+            reduced.bumps[0].position if reduced.bumps else length / 4)
+        spacing = Spacing(
+            first=first, distances=tuple(sorted(distances)), light={"config": None, "si": True, "no": False}[args.semaforo],
+            bump_lanes=tuple(args.carriles_tope) if args.carriles_tope else None, length=args.largo,
+            tolerance=args.tolerancia, threshold=args.umbral, count=args.cadena or 2,
+            replicas=args.replicas if args.replicas is not None else opts.replicas,
+            run=args.run if args.run is not None else base.run,
+        )  # fmt: skip
+        if spacing.replicas < 1:
+            raise ConfigError("--replicas debe ser al menos 1")
+        configs, skipped = build_configs(reduced, spacing)
+        kept = [d for d in spacing.distances if d not in skipped]
+        seed = opts.seed if opts.seed is not None else secrets.randbelow(2**32)
+        scen = Scenarios(bumps=((),), bump_lanes=spacing.bump_lanes, lights=(None,), length=args.largo, lanes=lanes,
+                         without=tuple(args.sin), replicas=spacing.replicas, run=spacing.run)  # fmt: skip
+        meta = metadata(base_metadata(base, scen, configs, seed, argv), spacing, kept, skipped)
+    except ConfigError as exc:
+        parser.error(str(exc))
+
+    print(f"Separación entre topes · configuración {target.config}")
+    print(f"{len(configs)} escenarios × {spacing.replicas} réplicas · run {spacing.run:g} s × {base.time_scale:g} = "
+          f"{spacing.run * base.time_scale:g} s simulados · semilla {seed}")  # fmt: skip
+    if skipped:
+        print("Aviso: no caben en el tramo y se omiten las separaciones " + ", ".join(f"{d:g}" for d in skipped) + " m")
+
+    def progress(name: str, done: int, total: int) -> None:
+        if done == 1:
+            sys.stderr.write(f"  {name}\n")
+        _progress(done, total)
+
+    data = run_scenarios(configs, spacing.replicas, seed, opts.workers, progress=progress if opts.progress else None)
+    folder = make_run_dir(resolve_output_dir(opts.output_dir), safe_name(target.name or SPACING_NAME), datetime.now())
+    text = settings.text if opts.seed is not None else _set_key(settings.text, "execution", "seed", seed, "semilla usada")
+    (folder / BASE_CONFIG_NAME).write_text(
+        f"# Configuración base de la comparación {folder.name}\n# {meta['comando']}\n\n{text}", encoding="utf-8"
+    )
+    summary = write_outputs(folder, meta, data)
+    print("\n" + summary)
+    (folder / SPACING_SUMMARY).write_text(f"{meta['comando']}\n\n{summary}\n", encoding="utf-8")
+    plot_bump_spacing(_free_path(folder / SPACING_PLOT), meta, data, analyze(meta, data))
+    write_results(folder, document("separacion", folder, command=meta["comando"], seed=seed,
+                                   replicas=spacing.replicas, sim_seconds=meta["s_simulados"],
+                                   metrics=spacing_metrics(meta, data)))  # fmt: skip
     print(f"\nResultados en {folder}")
     return folder
 
