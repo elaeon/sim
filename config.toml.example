@@ -133,6 +133,8 @@ gap_run = 3.0           # m al líder en marcha
 gap_stop = 1.0          # m al líder detenido (compresión)
 accel = 2.5             # m/s², aceleración gradual (sin ella, instantánea)
 decel = 4.5             # m/s², frenado gradual con anticipación (sin ella, en seco)
+#time_headway = 1.1     # s, intervalo de seguimiento en marcha: detrás de un líder en marcha guarda gap_stop más lo
+                        # que recorre en ese tiempo (sin él, gap_run fijo); calibrar con trafico-calibrar
 speed_bump_kmh = 10.0   # km/h máx. al pasar el tope de [speed_bump] (sin ella, pasa sin frenar)
 pax = {min = 1, max = 6, mean = 1.3, std = 1}   # pasajeros: normal(mean, std) redondeada y truncada a [min, max]
 cargo_prob = 0.1        # probabilidad de que lleve mercancía: ocupa la vía, pero no cuenta en los pasajeros

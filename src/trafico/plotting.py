@@ -1094,3 +1094,91 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
         fig.text(0.06, 1 - (0.055 + 0.022 * i) * k, line, ha="left", va="top", fontsize=9, color=INK_2)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, facecolor=SURFACE)
+
+
+def plot_calibration(path: Path, m: dict, rows: list[dict]) -> None:
+    """Resultados de `trafico-calibrar`: el intervalo entre cruces por posición en la cola contra el de saturación de
+    referencia, y el flujo contra la densidad en flujo continuo contra la capacidad y la densidad de embotellamiento de
+    referencia. El titular cuenta cuántas medidas quedan fuera de su rango."""
+    from matplotlib.figure import Figure
+
+    from trafico.calibration import LABELS, REFERENCES
+
+    fig = Figure(figsize=(13.5, 6.6), facecolor=SURFACE)
+    grid = fig.add_gridspec(1, 2, wspace=0.22, left=0.06, right=0.98, top=0.70, bottom=0.11)
+    color = TYPE_COLORS[0]
+
+    def band(ax, ref, axis: str, label: str) -> None:
+        span = ax.axhspan if axis == "y" else ax.axvspan
+        span(ref.low, ref.high, color=GRID, alpha=0.7, linewidth=0, zorder=0)
+        if axis == "y":  # rótulo a la izquierda, debajo de la banda
+            ax.annotate(label, (0.0, ref.low), xycoords=("axes fraction", "data"), xytext=(4, -3),
+                        textcoords="offset points", ha="left", va="top", fontsize=8.5, color=INK_2)  # fmt: skip
+        else:
+            ax.annotate(label, (ref.low, 1.0), xycoords=("data", "axes fraction"), xytext=(4, -3),
+                        textcoords="offset points", ha="left", va="top", fontsize=8.5, color=INK_2)  # fmt: skip
+
+    # Intervalo por posición en la cola.
+    ax = fig.add_subplot(grid[0, 0])
+    _style_axis(ax, "{:.1f}")
+    pos = np.arange(1, len(m["intervalo_por_posicion_s"]) + 1)
+    mean, sd = np.asarray(m["intervalo_por_posicion_s"]), np.asarray(m["intervalo_por_posicion_sd_s"])
+    band(ax, REFERENCES["intervalo_saturacion_s"], "y", "intervalo de saturación de referencia")
+    ax.fill_between(pos, mean - sd, mean + sd, color=color, alpha=0.15, linewidth=0, zorder=1)
+    ax.plot(pos, mean, color=color, linewidth=2, marker="o", markersize=5, markeredgewidth=0, zorder=2)
+    sat = m["intervalo_saturacion_s"]
+    ax.axhline(sat, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
+    ax.annotate(f"saturación simulada {sat:.2f} s", (1.0, sat), xycoords=("axes fraction", "data"), xytext=(-4, 4),
+                textcoords="offset points", ha="right", va="bottom", fontsize=8.5, color=INK_2)  # fmt: skip
+    ax.set_ylim(bottom=0)
+    ax.set_xticks(pos)
+    ax.set_xlabel("posición en la cola al ponerse en verde", color=INK_2, fontsize=9)
+    ax.set_ylabel("s desde el cruce del anterior (media ± σ)", color=INK_2, fontsize=9)
+    ax.set_title("Descarga de la cola en verde", loc="left", fontsize=10.5, color=INK, pad=8)
+
+    # Flujo contra densidad en flujo continuo.
+    ax = fig.add_subplot(grid[0, 1])
+    _style_axis(ax, "{:,.0f}")
+    k, q = np.asarray(m["densidad_veh_km"]), np.asarray(m["flujo_veh_h"])
+    band(ax, REFERENCES["capacidad_marcha_veh_h"], "y", "capacidad de referencia")
+    jam_ref = REFERENCES["densidad_embotellamiento_veh_km"]
+    band(ax, jam_ref, "x", "embotellamiento de referencia")
+    ax.plot(k, q, color=color, linewidth=2, marker="o", markersize=5, markeredgewidth=0, zorder=2)
+    jam = m["densidad_embotellamiento_veh_km"]
+    ax.axvline(jam, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
+    ax.annotate(f"embotellamiento simulado {jam:,.0f}", (jam, 0.02), xycoords=("data", "axes fraction"),
+                xytext=(-4, 0), textcoords="offset points", ha="right", va="bottom", rotation=90, fontsize=8.5,
+                color=INK_2)  # fmt: skip
+    ax.set_xlim(0, max(jam, jam_ref.high) * 1.08)
+    ax.set_ylim(0, max(q.max(), REFERENCES["capacidad_marcha_veh_h"].high) * 1.12)
+    ax.set_xlabel("densidad en el tramo (veh/km/carril)", color=INK_2, fontsize=9)
+    ax.set_ylabel("flujo (veh/h/carril)", color=INK_2, fontsize=9)
+    ax.set_title("Flujo continuo con demanda creciente (sin semáforo)", loc="left", fontsize=10.5, color=INK, pad=8)
+
+    out = [r for r in rows if r["estado"] in ("abajo", "arriba")]
+    judged = [r for r in rows if r["estado"] is not None]
+    if judged:
+        verdict = (f"{m['nombre'].capitalize()}: {len(out)} de {len(judged)} medidas fuera de la referencia" if out
+                   else f"{m['nombre'].capitalize()}: todas las medidas dentro de la referencia")  # fmt: skip
+    else:
+        verdict = f"Calibración de {m['nombre']} (las referencias son de autos: sin comparar)"
+    fig.suptitle(verdict, x=0.06, y=0.975, ha="left", fontsize=15, color=INK, fontweight="bold")
+    p = m["parametros"]
+    accel = "instantánea" if p["accel"] is None else f"{p['accel']:g} m/s²"
+    decel = "en seco" if p["decel"] is None else f"{p['decel']:g} m/s²"
+    def item(r: dict) -> str:
+        label, unit_, fmt = LABELS[r["medida"]]
+        value = "—" if r["valor"] is None else fmt.format(r["valor"])
+        return f"{label} {value} {unit_}" + {"abajo": " (bajo)", "arriba": " (alto)", "dentro": "", None: ""}[r["estado"]]
+
+    lines = [
+        "  ·  ".join(item(r) for r in rows[:3]),
+        "  ·  ".join(item(r) for r in rows[3:]),
+        f"Un carril con solo {m['nombre']}s: {p['speed_kmh']:g} km/h (carril a {p['limite_kmh']:g}), largo {p['largo_m']:g} m, "
+        f"gap_run {p['gap_run_m']:g} m, gap_stop {p['gap_stop_m']:g} m, accel {accel}, decel {decel}, reacción "
+        f"{p['reaccion_s']} s · {m['colas']} colas",
+    ]  # fmt: skip
+    for i, line in enumerate(lines):
+        fig.text(0.06, 0.905 - 0.04 * i, line, ha="left", va="top", fontsize=9, color=INK_2)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=150, facecolor=SURFACE)

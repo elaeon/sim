@@ -10,9 +10,9 @@
 
 Contrato (`API_VERSION`):
 
-  * Cada función de corrida (`simulate`, `compare_emissions`, `bump_spacing`, `compare_variants`) hace lo mismo que su
-    comando, escribe la misma carpeta de resultados y devuelve un `Run` con el contenido de su `resultados.json`
-    (formato en `trafico.results`). No imprime nada ni lee `sys.argv`; lo que el comando habría impreso queda en
+  * Cada función de corrida (`simulate`, `compare_emissions`, `bump_spacing`, `compare_variants`, `calibrate`) hace lo
+    mismo que su comando, escribe la misma carpeta de resultados y devuelve un `Run` con el contenido de su
+    `resultados.json` (formato en `trafico.results`). No imprime nada ni lee `sys.argv`; lo que el comando habría impreso queda en
     `Run.log`.
   * Los errores de configuración o de argumentos son `ConfigError` (subclase de `ValueError`); una carpeta que no
     existe o no es de resultados, `FileNotFoundError`.
@@ -41,7 +41,7 @@ from trafico.settings import ConfigError, default_config_path, load_settings, re
 API_VERSION = 1
 
 __all__ = [
-    "API_VERSION", "MODES", "RESULTS_NAME", "SCHEMA", "ConfigError", "Run", "bump_spacing", "compare_emissions",
+    "API_VERSION", "MODES", "RESULTS_NAME", "SCHEMA", "ConfigError", "Run", "bump_spacing", "calibrate", "compare_emissions",
     "compare_variants", "default_config", "describe_config", "list_runs", "read_results", "redraw", "simulate",
 ]  # fmt: skip
 
@@ -179,6 +179,18 @@ def compare_variants(
     argv = _target(config, name) + _opt("--largos", lengths) + _opt("--semaforos", split) + _opt("--carriles", lanes)
     argv += _opt("--sin", list(without)) + _opt("--cola", queue) + _opt("--replicas", replicas) + _opt("--run", run)
     return _finish(variants, argv, "variantes")
+
+
+def calibrate(
+    config: str | Path | None = None, *, name: str | None = None, vehicle: str = "car", queues: int | None = None,
+) -> Run:  # fmt: skip
+    """`trafico-calibrar`: mide el tipo `vehicle` (su clave) en situaciones estándar (descarga de una cola en verde, flujo
+    continuo, cola detenida) y compara con referencias publicadas para autos; `queues`: colas que se descargan (por
+    omisión 30). En `results["metricas"]["medidas"]` va cada medida con su valor, su rango y su estado."""
+    from trafico.cli import calibrate as command
+
+    argv = _target(config, name) + ["--tipo", vehicle] + _opt("--colas", queues)
+    return _finish(command, argv, "calibracion")
 
 
 def redraw(folder: str | Path) -> Path:

@@ -1485,3 +1485,36 @@ def test_lights_properties_and_labels():
     off = cfg.with_lights(False)
     assert not off.any_light and off.flow_window == 60.0
     assert SimConfig(length=150, red=0, green=0, extra_lights=(Light(50.0, enabled=False),)).lights == ()
+
+
+def test_time_headway_spacing_and_capacity():
+    """Con time_headway, detrás de un líder en marcha cada auto guarda gap_stop + T·v: sin dinámica gradual, a 50 km/h y
+    T = 1.5 s, el intervalo entre autos a capacidad es ≈ T + (largo + gap_stop) / v (≈ 1.9 s), no el de gap_run."""
+    from trafico.calibration import measure
+
+    car = replace(DEFAULT_SPECS[CAR], speed_std=0.0, length_std=0.0, accel=None, decel=None, time_headway=1.5)
+    cfg = SimConfig(specs=(car, *DEFAULT_SPECS[1:]), rates=(10, 0, 0), lane_speed_limit=50.0)
+    m = measure(cfg, "car", queues=2, rates=(120,), flow_seconds=300.0, workers=1)
+    v = 50 / 3.6
+    ideal = 1.5 + (car.length + car.gap_stop) / v
+    assert ideal <= m["intervalo_marcha_s"] <= ideal + 0.2  # la entrada al tramo, por pasos, agrega a lo más un poco
+
+
+def test_time_headway_with_gradual_dynamics_keeps_order_and_gaps():
+    """Autos y autobuses con aceleración y frenado graduales y time_headway, con semáforo, condición inicial y cambios
+    de carril: nadie se traslapa con su líder y, a velocidad, quien sigue de cerca guarda más de 1 s."""
+    car, bike, bus = DEFAULT_SPECS
+    specs = tuple(replace(_gradual(s), time_headway=1.2) for s in (car, bike, bus))
+    cfg = SimConfig(length=300, lanes=2, rates=(30, 0, 3), red=20, green=25, yellow=3.0, run=30, specs=specs,
+                    initial_occupancy=0.4)  # fmt: skip
+    sim = Simulation(cfg, np.random.default_rng(4))
+    far = []
+    for _ in range(cfg.n_ticks):
+        sim.step()
+        occ = sim.occupancy()
+        gap = sim.x[occ.leader] - sim.vlen[occ.leader] - occ.x
+        assert (gap[occ.has_leader] > -1e-6).all()
+        moving = occ.has_leader & ~sim.stopped[occ.leader] & (sim.v_last[occ.veh] / DT > 10.0)  # > 36 km/h
+        far += (gap[moving] / (sim.v_last[occ.veh][moving] / DT)).tolist()
+    # A velocidad, quien sigue de cerca va a más de 1 s (percentil 5 ≈ 1.46 s); con gap_run fijo, ≈ 0.33 s.
+    assert far and np.percentile(far, 5) > 1.0

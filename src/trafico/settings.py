@@ -34,7 +34,7 @@ _SPEED_FIELDS = {"mean": "speed_kmh", "std": "speed_std", "min": "speed_min", "m
 # Umbrales de cambio de carril que un tipo puede fijar para sí; sin ellos, los de [behavior].
 _LANE_CHANGE_FIELDS = ("lookahead", "min_advantage", "lane_change_cooldown")
 # Aceleración y frenado graduales (m/s²); sin ellos, cambios de velocidad instantáneos.
-_DYNAMICS_FIELDS = ("accel", "decel")
+_DYNAMICS_FIELDS = ("accel", "decel", "time_headway")
 # Detenciones de [bottleneck] de cada tipo: probabilidad y duración.
 _BOTTLENECK_FIELDS = ("bottleneck_prob", "bottleneck_time_mean", "bottleneck_time_std")
 # Claves que [bottleneck] ya no admite y a dónde se movieron (para el mensaje de error).
@@ -440,7 +440,8 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
     (`stop_position`, `stop_time_mean`, `stop_time_std`; por defecto, sin parada) y `abreast`
     (cuántos se detienen lado a lado en un carril; por defecto, 1) son opcionales, igual que el
     rebase dentro del carril (`pass_in_lane`; por defecto, false), la aceleración y el frenado
-    graduales (`accel`, `decel` en m/s²; por defecto, instantáneos), la velocidad al pasar el tope
+    graduales (`accel`, `decel` en m/s²; por defecto, instantáneos), el intervalo de seguimiento en marcha
+    (`time_headway` en s; por defecto, gap_run fijo), la velocidad al pasar el tope
     (`speed_bump_kmh`; por defecto, sin frenar), el rebase agresivo (`overtake`; por defecto, false), los umbrales de cambio de carril propios
     del tipo (`lookahead`, `min_advantage`, `lane_change_cooldown`; por defecto, los de [behavior]),
     la probabilidad de llevar mercancía (`cargo_prob`; por defecto, 0; con 1, `pax` es
@@ -869,6 +870,7 @@ def _validate_spec(s: VehicleSpec, label: str, check) -> None:
     check(0 < lo <= s.speed_kmh <= hi, f"{label} speed_kmh: debe cumplirse 0 < min ≤ mean ≤ max")
     check(s.slowest_kmh > 0, f"{label} speed_kmh: la velocidad mínima (mean − 3·std sin min) debe ser mayor que 0")
     check(0 < s.gap_stop <= s.gap_run, f"{label} requiere 0 < gap_stop ≤ gap_run")
+    check(s.time_headway is None or 0 < s.time_headway <= 5, f"{label} time_headway debe estar entre 0 y 5 s")
     check(1 <= s.pax_min <= s.pax_max <= 255, f"{label} pax: debe cumplirse 1 ≤ min ≤ max ≤ 255")
     check(s.pax_min <= s.pax_mean <= s.pax_max, f"{label} pax: mean debe estar entre min y max")
     check(s.pax_std >= 0, f"{label} pax: std no puede ser negativa")

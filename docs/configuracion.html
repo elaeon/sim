@@ -120,6 +120,7 @@
 <nav>
   <a href="#uso">Uso</a>
   <a href="#api">API y JSON</a>
+  <a href="#calibracion">Calibración</a>
   <a href="#road">[road]</a>
   <a href="#traffic_light">[traffic_light]</a>
   <a href="#demand">[demand]</a>
@@ -237,6 +238,14 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       <code>resumen.txt</code> (por km, por recorrido, exceso frente a flujo libre y tabla al acelerar de 0 a 80
       km/h), en la gráfica y en <code>emisiones_posicion.png</code>/<code>.csv</code>. Requieren <code>accel</code> y
       <code>decel</code>.</li>
+    <li>Nueva clave <code>[vehicles.&lt;clave&gt;] time_headway</code> (s): intervalo de seguimiento en marcha; detrás de
+      un líder en marcha el vehículo guarda <code>gap_stop + time_headway · v</code> (como el <code>s0 + v·T</code> de
+      IDM) en vez de <code>gap_run</code> fijo, que con dinámica gradual daba unos 0.9 s entre autos a 50 km/h y una
+      capacidad del doble de la real. Sin ella, todo queda igual. Ver <a href="#calibracion">calibración</a>.</li>
+    <li>Nuevo comando <a href="#calibracion"><code>trafico-calibrar</code></a>: mide un tipo de vehículo (por omisión el
+      auto) en situaciones estándar (descarga de una cola en verde, flujo continuo, cola detenida) y lo compara con
+      valores de referencia (flujo de saturación, tiempo perdido al arrancar, capacidad, densidad de
+      embotellamiento).</li>
     <li>Más rápido: <code>trafico-emisiones</code> (también con <code>--separacion</code>) reparte las réplicas de
       todos los escenarios en un solo grupo de procesos y respeta <code>[execution] workers = 0</code> (tantos como
       CPU; antes corría en un solo proceso), y cada paso del motor es ~20 % más rápido con aceleración y frenado
@@ -437,7 +446,7 @@ uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes --jso
     <tbody>
       <tr><td><code>schema</code></td><td>Versión del formato (hoy 1).</td></tr>
       <tr><td><code>modo</code></td><td><code>"corrida"</code> (<code>trafico</code>), <code>"variantes"</code>,
-        <code>"emisiones"</code> o <code>"separacion"</code>.</td></tr>
+        <code>"emisiones"</code>, <code>"separacion"</code> o <code>"calibracion"</code>.</td></tr>
       <tr><td><code>id</code>, <code>carpeta</code>, <code>creado</code></td><td>Nombre de la carpeta, su ruta absoluta y la
         fecha y hora (ISO 8601).</td></tr>
       <tr><td><code>comando</code>, <code>semilla</code>, <code>replicas</code>, <code>s_simulados</code></td>
@@ -496,6 +505,8 @@ api.describe_config()                                                  # la conf
       <tr><td><code>compare_variants(config=None, *, name, lengths, lights, lanes, without, queue, replicas,
         run)</code></td><td><code>trafico-variantes</code>. <code>lights</code>: pares <code>(rojo, verde)</code> o
         textos <code>"40/20"</code>.</td></tr>
+      <tr><td><code>calibrate(config=None, *, name, vehicle="car", queues)</code></td><td><code>trafico-calibrar</code>;
+        en <code>results["metricas"]["medidas"]</code>, cada medida con su valor, su rango y su estado.</td></tr>
       <tr><td><code>redraw(folder)</code>, <code>read_results(folder)</code>, <code>list_runs(output_dir=None, mode=None,
         limit=None)</code>, <code>describe_config(config=None)</code></td><td>Consulta y redibujo, sin simular.</td></tr>
     </tbody>
@@ -510,6 +521,57 @@ api.describe_config()                                                  # la conf
     <code>sys.argv</code>; capturan stdout y stderr mientras corren, así que no se llaman desde varios hilos a la vez
     (varios procesos sí). Cada una acepta los mismos argumentos que su opción de línea de comandos, con el mismo
     significado; los nombres y las claves del JSON no cambian mientras <code>api.API_VERSION</code> sea 1.</p>
+</section>
+
+<section id="calibracion">
+  <h2>Calibración: <code>trafico-calibrar</code></h2>
+  <p>Mide cómo se comporta un tipo de vehículo de la configuración en tres situaciones estándar de ingeniería de
+    tránsito y lo compara con valores de referencia. Cada medición usa un tramo de un carril con solo ese tipo (sin
+    topes, paradas, cuellos de botella ni peatones), con su velocidad, largo, gaps, <code>accel</code>,
+    <code>decel</code> y la conducta de <code>[behavior]</code>, y el límite de su carril.</p>
+  <pre><code>uv run trafico-calibrar                     # el auto con config.toml
+uv run trafico-calibrar --tipo motorbike --colas 50
+uv run trafico-calibrar resultados/&lt;ID&gt;_corrida --json</code></pre>
+  <ul>
+    <li><strong>Descarga de una cola en verde</strong>: tras un rojo de 120 s se mide el intervalo entre los cruces de
+      la línea (frente del vehículo) de los primeros 15 de la cola, en <code>--colas</code> colas con distinta semilla.
+      El <strong>intervalo de saturación</strong> es la media desde la 5.ª posición; el <strong>flujo de
+      saturación</strong>, 3600 entre ese intervalo; el <strong>tiempo perdido al arrancar</strong> (HCM), la suma de lo
+      que las primeras 4 posiciones tardan de más.</li>
+    <li><strong>Flujo continuo</strong> sin semáforo, 600 m, con demandas de 10 a 120 veh/min durante 900 s (el primer
+      cuarto no cuenta): flujo a la salida y densidad en el tercio central. La <strong>capacidad</strong> es el mayor
+      flujo y el <strong>intervalo a capacidad</strong>, 3600 entre ella.</li>
+    <li><strong>Densidad de embotellamiento</strong>: <code>1000 / (largo + gap_stop)</code> vehículos por km de carril
+      en una cola detenida.</li>
+  </ul>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Medida</th><th>Referencia (autos)</th><th>Fuente</th></tr></thead>
+    <tbody>
+      <tr><td>Flujo de saturación</td><td>1,700–1,950 veh/h/carril</td><td>HCM 6.ª ed.: base de 1,900 (1,750 en
+        ciudades de menos de 250 mil habitantes); los aforos urbanos suelen quedar algo por debajo.</td></tr>
+      <tr><td>Intervalo de saturación</td><td>1.85–2.10 s</td><td>El inverso del flujo de saturación.</td></tr>
+      <tr><td>Tiempo perdido al arrancar</td><td>1–3 s</td><td>HCM: 2 s por fase por omisión.</td></tr>
+      <tr><td>Capacidad en flujo continuo</td><td>1,700–2,400 veh/h/carril</td><td>≈ 1,800–2,000 en calles urbanas,
+        hasta 2,400 en autopistas (HCM).</td></tr>
+      <tr><td>Intervalo a capacidad</td><td>1.5–2.1 s</td><td>Literatura de seguimiento vehicular.</td></tr>
+      <tr><td>Densidad de embotellamiento</td><td>115–160 veh/km/carril</td><td>≈ 6.5–8 m entre frentes detenidos.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Son valores publicados para autos, no datos locales: si hay aforos de la calle que se estudia, valen más. Para
+    otros tipos se informan los valores sin compararlos.</p>
+  <p>Ejemplo (el auto de la configuración del proyecto): con <code>gap_stop = 1</code>, sin
+    <code>time_headway</code> y reacción N(2, 1) en [0.7, 3] s, 5 de 6 medidas quedaban fuera (saturación ≈ 1,480
+    veh/h, capacidad ≈ 4,100 veh/h, embotellamiento 182 veh/km). Con <code>gap_stop = 2</code>,
+    <code>time_headway = 1.1</code> y <code>[behavior] reaction = {min = 0.5, max = 2.5, mean = 1.2, std = 0.4}</code>
+    todas quedan dentro: saturación ≈ 1,910 veh/h (1.88 s), tiempo perdido 1.8 s, capacidad ≈ 1,850 veh/h (1.95 s) y
+    154 veh/km. El intervalo en marcha también alarga la descarga de la cola, así que la reacción y
+    <code>time_headway</code> se ajustan juntos. La carpeta <code>&lt;output.dir&gt;/&lt;fecha-hora&gt;_calibracion</code>
+    trae <code>calibracion.png</code> (intervalo por posición en la cola contra el de saturación de referencia, y flujo
+    contra densidad contra la capacidad y el embotellamiento de referencia), <code>resumen.txt</code>,
+    <code>calibracion.csv</code> (cada medida con su rango, su estado y su fuente), <code>intervalos_cola.csv</code>,
+    <code>flujo_continuo.csv</code>, <code>config_base.toml</code> y <code>resultados.json</code>
+    (<code>"modo": "calibracion"</code>). La semilla es la de <code>[execution] seed</code>; con
+    <code>[execution] workers</code> se reparten las colas y las demandas entre procesos.</p>
 </section>
 
 <section id="road">
@@ -1185,6 +1247,16 @@ bottleneck_time_std = 30.0</code></pre>
           Opcionales; por defecto, instantáneos. Valores típicos: auto 2.5 / 4.5, moto 3 / 5, autobús 1.2 / 3.5,
           bici y carga 1 / 3.</td>
         <td>En (0, 20].</td></tr>
+      <tr><td><code>time_headway</code></td><td>número</td>
+        <td>Intervalo de seguimiento en marcha (s). Detrás de un líder en marcha, el vehículo guarda
+          <code>gap_stop + time_headway · v</code>, con <code>v</code> su velocidad (la real del paso anterior con
+          <code>accel</code>/<code>decel</code>; sin ellos, la deseada), en vez de <code>gap_run</code>; al entrar al
+          tramo detrás de uno en marcha, el de su velocidad deseada. Detrás de un líder detenido sigue bastando
+          <code>gap_stop</code>, y los cambios de carril y el rebase dentro del carril siguen usando
+          <code>gap_run</code>. Sin ella, <code>gap_run</code> fijo (como antes), que con dinámica gradual deja autos a
+          ~0.9 s a 50 km/h. Opcional; calibrado para el auto: 1.1 s con <code>gap_stop = 2</code> (ver
+          <a href="#calibracion">calibración</a>).</td>
+        <td>En (0, 5].</td></tr>
       <tr><td><code>speed_bump_kmh</code></td><td>número</td>
         <td>Velocidad máxima (km/h) a la que el tipo pasa el tope de <a href="#speed_bump">[speed_bump]</a>: no la
           rebasa mientras lo pisa. Opcional; sin ella, pasa sin frenar (p. ej. las bicis). Sin tope configurado no tiene

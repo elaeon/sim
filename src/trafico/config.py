@@ -81,6 +81,9 @@ class VehicleSpec:
     # la que aún puede detenerse frenando a `decel` detrás del de adelante o antes de un alto.
     accel: float | None = None
     decel: float | None = None
+    # Intervalo de seguimiento (s): detrás de un líder en marcha guarda gap_stop más lo que recorre en este tiempo a su
+    # velocidad (como el s0 + v·T de IDM), en vez de gap_run. None = gap_run (como antes).
+    time_headway: float | None = None
     # Velocidad máxima (km/h) a la que pasa el tope de [speed_bump]; None = pasa sin frenar.
     speed_bump_kmh: float | None = None
     # Probabilidad de que un vehículo que llega lleve mercancía en vez de pasajeros: ocupa la vía,

@@ -1,9 +1,10 @@
 """`resultados.json`: el resumen de una corrida en un formato estable para programas (scripts, agentes, un servidor).
 
-Cada comando (`trafico`, `trafico-variantes`, `trafico-emisiones`, con o sin `--separacion`) lo escribe al final en la
+Cada comando (`trafico`, `trafico-variantes`, `trafico-emisiones`, con o sin `--separacion`, y `trafico-calibrar`) lo
+escribe al final en la
 carpeta de resultados. Tiene siempre la misma cabecera y las métricas de cada modo bajo `"metricas"`:
 
-    {"schema": 1, "modo": "corrida" | "variantes" | "emisiones" | "separacion", "id": ..., "carpeta": ...,
+    {"schema": 1, "modo": "corrida" | "variantes" | "emisiones" | "separacion" | "calibracion", "id": ..., "carpeta": ...,
      "creado": "AAAA-MM-DDTHH:MM:SS", "comando": ..., "semilla": ..., "replicas": ..., "s_simulados": ...,
      "archivos": [...], "metricas": {...}}
 
@@ -22,7 +23,7 @@ import numpy as np
 
 SCHEMA = 1
 RESULTS_NAME = "resultados.json"
-MODES = ("corrida", "variantes", "emisiones", "separacion")
+MODES = ("corrida", "variantes", "emisiones", "separacion", "calibracion")
 
 
 def plain(obj):
@@ -72,6 +73,8 @@ def write_results(folder: Path, doc: dict) -> Path:
 
 def mode_of(folder: Path) -> str | None:
     """Modo de una carpeta de resultados sin `resultados.json` (de una versión anterior), por sus archivos."""
+    if (folder / "calibracion.csv").is_file():
+        return "calibracion"
     meta_path = folder / "escenarios.json"
     if not meta_path.is_file():
         return "corrida" if (folder / "resumen.txt").is_file() else None
