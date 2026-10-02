@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import resource
 import time
 from collections.abc import Callable
@@ -90,40 +91,72 @@ def run_parallel(
     seed: int,
     progress: Callable[[int, int], None] | None = None,
 ) -> Aggregate:
-    """Corre `replicas` réplicas independientes en `workers` procesos.
+    """Corre `replicas` réplicas independientes en `workers` procesos (0 = tantos como CPU).
 
     Las semillas se derivan con SeedSequence.spawn y los resultados se agregan
     en orden de réplica, así que el resultado no depende de `workers`. Como
     mucho hay 2×workers resultados en memoria a la vez.
     """
-    seeds = np.random.SeedSequence(seed).spawn(replicas)
-    agg = Aggregate.empty(cfg)
-    agg.workers = workers
-    t0 = time.perf_counter()
+    report = (lambda _, done, total: progress(done, total)) if progress else None
+    return run_many([cfg], replicas, workers, seed, progress=report)[0]
 
-    if workers <= 1:
-        for i, s in enumerate(seeds):
-            agg.push(run_replica(cfg, s))
-            if progress:
-                progress(i + 1, replicas)
+
+def run_many(
+    cfgs: list[SimConfig],
+    replicas: int,
+    workers: int,
+    seed: int,
+    progress: Callable[[int, int, int], None] | None = None,
+) -> list[Aggregate]:
+    """Corre `replicas` réplicas de cada configuración en un solo grupo de `workers` procesos (0 = tantos como CPU):
+    los procesos no esperan a que termine una configuración para empezar la siguiente.
+
+    Todas las configuraciones usan las mismas semillas (números aleatorios comunes, como `run_parallel` con cada
+    una) y cada agregado recibe sus réplicas en orden, así que el resultado es el mismo que corriéndolas por
+    separado y no depende de `workers`. `progress(configuración, réplicas listas, réplicas)` se llama en orden.
+    Como mucho hay 2×workers resultados en memoria a la vez."""
+    # Semillas nuevas para cada configuración: una SeedSequence lleva la cuenta de los hijos que deriva (la réplica
+    # deriva los suyos), así que reusar el mismo objeto en el mismo proceso cambiaría los números de la siguiente.
+    seeds = [np.random.SeedSequence(seed).spawn(replicas) for _ in cfgs]
+    aggs = [Aggregate.empty(cfg) for cfg in cfgs]
+    tasks = [(i, r) for i in range(len(cfgs)) for r in range(replicas)]
+    if workers <= 0:
+        workers = os.process_cpu_count() or 1
+    workers = max(1, min(workers, len(tasks)))
+    t0 = time.perf_counter()
+    last = t0
+
+    def push(k: int, res: ReplicaResult) -> None:
+        nonlocal last
+        i, r = tasks[k]
+        aggs[i].push(res)
+        if progress:
+            progress(i, r + 1, replicas)
+        if r + 1 == replicas:  # tiempo real de cada configuración: desde que terminó la anterior
+            now = time.perf_counter()
+            aggs[i].wall, last = now - last, now
+
+    if workers == 1:
+        for k, (i, r) in enumerate(tasks):
+            push(k, run_replica(cfgs[i], seeds[i][r]))
     else:
         with ProcessPoolExecutor(max_workers=workers) as pool:
             window = 2 * workers
             running: dict[Future, int] = {}
             ready: dict[int, ReplicaResult] = {}
             next_submit = next_push = 0
-            while next_push < replicas:
-                while next_submit < replicas and len(running) + len(ready) < window:
-                    running[pool.submit(run_replica, cfg, seeds[next_submit])] = next_submit
+            while next_push < len(tasks):
+                while next_submit < len(tasks) and len(running) + len(ready) < window:
+                    i, r = tasks[next_submit]
+                    running[pool.submit(run_replica, cfgs[i], seeds[i][r])] = next_submit
                     next_submit += 1
                 done, _ = wait(running, return_when=FIRST_COMPLETED)
                 for fut in done:
                     ready[running.pop(fut)] = fut.result()
                 while next_push in ready:
-                    agg.push(ready.pop(next_push))
+                    push(next_push, ready.pop(next_push))
                     next_push += 1
-                    if progress:
-                        progress(next_push, replicas)
 
-    agg.wall = time.perf_counter() - t0
-    return agg
+    for agg in aggs:
+        agg.workers = workers
+    return aggs

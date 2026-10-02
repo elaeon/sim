@@ -20,7 +20,7 @@ import numpy as np
 from trafico.config import POLLUTANT_LABELS, POLLUTANTS, SimConfig, SpeedBump, as_positions
 from trafico.emissions import EMIS_BIN, emitted, unit
 from trafico.metrics import LANE_EXIT_FLOW
-from trafico.runner import run_parallel
+from trafico.runner import run_many
 from trafico.settings import ConfigError, RunOptions, validate_config
 from trafico.variants import reduce_config
 
@@ -102,16 +102,17 @@ def run_scenarios(
     réplicas; «_sd», su desviación estándar)."""
     keys = ("crossed_veh", "travel_time", "mean_speed", "veh_km", "emissions", "emissions_free", "emissions_pos")
     out: dict[str, list] = {k: [] for k in (*keys, "crossed_veh_sd", "emissions_sd", "flow")}
-    t = None
-    for name, cfg in configs:
-        agg = run_parallel(cfg, replicas, workers, seed,
-                           progress=(lambda d, n, name=name: progress(name, d, n)) if progress else None)  # fmt: skip
+    names = [name for name, _ in configs]
+    # Un solo grupo de procesos para todas las réplicas de todos los escenarios (mismas semillas en cada uno).
+    aggs = run_many([cfg for _, cfg in configs], replicas, workers, seed,
+                    progress=(lambda i, d, n: progress(names[i], d, n)) if progress else None)  # fmt: skip
+    for agg in aggs:
         for k in keys:
             out[k].append(agg.summary[k].mean)
         out["crossed_veh_sd"].append(agg.summary["crossed_veh"].std)
         out["emissions_sd"].append(agg.summary["emissions"].std)
         out["flow"].append(np.nansum(agg.series[LANE_EXIT_FLOW].mean, axis=1))  # veh/min que salen, todos los carriles
-        t = agg.times
+    t = aggs[-1].times
     data = {k: np.array(v) for k, v in out.items()}
     data["t"] = np.asarray(t)
     return data
