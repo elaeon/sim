@@ -977,14 +977,19 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
 
 
 def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
-    """Resultados de `trafico-emisiones --separacion`: cuánto deben separarse dos topes (o los de una cadena) para que la
-    huella de emisiones del primero se diluya. Cinco métricas contra la separación (aditividad, media en el tramo, exceso
-    entre los topes, gradiente y costo de cada tope añadido, total y por metro), una línea por contaminante, y el perfil a
-    lo largo de la calle para algunas separaciones."""
+    """Resultados de `trafico-emisiones --separacion` (o `--separacion-semaforos`): cuánto deben separarse dos topes o
+    semáforos (o los de una cadena) para que la huella de emisiones del primero se diluya. Cinco métricas contra la
+    separación (aditividad, media en el tramo, exceso entre ellos, gradiente y costo de cada uno añadido, total y por
+    metro), una línea por contaminante, y el perfil a lo largo de la calle para algunas separaciones."""
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    from trafico.bump_spacing import profiles
+    from trafico.bump_spacing import (
+        LIGHT, NOUNS, chain_span, cycle_text, equivalence_text, first_position, kind_of, profiles, worst_case,
+    )  # fmt: skip
+
+    light = kind_of(meta) == LIGHT
+    nn = NOUNS[kind_of(meta)]
 
     dist = np.array(result["distancias_m"])
     pols = list(result["pollutants"])
@@ -996,6 +1001,7 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
     grid = fig.add_gridspec(3, 3, hspace=0.5, wspace=0.28, left=0.06, right=0.98, top=1 - 0.22 * k, bottom=0.07 * k,
                             height_ratios=(1, 1, 1.15))  # fmt: skip
     rec, huella = result["recomendada_m"], result["huella_m"]
+    blocked = np.asarray(result.get("cola_entrada_d", np.zeros(len(dist), bool)), bool)
 
     def panel(ax, key: str, title: str, ylabel: str, fmt: str, scale: float = 1.0, marks=(), ref=None, band=None):
         _style_axis(ax, fmt)
@@ -1006,41 +1012,66 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
         for pol in pols:
             y = np.array(result["pollutants"][pol][key]) * scale
             ax.plot(dist, y, color=colors[pol], linewidth=2, marker="o", markersize=4, markeredgewidth=0)
+            if blocked.any():  # la cola llega a la entrada: punto hueco, no comparable
+                ax.plot(dist[blocked], y[blocked], linestyle="none", marker="o", markersize=7, markerfacecolor=SURFACE,
+                        markeredgecolor=colors[pol], markeredgewidth=1.5, zorder=3)  # fmt: skip
         xmax = dist.max() * 1.02
         for at, label, color in marks:
-            if at is not None:
+            if at is not None and dist.min() * 0.9 <= at <= xmax:
                 ax.axvline(at, color=color, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
                 left = at > 0.7 * xmax  # cerca del borde derecho, el rótulo va a la izquierda de la línea
                 ax.annotate(label, (at, 1.0), xycoords=("data", "axes fraction"), xytext=(-4 if left else 4, -3),
                             textcoords="offset points", ha="right" if left else "left", va="top", fontsize=8,
                             color=INK_2)  # fmt: skip
         ax.set_xlim(dist.min() * 0.9, xmax)
-        ax.set_xlabel("separación entre los topes (m)", color=INK_2, fontsize=9)
+        ax.set_xlabel(f"separación entre los {nn.many} (m)", color=INK_2, fontsize=9)
         ax.set_ylabel(ylabel, color=INK_2, fontsize=9)
         ax.set_title(title, loc="left", fontsize=10.5, color=INK, pad=8)
 
     tol, thr = meta["tolerancia"], meta["umbral"]
     r_add = [r["d_aditiva"] for r in result["pollutants"].values() if r["d_aditiva"] is not None]
-    add_mark = [(max(r_add) if r_add else None, "aditiva", INK_2)]
-    flat_mark = [(huella, "fin de la huella", INK_2)]
+    add_mark = [(max(r_add) if r_add else None, "estable" if light else "aditiva", INK_2)]
+    before = (result.get("huella_antes_m") or 0.0) if light else 0.0  # con semáforos, la cola y el frenado antes de él
+    # El segundo sale de la huella del primero cuando su propia huella antes (cola) no alcanza la estela del primero.
+    flat_mark = [(None if huella is None else huella + before, "fin de la huella", INK_2)]
     ax = fig.add_subplot(grid[0, 0])
-    panel(ax, "aditividad", "Los dos topes frente a dos topes aislados" if n == 2 else f"Los {n} topes frente a {n} topes aislados", f"emisión extra ÷ ({n} × un tope)", "{:.2f}",
-          marks=add_mark, ref=1.0, band=(1 - tol, 1 + tol))  # fmt: skip
+    green = light and not worst_case(meta)
+    hidden = n - meta.get("desfase", "rojo").split(",").count("verde") if green else n
+    if green:  # onda verde: cuántos semáforos aislados vale la cadena, frente a «cada onda verde oculta uno»
+        for pol in pols:
+            r = result["pollutants"][pol]
+            r["equivalente"] = n * np.array(r["aditividad"])
+        panel(ax, "equivalente", "La cadena en semáforos aislados" if n > 2 else "La pareja en semáforos aislados",
+              "emisión extra ÷ un semáforo solo", "{:.2f}", ref=float(hidden))  # fmt: skip
+        ax.annotate(f"{hidden} = cada onda verde oculta un semáforo", (dist.min(), hidden), xytext=(2, 4),
+                    textcoords="offset points", fontsize=8, color=INK_2)  # fmt: skip
+    elif light:  # con el desfase en rojo la cadena no tiende a semáforos aislados: se compara con la más separada
+        title = (f"La pareja frente a la más separada (d = {dist[-1]:g} m)" if n == 2
+                 else f"La cadena frente a la más separada (d = {dist[-1]:g} m)")  # fmt: skip
+        panel(ax, "estabilidad", title, f"emisión extra ÷ la de d = {dist[-1]:g} m", "{:.2f}", marks=add_mark,
+              ref=1.0, band=(1 - tol, 1 + tol))  # fmt: skip
+    else:
+        title = (f"Los dos {nn.many} frente a dos {nn.many} aislados" if n == 2
+                 else f"Los {n} {nn.many} frente a {n} {nn.many} aislados")  # fmt: skip
+        panel(ax, "aditividad", title, f"emisión extra ÷ ({n} × {nn.a})", "{:.2f}", marks=add_mark, ref=1.0,
+              band=(1 - tol, 1 + tol))  # fmt: skip
     ax = fig.add_subplot(grid[0, 1])
-    panel(ax, "media_tramo", "Media en el tramo de los topes", "× la calle sin topes", "{:.1f}", marks=add_mark, ref=1.0)
+    panel(ax, "media_tramo", f"Media en el tramo de los {nn.many}", f"× la calle sin {nn.many}", "{:.1f}", marks=add_mark,
+          ref=1.0)  # fmt: skip
     ax = fig.add_subplot(grid[0, 2])
-    panel(ax, "exceso_entre", "Exceso medio entre los topes", "% del pico de un tope solo", "{:.0f}", scale=100,
+    panel(ax, "exceso_entre", f"Exceso medio entre los {nn.many}", f"% del pico de {nn.a} solo", "{:.0f}", scale=100,
           marks=flat_mark, ref=100 * thr)  # fmt: skip
     ax = fig.add_subplot(grid[1, 0])
     for pol in pols:  # cada contaminante en su unidad: se normaliza por la pendiente máxima de un tope solo
         r = result["pollutants"][pol]
         r["gradiente_rel"] = np.array(r["gradiente_tramo"]) / r["pendiente_tope_solo"] * 100
-    panel(ax, "gradiente_rel", "Gradiente medio en el tramo de los topes", "% de la pendiente máxima de un tope solo", "{:.0f}")
+    panel(ax, "gradiente_rel", f"Gradiente medio en el tramo de los {nn.many}", f"% de la pendiente máxima de {nn.a} solo",
+          "{:.0f}")  # fmt: skip
     ax = fig.add_subplot(grid[1, 1])
-    panel(ax, "costo_tope", "Costo de cada tope añadido", "× un tope aislado (1 = emite como uno solo)", "{:.2f}",
+    panel(ax, "costo_tope", f"Costo de cada {nn.one} añadido", f"× {nn.a} aislado (1 = emite como uno solo)", "{:.2f}",
           marks=add_mark, ref=1.0)  # fmt: skip
     ax = fig.add_subplot(grid[1, 2])
-    panel(ax, "costo_por_m", "Costo por metro de separación", "% de un tope aislado por m", "{:.2f}")
+    panel(ax, "costo_por_m", "Costo por metro de separación", f"% de {nn.a} aislado por m", "{:.2f}")
 
     # Perfil del primer contaminante (CO2 si se emite) para algunas separaciones, con el tope solo y la línea base.
     ax = fig.add_subplot(grid[2, :])
@@ -1049,51 +1080,91 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
     prof = profiles(meta, data)
     x = result["x_m"]
     picks = sorted({int(np.argmin(np.abs(dist - target))) for target in np.quantile(dist, [0.15, 0.4, 0.65, 0.9])})
-    first = meta["primer_tope_m"]
-    ax.plot(x, prof[0, pi], color=MUTED, linewidth=1.5, label="sin tope")
-    ax.plot(x, prof[1, pi], color=INK_2, linewidth=1.5, linestyle=(0, (4, 3)), label="un tope")
-    handles = [Line2D([], [], color=MUTED, linewidth=2, label="sin tope"),
-               Line2D([], [], color=INK_2, linewidth=2, linestyle=(0, (4, 3)), label="un tope")]  # fmt: skip
+    first = first_position(meta)
+    if light and huella is not None:  # la huella del semáforo solo, a los dos lados de su línea de alto
+        ax.axvspan(first - before, first + huella, color=GRID, alpha=0.6, linewidth=0, zorder=0)
+    ax.plot(x, prof[0, pi], color=MUTED, linewidth=1.5, label=nn.none)
+    ax.plot(x, prof[1, pi], color=INK_2, linewidth=1.5, linestyle=(0, (4, 3)), label=nn.a)
+    handles = [Line2D([], [], color=MUTED, linewidth=2, label=nn.none),
+               Line2D([], [], color=INK_2, linewidth=2, linestyle=(0, (4, 3)), label=nn.a)]  # fmt: skip
+    if light and huella is not None:
+        handles.append(Patch(facecolor=GRID, alpha=0.6, label="huella de un semáforo"))
     ax.axvline(first, color=BASELINE, linewidth=1, zorder=1)
     ramp = ("#b9aee6", "#8d7fd1", "#6656bd", "#3d2f94")  # rampa de un tono: la separación es una magnitud
     for i, j in enumerate(picks):
         color = ramp[i + len(ramp) - len(picks)]
         ax.plot(x, prof[2 + j, pi], color=color, linewidth=1.8)
-        ax.axvline(first + (n - 1) * dist[j], color=color, linewidth=1, linestyle=(0, (1, 2)), zorder=1)
+        for at in _chain_marks(meta, first, dist[j]):
+            ax.axvline(at, color=color, linewidth=1, linestyle=(0, (1, 2)), zorder=1)
         handles.append(Line2D([], [], color=color, linewidth=2, label=f"d = {dist[j]:g} m"))
-    lo = max(0.0, first - 25)
-    hi = min(meta["largo_m"], first + (n - 1) * dist.max() + (huella or 50) + 15)
+    lo = max(0.0, first - 25 - before)
+    hi = min(meta["largo_m"], first + chain_span(meta, float(dist.max())) + (huella or 50) + 15)
     ax.set_xlim(lo, hi)
     ax.set_ylim(bottom=0)
     ax.set_xlabel("posición en la calle (m desde la entrada)", color=INK_2, fontsize=9)
     ax.set_ylabel(f"{POLLUTANT_LABELS[pols[pi]]}, g/(m·h) (todos los carriles)", color=INK_2, fontsize=9)
     ax.set_title(f"Perfil de {POLLUTANT_LABELS[pols[pi]]} a lo largo de la calle según la separación", loc="left",
                  fontsize=10.5, color=INK, pad=8)  # fmt: skip
-    ax.legend(handles=handles, loc="upper right", frameon=False, fontsize=8.5, labelcolor=INK_2, ncol=3)
+    if light:  # los perfiles llegan hasta el final del tramo: la leyenda va arriba del panel, a la derecha del título
+        ax.legend(handles=handles, loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=8.5,
+                  labelcolor=INK_2, ncol=4)  # fmt: skip
+    else:
+        ax.legend(handles=handles, loc="upper right", frameon=False, fontsize=8.5, labelcolor=INK_2, ncol=3)
 
     legend = [Line2D([], [], color=colors[pol], linewidth=3, label=POLLUTANT_LABELS[pol]) for pol in pols]
     fig.legend(handles=legend, loc="upper left", bbox_to_anchor=(0.055, 1 - 0.138 * k), ncol=len(pols), frameon=False,
                fontsize=9.5, labelcolor=INK_2, handlelength=1.6)  # fmt: skip
-    verdict = (f"Separación mínima entre topes ≈ {rec:g} m" if rec is not None
-               else "Ninguna separación de la lista diluye la huella: amplía --separacion")
+    flag = "--separacion-semaforos" if light else "--separacion"
+    verdict = (f"Separación mínima entre {nn.many} ≈ {rec:g} m" if rec is not None
+               else f"Ninguna separación de la lista diluye la huella: amplía {flag}")
+    if light and not worst_case(meta):  # con onda verde la pregunta es cuántos semáforos aislados vale la cadena
+        verdict = equivalence_text(meta, result)
     fig.suptitle(verdict, x=0.06, y=1 - 0.025 * k, ha="left", fontsize=15, color=INK, fontweight="bold")
     rates = " · ".join(f"{meta['nombres'][k]} {meta['tasas'][k]:.3g} veh/min" for k in meta["activos"])
     speed = " · ".join(f"{n} ≤ {v:g} km/h" for n, v in meta["velocidad_tope_kmh"].items() if v is not None)
     ped = meta.get("peatones_tope")
+    wake = f"{before:.0f} m antes + {huella:.0f} m después" if light and huella is not None else f"{huella or 0:.0f} m"
+    if green:
+        head = (f"Huella de un semáforo ≈ {wake} (exceso > {100 * thr:g} % del pico) · ≡ aislados: la emisión extra de la "
+                f"cadena contada en semáforos solos (n × R)" if huella is not None else "Sin huella medible")
+    elif light:
+        far = result["pollutants"][pols[0]]["aditividad"][-1]
+        head = (f"Huella de un semáforo ≈ {wake} (exceso > {100 * thr:g} % del pico) · estable: a ±{100 * tol:g} % de la "
+                f"más separada, que emite {far:.2f} × {'dos' if n == 2 else n} aislados ({POLLUTANT_LABELS[pols[0]]})"
+                if huella is not None else "Sin huella medible")  # fmt: skip
+    else:
+        head = (f"Huella de {nn.a} ≈ {wake} (hasta que su exceso baja de {100 * thr:g} % del pico) · aditiva si "
+                + ("la pareja emite" if n == 2 else f"la cadena de {n} {nn.many} emite")
+                + f" lo mismo que {'dos' if n == 2 else n} {nn.many} aislados ±{100 * tol:g} %" if huella is not None
+                else "Sin huella medible")  # fmt: skip
     lines = [
-        f"Huella de un tope ≈ {huella:.0f} m (hasta que su exceso baja de {100 * thr:g} % del pico) · aditiva si "
-        + ("la pareja emite" if n == 2 else f"la cadena de {n} topes emite")
-        + f" lo mismo que {'dos' if n == 2 else n} topes aislados ±{100 * tol:g} %" if huella is not None else "Sin huella medible",
-        f"{'Primer tope a' if n == 2 else f'Cadena de {n} topes desde'} {first:g} m · tramo {meta['largo_m']:g} m · {rates}",
-        f"Velocidad en el tope: {speed or 'sin speed_bump_kmh'}"
-        + (f" · con peatones ({ped['peatones_min']:.3g}/min, {ped['s_cruce']:g} s por cruce)" if ped else ""),
-        f"{meta['s_simulados']:,.0f} s simulados · media de {meta['replicas']} réplicas con la misma semilla "
-        f"({meta['semilla']}) · modelo de emisiones de Int Panis et al. (2006)",
+        head,
+        f"{f'Primer {nn.one} a' if n == 2 else f'Cadena de {n} {nn.many} desde'} {first:g} m · tramo {meta['largo_m']:g} m · {rates}",
     ]  # fmt: skip
+    if light:
+        fixed = meta.get("topes_fijos_m") or []
+        lines.append(f"Semáforos de ciclo fijo: {cycle_text(meta)} · "
+                     + (f"topes fijos a {', '.join(f'{p:g}' for p in fixed)} m" if fixed else "sin topes")
+                     + (" · ○ la cola llega a la entrada (no comparable)" if blocked.any() else ""))  # fmt: skip
+    else:
+        lines.append(f"Velocidad en el tope: {speed or 'sin speed_bump_kmh'}"
+                     + (f" · con peatones ({ped['peatones_min']:.3g}/min, {ped['s_cruce']:g} s por cruce)" if ped else ""))  # fmt: skip
+    lines.append(f"{meta['s_simulados']:,.0f} s simulados · media de {meta['replicas']} réplicas con la misma semilla "
+                 f"({meta['semilla']}) · modelo de emisiones de Int Panis et al. (2006)")  # fmt: skip
     for i, line in enumerate(lines):
         fig.text(0.06, 1 - (0.055 + 0.022 * i) * k, line, ha="left", va="top", fontsize=9, color=INK_2)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, facecolor=SURFACE)
+
+
+def _chain_marks(meta: dict, first: float, d: float) -> list[float]:
+    """Posiciones que se marcan en el perfil de una cadena: el último elemento o, con separaciones fijas, todos tras el
+    primero."""
+    fixed = meta.get("separaciones_fijas_m") or []
+    if not fixed:
+        n = int(meta.get("topes_por_cadena", 2))
+        return [first + (n - 1) * d]
+    return (first + np.cumsum([d, *fixed])).tolist()
 
 
 def plot_calibration(path: Path, m: dict, rows: list[dict]) -> None:

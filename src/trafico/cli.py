@@ -795,6 +795,7 @@ def variants_main(argv: list[str] | None = None) -> None:
 
 EMISSIONS_NAME = "emisiones_topes"
 SPACING_NAME = "separacion_topes"
+LIGHT_SPACING_NAME = "separacion_semaforos"
 
 
 def build_emissions_parser() -> argparse.ArgumentParser:
@@ -836,6 +837,24 @@ def build_emissions_parser() -> argparse.ArgumentParser:
     p.add_argument("--umbral", type=float, default=0.10, metavar="U",
                    help="con --separacion, fracción del pico de un tope solo bajo la cual su exceso cuenta como diluido "
                         "(por defecto 0.10)")  # fmt: skip
+    p.add_argument("--separacion-semaforos", nargs="*", type=float, default=None, metavar="D",
+                   help="como --separacion, pero con semáforos de ciclo fijo: corre sin semáforo, con uno y con dos (o "
+                        "--cadena N) separados D m (por omisión 25 50 75 100 150 200 250 300), sin los semáforos ni los "
+                        "topes de la configuración; el tramo se amplía si hace falta (salvo con --largo)")  # fmt: skip
+    p.add_argument("--primer-semaforo", type=float, metavar="M",
+                   help="con --separacion-semaforos, posición del primer semáforo en m (por omisión 100: deja sitio a "
+                        "su cola)")  # fmt: skip
+    p.add_argument("--ciclo", metavar="ROJO/VERDE[/AMARILLO]",
+                   help="con --separacion-semaforos, fases de todos los semáforos en s, p. ej. 30/30/3 (por omisión, las "
+                        "del primer semáforo de ciclo fijo de la configuración o, si no hay, 30/30/3)")  # fmt: skip
+    p.add_argument("--desfase", metavar="rojo|verde|igual[,…]", default=None,
+                   help="con --separacion-semaforos: «rojo» (por omisión) pone cada semáforo en rojo justo cuando llega "
+                        "la cabeza del pelotón que salió del anterior al ponerse en verde, a cualquier separación; "
+                        "«verde», en verde (onda verde); «igual», todos en la misma fase. Con --cadena, uno por tramo "
+                        "separados por comas, p. ej. verde,rojo")  # fmt: skip
+    p.add_argument("--separaciones-fijas", type=float, nargs="+", metavar="M",
+                   help="con --separacion-semaforos y --cadena N (N ≥ 3): separaciones fijas en m de los tramos después "
+                        "del primero (N − 2 valores); el primero es el que se barre")  # fmt: skip
     p.add_argument("--semaforo", choices=("config", "si", "no", "ambos"), default="config",
                    help="semáforo en todos los escenarios: como en la configuración, activado, desactivado o ambos "
                         "(cada tope con y sin semáforo)")  # fmt: skip
@@ -893,10 +912,10 @@ def emissions(argv: list[str] | None = None) -> Path:
             folder = Path(args.redibujar).expanduser()
             meta, data = load(folder)
             if meta.get("modo") == "separacion":
-                from trafico.bump_spacing import PLOT_NAME as SPACING_PLOT, analyze
+                from trafico.bump_spacing import analyze, plot_name
                 from trafico.plotting import plot_bump_spacing
 
-                path = _free_path(folder / SPACING_PLOT)
+                path = _free_path(folder / plot_name(meta))
                 plot_bump_spacing(path, meta, data, analyze(meta, data))
                 print(f"Gráfica en {path}")
                 return folder
@@ -910,10 +929,19 @@ def emissions(argv: list[str] | None = None) -> Path:
         lanes = tuple(args.carriles) if args.carriles else None
         reduced = reduce_config(base, lanes, tuple(args.sin))
         length = args.largo if args.largo is not None else reduced.length
-        if args.cadena is not None and args.separacion is None:
-            parser.error("--cadena requiere --separacion")
-        if args.separacion is not None:
-            return _bump_spacing(args, argv, parser, target, settings, reduced, lanes, length)
+        lights_sweep = args.separacion_semaforos is not None
+        if args.separacion is not None and lights_sweep:
+            parser.error("--separacion y --separacion-semaforos no se combinan: corre uno y luego el otro")
+        if args.cadena is not None and args.separacion is None and not lights_sweep:
+            parser.error("--cadena requiere --separacion o --separacion-semaforos")
+        given = [f for f, v in (("--primer-semaforo", args.primer_semaforo), ("--ciclo", args.ciclo),
+                                ("--desfase", args.desfase), ("--separaciones-fijas", args.separaciones_fijas))
+                 if v is not None]  # fmt: skip
+        if given and not lights_sweep:
+            parser.error(f"{', '.join(given)} requiere --separacion-semaforos")
+        if args.separacion is not None or lights_sweep:
+            return _spacing("semaforo" if lights_sweep else "tope", args, argv, parser, target, settings, reduced, lanes,
+                            length)  # fmt: skip
         lights = {"config": (None,), "si": (True,), "no": (False,), "ambos": (True, False)}[args.semaforo]
         s = Scenarios(
             bumps=_bumps(args.topes, tuple(b.position for b in reduced.bumps), length),
@@ -960,11 +988,25 @@ def emissions(argv: list[str] | None = None) -> Path:
     return folder
 
 
-def _bump_spacing(args, argv, parser, target, settings, reduced, lanes, length) -> Path:
-    """`trafico-emisiones --separacion`: barrido de la distancia entre dos topes (ver bump_spacing.py)."""
+def _cycle(text: str):
+    """`--ciclo ROJO/VERDE[/AMARILLO]` en s, como semáforo de plantilla (la posición no se usa)."""
+    from trafico.config import Light
+
+    try:
+        values = [float(v) for v in text.split("/")]
+    except ValueError:
+        values = []
+    if len(values) not in (2, 3):
+        raise ConfigError(f"--ciclo: {text!r} debe ser ROJO/VERDE o ROJO/VERDE/AMARILLO en s, p. ej. 30/30/3")
+    return Light(0.0, red=values[0], green=values[1], yellow=values[2] if len(values) == 3 else 0.0)
+
+
+def _spacing(kind, args, argv, parser, target, settings, reduced, lanes, length) -> Path:
+    """`trafico-emisiones --separacion` (kind «tope») o `--separacion-semaforos` (kind «semaforo»): barrido de la
+    distancia entre dos topes o dos semáforos (ver bump_spacing.py)."""
     from trafico.bump_spacing import (
-        DEFAULT_DISTANCES, PLOT_NAME as SPACING_PLOT, SUMMARY_NAME as SPACING_SUMMARY, Spacing, analyze, build_configs,
-        metadata, write_outputs,
+        DEFAULT_DISTANCES, LIGHT, LIGHT_CYCLE, LIGHT_DISTANCES, LIGHT_FIRST, LIGHT_ROOM, NOUNS,
+        SUMMARY_NAME as SPACING_SUMMARY, Spacing, analyze, build_configs, metadata, plot_name, write_outputs,
     )  # fmt: skip
     from trafico.bump_spacing import results_metrics as spacing_metrics
     from trafico.emission_scenarios import BASE_CONFIG_NAME, Scenarios
@@ -975,41 +1017,78 @@ def _bump_spacing(args, argv, parser, target, settings, reduced, lanes, length) 
     from trafico.settings import _set_key
 
     base, opts = settings.sim, settings.run
+    light = kind == LIGHT
+    flag = "--separacion-semaforos" if light else "--separacion"
+    nn = NOUNS[kind]
+    notes = []
     try:
-        if args.topes is not None:
-            raise ConfigError("--separacion no se combina con --topes (los topes son el primero y el que se aleja)")
+        if args.semaforo != "config" and light:
+            raise ConfigError("--separacion-semaforos no admite --semaforo: los semáforos son los del barrido")
         if args.semaforo == "ambos":
             raise ConfigError("--separacion no admite --semaforo ambos (usa config, si o no)")
-        distances = tuple(args.separacion) or DEFAULT_DISTANCES
+        fixed: tuple[float, ...] = ()
+        if args.topes is not None:
+            if not light:
+                raise ConfigError("--separacion no se combina con --topes (los topes son el primero y el que se aleja)")
+            scenarios = _bumps(args.topes, (), length)
+            if len(scenarios) != 1:
+                raise ConfigError("con --separacion-semaforos, --topes da los topes fijos de todos los escenarios: un solo "
+                                  "valor, p. ej. 35,100 (o «sin»)")  # fmt: skip
+            fixed = scenarios[0]
+        distances = tuple(args.separacion_semaforos if light else args.separacion) or (
+            LIGHT_DISTANCES if light else DEFAULT_DISTANCES)
         if any(d <= 0 for d in distances) or len(set(distances)) != len(distances):
-            raise ConfigError("--separacion: cada distancia debe ser mayor que 0 m y no repetirse")
+            raise ConfigError(f"{flag}: cada distancia debe ser mayor que 0 m y no repetirse")
         if args.cadena is not None and args.cadena < 2:
-            raise ConfigError("--cadena debe ser de al menos 2 topes")
+            raise ConfigError(f"--cadena debe ser de al menos 2 {nn.many}")
         if not 0 < args.tolerancia < 1 or not 0 < args.umbral < 1:
             raise ConfigError("--tolerancia y --umbral deben estar entre 0 y 1")
-        first = args.primer_tope if args.primer_tope is not None else (
-            reduced.bumps[0].position if reduced.bumps else length / 4)
+        count = args.cadena or 2
+        street = args.largo
+        if light:
+            first = args.primer_semaforo if args.primer_semaforo is not None else LIGHT_FIRST
+            configured = next((lt for lt in reduced.lights if not lt.pedestrian), None)
+            cycle = _cycle(args.ciclo) if args.ciclo is not None else configured or LIGHT_CYCLE
+            fixed_gaps = tuple(args.separaciones_fijas or ())
+            if any(g <= 0 for g in fixed_gaps):
+                raise ConfigError("--separaciones-fijas: cada separación debe ser mayor que 0 m")
+            span = max(distances) + sum(fixed_gaps) if fixed_gaps else (count - 1) * max(distances)
+            needed = first + span + LIGHT_ROOM
+            if street is None and needed > length:
+                street = float(np.ceil(needed / EMIS_BIN) * EMIS_BIN)
+                notes.append(f"el tramo se amplía de {length:g} a {street:g} m para que quepa la separación mayor y la "
+                             f"aceleración tras el último semáforo (usa --largo para fijarlo)")  # fmt: skip
+        else:
+            first = args.primer_tope if args.primer_tope is not None else (
+                reduced.bumps[0].position if reduced.bumps else length / 4)
+            cycle, fixed_gaps = None, ()
         spacing = Spacing(
-            first=first, distances=tuple(sorted(distances)), light={"config": None, "si": True, "no": False}[args.semaforo],
-            bump_lanes=tuple(args.carriles_tope) if args.carriles_tope else None, length=args.largo,
-            tolerance=args.tolerancia, threshold=args.umbral, count=args.cadena or 2,
+            first=first, distances=tuple(sorted(distances)),
+            light=None if light else {"config": None, "si": True, "no": False}[args.semaforo],
+            bump_lanes=tuple(args.carriles_tope) if args.carriles_tope else None, length=street,
+            tolerance=args.tolerancia, threshold=args.umbral, count=count,
             replicas=args.replicas if args.replicas is not None else opts.replicas,
             run=args.run if args.run is not None else base.run,
+            kind=kind, cycle=cycle, offset_mode=(args.desfase or "rojo").replace(" ", ""), bumps=fixed,
+            fixed_gaps=fixed_gaps,
         )  # fmt: skip
         if spacing.replicas < 1:
             raise ConfigError("--replicas debe ser al menos 1")
         configs, skipped = build_configs(reduced, spacing)
         kept = [d for d in spacing.distances if d not in skipped]
         seed = opts.seed if opts.seed is not None else secrets.randbelow(2**32)
-        scen = Scenarios(bumps=((),), bump_lanes=spacing.bump_lanes, lights=(None,), length=args.largo, lanes=lanes,
+        scen = Scenarios(bumps=((),), bump_lanes=spacing.bump_lanes, lights=(None,), length=street, lanes=lanes,
                          without=tuple(args.sin), replicas=spacing.replicas, run=spacing.run)  # fmt: skip
-        meta = metadata(base_metadata(base, scen, configs, seed, argv), spacing, kept, skipped)
+        meta = metadata(base_metadata(base, scen, configs, seed, argv), spacing, kept, skipped,
+                        configs[0][1] if light else None)  # fmt: skip
     except ConfigError as exc:
         parser.error(str(exc))
 
-    print(f"Separación entre topes · configuración {target.config}")
+    print(f"Separación entre {nn.many} · configuración {target.config}")
     print(f"{len(configs)} escenarios × {spacing.replicas} réplicas · run {spacing.run:g} s × {base.time_scale:g} = "
           f"{spacing.run * base.time_scale:g} s simulados · semilla {seed}")  # fmt: skip
+    for note in notes:
+        print(f"Aviso: {note}")
     if skipped:
         print("Aviso: no caben en el tramo y se omiten las separaciones " + ", ".join(f"{d:g}" for d in skipped) + " m")
 
@@ -1019,7 +1098,8 @@ def _bump_spacing(args, argv, parser, target, settings, reduced, lanes, length) 
         _progress(done, total)
 
     data = run_scenarios(configs, spacing.replicas, seed, opts.workers, progress=progress if opts.progress else None)
-    folder = make_run_dir(resolve_output_dir(opts.output_dir), safe_name(target.name or SPACING_NAME), datetime.now())
+    default_name = LIGHT_SPACING_NAME if light else SPACING_NAME
+    folder = make_run_dir(resolve_output_dir(opts.output_dir), safe_name(target.name or default_name), datetime.now())
     text = settings.text if opts.seed is not None else _set_key(settings.text, "execution", "seed", seed, "semilla usada")
     (folder / BASE_CONFIG_NAME).write_text(
         f"# Configuración base de la comparación {folder.name}\n# {meta['comando']}\n\n{text}", encoding="utf-8"
@@ -1027,7 +1107,7 @@ def _bump_spacing(args, argv, parser, target, settings, reduced, lanes, length) 
     summary = write_outputs(folder, meta, data)
     print("\n" + summary)
     (folder / SPACING_SUMMARY).write_text(f"{meta['comando']}\n\n{summary}\n", encoding="utf-8")
-    plot_bump_spacing(_free_path(folder / SPACING_PLOT), meta, data, analyze(meta, data))
+    plot_bump_spacing(_free_path(folder / plot_name(meta)), meta, data, analyze(meta, data))
     write_results(folder, document("separacion", folder, command=meta["comando"], seed=seed,
                                    replicas=spacing.replicas, sim_seconds=meta["s_simulados"],
                                    metrics=spacing_metrics(meta, data)))  # fmt: skip

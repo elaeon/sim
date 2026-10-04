@@ -12,7 +12,8 @@ los coeficientes escritos a mano en esa sección reemplazan a los del conjunto, 
   (jul.–dic. 2018): el CO2 de Int Panis escalado por la masa del tipo, con el juego de frenado igual al ralentí
   (al frenar se corta el combustible), y NOx y VOC como CO2 × la razón contaminante/CO2 medida según la potencia
   específica (VSP), ajustados por mínimos cuadrados en 0–80 km/h y a de −0.5 a 2.5 m/s². Copiados de
-  `multi-dashboard/data/sedema_cdmx/emisiones_sim.toml` (generado por `exploracion/sedema_cdmx/factores_sim.py`).
+  `multi-dashboard/data/sedema_cdmx/emisiones_sim.toml` y `multi-dashboard/data/sedema_cdmx/emisiones_sim_cohortes.toml`
+  (generado por `exploracion/sedema_cdmx/factores_sim.py`).
   Limitaciones: es la media de la flota (la cargan los altos emisores); arriba de ≈ 7 kW/t (p. ej. al acelerar
   después de un tope) la razón es extrapolada, constante; el HC por infrarrojo subestima el VOC; sin CO ni PM, y
   el diésel (autobús, carga) no se recalibra porque SEDEMA solo mide su opacidad. Tipos: `car` (particular a
@@ -68,10 +69,24 @@ SEDEMA_CDMX_2018: dict[str, Coefs] = {
     ),
 }
 
+SEDEMA_CDMX_2018_COHORTES: dict[str, Coefs] = {
+    "car": _sedema(
+        (0.553, 0.161, -0.00289, 0.266, 0.511, 0.183),
+        (9.977e-05, 5.663e-05, -2.434e-07, 0.0003093, 0.0001492, 0.0001378),
+        (7.169e-05, 2.668e-05, -4.478e-07, 6.861e-05, 7.528e-05, 3.455e-05)
+    ),
+    "car_rechazo_contaminates": _sedema(
+        (0.553, 0.161, -0.00289, 0.266, 0.511, 0.183),
+        (0.001641, 0.0009062, -1.882e-06, 0.005292, 0.002506, 0.002354),
+        (0.0005466, 0.000199, -3.041e-06, 0.0005847, 0.0006144, 0.0002776)
+    )
+}
+
 EMISSION_SETS: dict[str, dict[str, Coefs]] = {
     "int_panis_2006": {"car": PETROL_CAR_EMISSIONS, "bus": BUS_EMISSIONS},
     "sedema_cdmx_2018": SEDEMA_CDMX_2018,
+    "sedema_cdmx_2018_cohortes": SEDEMA_CDMX_2018_COHORTES,
 }
 
-SET_LABELS = {"int_panis_2006": "Int Panis 2006", "sedema_cdmx_2018": "SEDEMA CDMX 2018"}
+SET_LABELS = {"int_panis_2006": "Int Panis 2006", "sedema_cdmx_2018": "SEDEMA CDMX 2018", "sedema_cdmx_2018_cohortes": "SEDEMA CDMX 2018 COHORTES"}
 """Cómo se nombra cada conjunto en la cabecera y el resumen."""

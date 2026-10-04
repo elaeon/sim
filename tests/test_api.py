@@ -62,6 +62,13 @@ def test_compare_emissions_and_spacing(root):
     assert len(co2["costo_tope"]) == 2 and len(co2["aditividad"]) == 2 and "recomendada_m" in m
     json.dumps(s.results, allow_nan=False)
 
+    s = api.light_spacing(distances=[40, 100], cycle=(20, 20, 2), bumps=[40], replicas=1)
+    m = s.results["metricas"]
+    assert s.mode == "separacion" and m["elemento"] == "semaforo" and m["primer_semaforo_m"] == 100.0
+    assert m["parametros"]["topes_fijos_m"] == [40.0] and m["parametros"]["ciclo"]["amarillo_s"] == 2.0
+    assert len(m["contaminantes"]["co2"]["estabilidad"]) == 2 and "huella_antes_m" in m
+    json.dumps(s.results, allow_nan=False)
+
 
 def test_compare_variants(root):
     r = api.compare_variants(lengths=[100.0], lights=[(20, 20), "30/10"], replicas=1)
