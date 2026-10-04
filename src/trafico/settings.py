@@ -250,6 +250,7 @@ def parse_settings(text: str, path: Path) -> Settings:
         free_lanes=exit_light.free_lanes,
         light_pedestrian=exit_light.pedestrian,
         light_pedestrian_crossing=exit_light.pedestrian_crossing,
+        light_offset=exit_light.offset,
         extra_lights=extra_lights,
         # Solo con alguna tasa variable hace falta la distribución; si todas son fijas, basta su valor.
         **({"rate_dists": rates} if any(rate.variable for rate in rates) else {"rates": tuple(r.expected for r in rates)}),
@@ -548,12 +549,17 @@ def _lights(r: _Reader, length: float, d: SimConfig) -> tuple[Light, tuple[Light
         if pedestrian and start_phase is not None:
             raise ConfigError("[traffic_light] start_phase no aplica a un semáforo con pedestrian = true (siempre "
                               "empieza en verde): quítala")  # fmt: skip
+        offset = read("offset", float, None)
+        if pedestrian and offset is not None:
+            raise ConfigError("[traffic_light] offset no aplica a un semáforo con pedestrian = true (no tiene ciclo): "
+                              "quítala")  # fmt: skip
         lights.append(Light(
             position=length if position is None else position,
             red=read("red", float, d.red), green=read("green", float, d.green),
             yellow=read("yellow", float, d.yellow), start_phase=start_phase or d.start_phase,
             enabled=read("enabled", bool, d.traffic_light), free_lanes=read("free_lanes", INTS, d.free_lanes),
             pedestrian=pedestrian, pedestrian_crossing=_crossing(reader, ("traffic_light",)),
+            offset=d.light_offset if offset is None else offset,
         ))  # fmt: skip
     for i, sub in checks:
         unknown = sub.unknown()
@@ -786,8 +792,10 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
             check(lt.red > 0, f"{where} red debe ser mayor que 0 con pedestrian = true (es lo que dura el cruce)")
             _check_rate(f"{where} pedestrian_crossing", lt.pedestrian_crossing)
         check(lt.start_phase in ("red", "green"), f'{where} start_phase debe ser "red" o "green"')
-        for name, value in (("red", lt.red), ("green", lt.green), ("yellow", lt.yellow)):
+        for name, value in (("red", lt.red), ("green", lt.green), ("yellow", lt.yellow), ("offset", lt.offset)):
             check(abs(value / DT - round(value / DT)) < 1e-9, f"{where} {name} debe ser múltiplo de {DT} s")
+        check(lt.offset == 0 or 0 < lt.offset < lt.cycle,
+              f"{where} offset debe estar entre 0 y el ciclo (red + green + yellow), sin incluirlo")  # fmt: skip
     # Un semáforo desactivado (enabled = false, o sus fases en 0) no está en la calle: su posición no se revisa.
     positions = [e.position for e in sim.extra_lights if e.active]
     check(all(0 < p < sim.length for p in positions),

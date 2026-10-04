@@ -49,7 +49,7 @@ def fixed_phases(light: Light, n: int) -> np.ndarray:
         return out
     red, green, yellow = round(light.red / DT), round(light.green / DT), round(light.yellow / DT)
     cycle = red + green + yellow
-    pos = np.arange(n) % cycle
+    pos = (np.arange(n) - round(light.offset / DT)) % cycle
     if light.start_phase == "red":
         pos = (pos - red) % cycle
     out[pos >= green] = YELLOW

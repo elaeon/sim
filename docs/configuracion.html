@@ -238,6 +238,12 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       <code>resumen.txt</code> (por km, por recorrido, exceso frente a flujo libre y tabla al acelerar de 0 a 80
       km/h), en la gráfica y en <code>emisiones_posicion.png</code>/<code>.csv</code>. Requieren <code>accel</code> y
       <code>decel</code>.</li>
+    <li>Nueva opción <a href="#light-spacing"><code>trafico-emisiones --separacion-semaforos</code></a>: el barrido de la
+      separación entre dos semáforos de ciclo fijo (el segundo en rojo al llegar el pelotón del primero), con la huella a
+      los dos lados del semáforo (cola y aceleración), la demora y el aviso de cola hasta la entrada. Nueva clave
+      <code>[[traffic_light]] offset</code> (desfase en s) para coordinar semáforos. Desfases <code>rojo</code>,
+      <code>verde</code> (onda verde) e <code>igual</code>, uno por tramo, y cadenas mixtas con
+      <code>--separaciones-fijas</code>.</li>
     <li>Nueva clave <code>[vehicles.&lt;clave&gt;] time_headway</code> (s): intervalo de seguimiento en marcha; detrás de
       un líder en marcha el vehículo guarda <code>gap_stop + time_headway · v</code> (como el <code>s0 + v·T</code> de
       IDM) en vez de <code>gap_run</code> fijo, que con dinámica gradual daba unos 0.9 s entre autos a 50 km/h y una
@@ -332,6 +338,10 @@ uv run trafico-emisiones --semaforo ambos                  # cada tope con y sin
 uv run trafico-emisiones --separacion                      # ¿cuánto separar dos topes para diluir la huella?
 uv run trafico-emisiones --separacion 30 50 70 --primer-tope 35
 uv run trafico-emisiones --separacion 10 20 30 40 --cadena 4   # cadena de 4 topes: costo de cada tope añadido
+uv run trafico-emisiones --separacion-semaforos                # ¿cuánto separar dos semáforos?
+uv run trafico-emisiones --separacion-semaforos 50 100 200 --ciclo 40/20/3 --primer-semaforo 120
+uv run trafico-emisiones --separacion-semaforos 25 50 75 --desfase verde   # onda verde
+uv run trafico-emisiones --separacion-semaforos 25 50 75 --cadena 3 --separaciones-fijas 150 --desfase verde,rojo
 uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code></pre>
   <div class="table-scroll"><table>
     <thead><tr><th>Opción</th><th>Descripción</th><th>Por defecto</th></tr></thead>
@@ -366,8 +376,28 @@ uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code
       <tr><td><code>--tolerancia T</code>, <code>--umbral U</code></td><td>Con <code>--separacion</code>: cuánto puede
         apartarse la cadena de <code>N</code> topes aislados para llamarla aditiva, y qué fracción del pico de un tope solo
         cuenta como huella diluida.</td><td><code>0.05</code> y <code>0.10</code></td></tr>
+      <tr><td><code>--separacion-semaforos [D …]</code></td><td>El <a href="#light-spacing">barrido de la separación
+        entre dos semáforos</a> de ciclo fijo: corre sin semáforo, con uno y con dos separados <code>D</code> m, sin los
+        semáforos ni los topes de la configuración. Sin valores usa <code>25 50 75 100 150 200 250 300</code>. Admite
+        <code>--cadena</code>, <code>--tolerancia</code>, <code>--umbral</code> y <code>--topes M,M</code> (topes fijos
+        en todos los escenarios); no se combina con <code>--separacion</code> ni con <code>--semaforo</code>.</td>
+        <td>—</td></tr>
+      <tr><td><code>--primer-semaforo M</code></td><td>Con <code>--separacion-semaforos</code>, posición del primer
+        semáforo en m. Debe dejar sitio a su cola.</td><td><code>100</code></td></tr>
+      <tr><td><code>--ciclo ROJO/VERDE[/AMARILLO]</code></td><td>Con <code>--separacion-semaforos</code>, fases de todos
+        los semáforos en s.</td><td>Las del primer semáforo de ciclo fijo de la configuración; si no hay,
+        <code>30/30/3</code></td></tr>
+      <tr><td><code>--desfase rojo|verde|igual[,…]</code></td><td>Con <code>--separacion-semaforos</code>:
+        <code>rojo</code> pone cada semáforo en rojo justo cuando llega la cabeza del pelotón que salió del anterior (lo
+        encuentra en rojo a cualquier separación); <code>verde</code>, en verde justo cuando llega (onda verde);
+        <code>igual</code>, todos en la misma fase. Con <code>--cadena N</code>, uno para todos los tramos o uno por
+        tramo separados por comas (<code>N − 1</code>), p. ej. <code>verde,rojo</code>.</td><td><code>rojo</code></td></tr>
+      <tr><td><code>--separaciones-fijas M …</code></td><td>Con <code>--separacion-semaforos</code> y <code>--cadena
+        N</code> (<code>N ≥ 3</code>): separaciones fijas de los tramos después del primero (<code>N − 2</code> valores);
+        solo el primero se barre. Con <code>--cadena 3 --separaciones-fijas 150 --desfase verde,rojo</code>: A y B a
+        <code>d</code> en onda verde y C 150 m después de B, en rojo al llegar el pelotón.</td><td>Todas <code>d</code></td></tr>
       <tr><td><code>--redibujar CARPETA</code></td><td>No simula: vuelve a dibujar la gráfica en un archivo nuevo (también
-        la de un barrido de <code>--separacion</code>).</td>
+        la de un barrido de <code>--separacion</code> o <code>--separacion-semaforos</code>).</td>
         <td>—</td></tr>
     </tbody>
   </table></div>
@@ -426,6 +456,52 @@ uv run trafico-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code
     <code>config_base.toml</code>. Son 2 + (número de separaciones) escenarios por réplicas: con <code>--replicas</code>
     y <code>--run</code> se acorta. Los valores valen para la velocidad de crucero, <code>accel</code> y
     <code>speed_bump_kmh</code> de la configuración.</p>
+
+  <h3 id="light-spacing">Separación entre semáforos: <code>--separacion-semaforos</code></h3>
+  <p>Lo mismo para semáforos: ¿a qué distancia puede haber un segundo semáforo en rojo sin que cambie la huella del
+    primero? Corre, con la misma semilla, la calle sin semáforo, con uno en <code>--primer-semaforo</code>
+    (<code>P1</code>) y con dos en <code>P1</code> y <code>P1 + d</code> (o <code>N</code> con <code>--cadena</code>).
+    Solo están los semáforos del barrido, todos de ciclo fijo con las fases de <code>--ciclo</code>: se quitan el
+    semáforo del final del tramo, los intermedios y los topes de la configuración (con <code>--topes 35,100</code> se
+    dejan topes fijos en todos los escenarios). Con el desfase <code>rojo</code>, el <code>i</code>-ésimo semáforo lleva
+    <code>offset = i · (red + τ(d))</code> (módulo el ciclo), con <code>τ(d)</code> lo que tarda la cabeza del pelotón
+    en recorrer <code>d</code> desde detenida: acelera con su <code>accel</code> hasta su velocidad a flujo libre y sigue
+    a esa velocidad. Así pasa a rojo justo cuando llega el pelotón que salió del anterior al ponerse en verde, a cualquier
+    separación: el peor caso. Con <code>verde</code> el retraso es solo <code>τ(d)</code>: pasa a verde justo cuando llega el
+    pelotón (onda verde). La cabeza es el tipo de mayor tasa (<code>tipo_peloton</code> y <code>viaje_s</code> en
+    <code>escenarios.json</code>). Un desfase fijo de <code>red</code> no sirve: el pelotón tarda más en llegar cuanto
+    más lejos está el segundo, y con <code>d</code> grande ya lo encuentra en verde (una onda verde). Sin
+    <code>--largo</code>, el tramo se amplía si hace falta a <code>P1 + (N − 1)·d<sub>máx</sub> + 150 m</code>.</p>
+  <p>Se calculan las mismas métricas que con los topes, con estas diferencias:</p>
+  <ul>
+    <li><strong>Huella a dos lados</strong>: antes del semáforo, la cola y el frenado (<code>L_antes</code>, hasta el
+      punto más lejano antes de <code>P1</code> donde el exceso de un semáforo solo supera el umbral del pico); después,
+      la aceleración (<code>L_después</code>). El segundo semáforo queda fuera de la huella del primero si <code>d ≥
+      L_antes + L_después</code>, y la media y el gradiente se calculan en <code>[P1 − L_antes, Pn + L_después]</code>.</li>
+    <li><strong>Estable, no aditiva</strong>: en un semáforo aislado solo se detienen los que llegan en rojo; con el
+      desfase en rojo se detiene <em>todo</em> el pelotón en el segundo. Por eso la pareja no tiende a dos semáforos
+      aislados (<code>R</code> se queda por encima de 1 aun muy separados) sino a la pareja lejana. La separación mínima
+      es la menor desde la que la emisión de la pareja queda a ±tolerancia de la de la pareja más separada de la lista
+      (<em>÷ lejana</em> en el resumen), en esa <code>d</code> y en todas las mayores, y además <code>d ≥ L_antes +
+      L_después</code>. La pareja más separada sola no cuenta como meseta: si solo ella cumple, se pide ampliar la
+      lista. <code>R</code> de la pareja más separada es el costo de la coordinación en rojo frente a semáforos
+      aislados.</li>
+    <li><strong>Cola hasta la entrada</strong>: con <code>d</code> corta la cola del segundo alcanza al primero y la de
+      ambos puede llegar a la entrada del tramo. Entonces se cortan las llegadas y pasan menos vehículos: esas
+      separaciones se marcan con <code>*</code> en el resumen y con un punto hueco en la figura, y no cuentan para la
+      separación mínima.</li>
+    <li><strong>≡ aislados</strong> (<code>n · R</code>): la emisión extra de la cadena contada en semáforos solos. En una
+      onda verde perfecta la pareja vale ≈ 1 (el segundo no detiene a nadie); con la cadena mixta
+      <code>verde,rojo</code> se compara con la pareja en rojo separada lo mismo que el primero y el último.</li>
+    <li><strong>Demora</strong>: el tiempo de recorrido añadido por la cadena ÷ (<code>n</code> × el de un semáforo solo),
+      con la media ponderada por los vehículos que cruzan. <strong>Salen</strong>: los vehículos que salen del tramo ÷ los
+      de la calle sin semáforo.</li>
+  </ul>
+  <p>La carpeta (<code>separacion_semaforos</code> por omisión) trae <code>separacion_semaforos.png</code>,
+    <code>separacion_semaforos.csv</code>, <code>perfiles_separacion.csv</code>, <code>resumen.txt</code>,
+    <code>datos.npz</code>, <code>escenarios.json</code> (con <code>"elemento": "semaforo"</code>, el ciclo y el
+    desfase), <code>config_base.toml</code> y <code>resultados.json</code>. En el perfil de CO₂ de la figura se sombrea
+    la huella del semáforo solo.</p>
 </section>
 
 <section id="api">
@@ -502,6 +578,12 @@ api.describe_config()                                                  # la conf
         una posición o una lista de posiciones.</td></tr>
       <tr><td><code>bump_spacing(config=None, *, name, distances, chain, first, tolerance, threshold, lights, lanes,
         without, length, bump_lanes, replicas, run)</code></td><td><code>trafico-emisiones --separacion</code>.</td></tr>
+      <tr><td><code>light_spacing(config=None, *, name, distances, chain, first, cycle, offset, fixed, bumps, tolerance,
+        threshold, lanes, without, length, bump_lanes, replicas, run)</code></td><td><code>trafico-emisiones
+        --separacion-semaforos</code>. <code>cycle</code>: <code>(rojo, verde[, amarillo])</code> o
+        <code>"30/30/3"</code>; <code>offset</code>: <code>"rojo"</code>, <code>"verde"</code> o <code>"igual"</code>, o
+        una lista por tramo; <code>fixed</code>: separaciones fijas tras el primer tramo; <code>bumps</code>: topes fijos
+        en m.</td></tr>
       <tr><td><code>compare_variants(config=None, *, name, lengths, lights, lanes, without, queue, replicas,
         run)</code></td><td><code>trafico-variantes</code>. <code>lights</code>: pares <code>(rojo, verde)</code> o
         textos <code>"40/20"</code>.</td></tr>
@@ -653,6 +735,12 @@ stop_time_std = 5.0</code></pre>
       <tr><td><code>start_phase</code></td><td>texto</td><td class="num">"red"</td>
         <td>Fase con la que empieza la corrida. Empezando en verde, le siguen el amarillo y el rojo.</td>
         <td><code>"red"</code> o <code>"green"</code>.</td></tr>
+      <tr><td><code>offset</code></td><td>número</td><td class="num">0.0</td>
+        <td>Desfase en s: todo el ciclo se retrasa <code>offset</code> s (en <code>t = 0</code> el semáforo está donde
+          estaría en <code>t = −offset</code>). Sirve para coordinar semáforos: p. ej. con <code>red = 30</code>, un
+          segundo semáforo con <code>offset = 30</code> pasa a rojo justo cuando el primero pasa a verde.</td>
+        <td>0 ≤ <code>offset</code> &lt; <code>red + green + yellow</code>, múltiplo de 0.1; no en un semáforo
+          peatonal.</td></tr>
       <tr><td><code>free_lanes</code></td><td>lista de enteros</td><td class="num">[]</td>
         <td>Carriles sin semáforo, empezando por el derecho (carril 0), p. ej. <code>[0]</code> para una vuelta
           continua a la derecha. <strong>Solo aplica a los tipos con carril exclusivo</strong> en uno de ellos

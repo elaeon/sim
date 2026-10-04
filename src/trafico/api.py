@@ -6,11 +6,14 @@
     run.results["metricas"]["tipos"]["car"]["tiempo_recorrido_s"]
     run = api.compare_emissions(bumps=["sin", 35, (35, 70)], replicas=4)
     run = api.bump_spacing(distances=[20, 40, 60], chain=3)
+    run = api.light_spacing(distances=[50, 100, 200], cycle=(30, 30, 3))
+    run = api.light_spacing(distances=[25, 50], chain=3, fixed=[150], offset=["verde", "rojo"])
     api.list_runs(mode="separacion", limit=5)
 
 Contrato (`API_VERSION`):
 
-  * Cada función de corrida (`simulate`, `compare_emissions`, `bump_spacing`, `compare_variants`, `calibrate`) hace lo
+  * Cada función de corrida (`simulate`, `compare_emissions`, `bump_spacing`, `light_spacing`, `compare_variants`,
+    `calibrate`) hace lo
     mismo que su comando, escribe la misma carpeta de resultados y devuelve un `Run` con el contenido de su
     `resultados.json` (formato en `trafico.results`). No imprime nada ni lee `sys.argv`; lo que el comando habría impreso queda en
     `Run.log`.
@@ -42,7 +45,8 @@ API_VERSION = 1
 
 __all__ = [
     "API_VERSION", "MODES", "RESULTS_NAME", "SCHEMA", "ConfigError", "Run", "bump_spacing", "calibrate", "compare_emissions",
-    "compare_variants", "default_config", "describe_config", "list_runs", "read_results", "redraw", "simulate",
+    "compare_variants", "default_config", "describe_config", "light_spacing", "list_runs", "read_results", "redraw",
+    "simulate",
 ]  # fmt: skip
 
 
@@ -159,6 +163,37 @@ def bump_spacing(
     argv = _target(config, name) + ["--separacion"] + [str(d) for d in distances or ()]
     argv += _opt("--cadena", chain) + _opt("--primer-tope", first) + _opt("--tolerancia", tolerance)
     argv += _opt("--umbral", threshold) + ["--semaforo", _light(lights)] + _opt("--carriles", lanes)
+    argv += _opt("--sin", list(without)) + _opt("--largo", length) + _opt("--carriles-tope", bump_lanes)
+    argv += _opt("--replicas", replicas) + _opt("--run", run)
+    return _finish(emissions, argv, "separacion")
+
+
+def light_spacing(
+    config: str | Path | None = None, *, name: str | None = None, distances: list[float] | None = None,
+    chain: int | None = None, first: float | None = None, cycle: tuple | str | None = None,
+    offset: str | list[str] | None = None, fixed: list[float] | None = None, bumps: list[float] | None = None,
+    tolerance: float | None = None, threshold: float | None = None,
+    lanes: list[int] | None = None, without: list[str] = (), length: float | None = None,
+    bump_lanes: list[int] | None = None, replicas: int | None = None, run: float | None = None,
+) -> Run:  # fmt: skip
+    """`trafico-emisiones --separacion-semaforos`: separación mínima entre semáforos de ciclo fijo para que la huella de
+    emisiones del primero no cambie al alejar el segundo.
+
+    `distances`: separaciones en m (None = 25 50 75 100 150 200 250 300); `first`: posición del primer semáforo (None =
+    100 m); `cycle`: (rojo, verde[, amarillo]) en s o un texto "30/30/3" (None = el primer semáforo de ciclo fijo de la
+    configuración o 30/30/3); `offset`: "rojo" (el siguiente en rojo al llegar el pelotón; por omisión), "verde" (onda
+    verde) o "igual", o una lista con uno por tramo de la cadena; `fixed`: separaciones fijas (m) de los tramos después
+    del primero, con `chain` ≥ 3; `bumps`: topes fijos en todos los escenarios (m; None = sin topes). Los demás, como en
+    `bump_spacing`."""
+    from trafico.cli import emissions
+
+    text = cycle if cycle is None or isinstance(cycle, str) else "/".join(f"{v:g}" for v in cycle)
+    argv = _target(config, name) + ["--separacion-semaforos"] + [str(d) for d in distances or ()]
+    argv += _opt("--cadena", chain) + _opt("--primer-semaforo", first) + _opt("--ciclo", text)
+    offset = ",".join(offset) if isinstance(offset, (list, tuple)) else offset
+    argv += _opt("--desfase", offset) + _opt("--separaciones-fijas", fixed)
+    argv += ["--topes", ",".join(f"{b:g}" for b in bumps)] if bumps else []
+    argv += _opt("--tolerancia", tolerance) + _opt("--umbral", threshold) + _opt("--carriles", lanes)
     argv += _opt("--sin", list(without)) + _opt("--largo", length) + _opt("--carriles-tope", bump_lanes)
     argv += _opt("--replicas", replicas) + _opt("--run", run)
     return _finish(emissions, argv, "separacion")

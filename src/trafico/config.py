@@ -347,6 +347,8 @@ class Light:
     # cruzar). No tiene ciclo ni `start_phase`: su calendario sale de la simulación (`pedestrians.light_schedule`).
     pedestrian: bool = False
     pedestrian_crossing: Rate = PEDESTRIAN_RATE
+    # Desfase (s): el ciclo entero se retrasa `offset` s, p. ej. para coordinarlo con otro semáforo. 0 ≤ offset < ciclo.
+    offset: float = 0.0
 
     @property
     def active(self) -> bool:
@@ -365,14 +367,16 @@ class Light:
             label = f"peatonal: rojo {self.red:g} s con peatones en espera, verde mínimo {self.green:g} s"
             return label + (f", amarillo {self.yellow:g} s" if self.yellow > 0 else "")
         label = f"rojo {self.red:g} s / verde {self.green:g} s"
-        return label + (f" / amarillo {self.yellow:g} s" if self.yellow > 0 else "")
+        label += f" / amarillo {self.yellow:g} s" if self.yellow > 0 else ""
+        return label + (f", desfase {self.offset:g} s" if self.offset > 0 else "")
 
     def phase(self, tick: int) -> int:
         """Fase (RED, GREEN o YELLOW) en el paso `tick`: verde → amarillo → rojo. Sin semáforo, siempre verde; el
         peatonal también (su fase real depende de los peatones de cada réplica: la da la simulación)."""
         if not self.active or self.pedestrian:
             return GREEN
-        return phase_at(round(self.red / DT), round(self.green / DT), round(self.yellow / DT), self.start_phase, tick)
+        return phase_at(round(self.red / DT), round(self.green / DT), round(self.yellow / DT), self.start_phase,
+                        tick - round(self.offset / DT))
 
     def intervals(self, offset: float, duration: float, horizon: float) -> list[tuple[float, float]]:
         """Intervalos [inicio, fin) en s simulados, hasta `horizon`, de la fase que empieza `offset` s después del
@@ -380,8 +384,9 @@ class Light:
         if duration <= 0 or not self.active or self.pedestrian:
             return []
         out = []
-        # Un ciclo antes del primer verde (en t = red si empieza en rojo): cubre la fase ya en curso en t = 0.
-        start = (self.red if self.start_phase == "red" else 0.0) + offset - self.cycle
+        # Dos ciclos antes del primer verde (en t = red si empieza en rojo, más el desfase): cubre la fase ya en curso
+        # en t = 0.
+        start = (self.red if self.start_phase == "red" else 0.0) + self.offset + offset - 2 * self.cycle
         while start < horizon:
             if start + duration > 0:
                 out.append((max(start, 0.0), min(start + duration, horizon)))
@@ -444,6 +449,7 @@ class SimConfig:
     # rojo, `green` el verde mínimo y `start_phase` no se usa.
     light_pedestrian: bool = False
     light_pedestrian_crossing: Rate = PEDESTRIAN_RATE
+    light_offset: float = 0.0  # s, desfase del semáforo del final del tramo (ver `Light.offset`)
     # Semáforos intermedios (además del del final del tramo), cada uno a su `position` m con sus propias fases.
     extra_lights: tuple[Light, ...] = ()
     run: float = 10.0  # s de proceso
@@ -629,7 +635,7 @@ class SimConfig:
         """El semáforo del final del tramo (x = length), con los campos `red`, `green`, `yellow`, `start_phase`,
         `traffic_light` y `free_lanes`."""
         return Light(self.length, self.red, self.green, self.yellow, self.start_phase, self.traffic_light,
-                     self.free_lanes, self.light_pedestrian, self.light_pedestrian_crossing)  # fmt: skip
+                     self.free_lanes, self.light_pedestrian, self.light_pedestrian_crossing, self.light_offset)  # fmt: skip
 
     @property
     def has_light(self) -> bool:

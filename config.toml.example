@@ -20,6 +20,7 @@ red = 25.0              # s (múltiplo de 0.1)
 green = 35.0            # s (múltiplo de 0.1)
 yellow = 3.0            # s (múltiplo de 0.1) entre el verde y el rojo: verde → amarillo → rojo; 0 = sin amarillo
 start_phase = "red"     # "red" | "green"
+#offset = 0.0           # s, desfase: todo el ciclo se retrasa offset s (para coordinar semáforos; < ciclo)
 free_lanes = []         # carriles sin semáforo (0 = derecho), p. ej. [0] para una vuelta continua a la derecha.
                         # Solo aplica a los tipos con carril exclusivo ahí ([vehicles.<clave>] lane y
                         # exclusive = true): cruzan aunque esté en rojo y no bajan la velocidad en amarillo
