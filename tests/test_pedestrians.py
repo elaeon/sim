@@ -6,6 +6,7 @@ import pytest
 from trafico.config import (
     CAR, DEFAULT_SPECS, DT, GREEN, RED, YELLOW, Behavior, Light, Rate, SimConfig, SpeedBump,
 )  # fmt: skip
+from trafico import kernel
 from trafico.engine import Simulation
 from trafico.pedestrians import Schedule, arrivals, bump_schedule, fixed_phases, light_schedule
 
@@ -161,6 +162,7 @@ def _sim(spec=GRADUAL, lanes=1, bump_lanes=None, red=(30, 700), yellow_from=10, 
     schedule = Schedule(phases, 1, 1, red[1] - red[0], 0)
     sim.ped_schedules[("tope", 60.0)] = schedule
     sim._line_sched[0] = schedule
+    sim._p = kernel.as_ref(sim._params())  # las fases de las líneas de alto se fijan al armar los parámetros
     return sim
 
 

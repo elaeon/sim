@@ -134,14 +134,10 @@ def run_variant_replica(cfg: SimConfig, seed: np.random.SeedSequence) -> tuple[n
     cada tipo en la cola de entrada en cada muestra (tipos × muestras); vehículos que cruzan por tipo)."""
     sim = Simulation(cfg, np.random.default_rng(seed))
     queue = np.zeros((cfg.n_types, cfg.n_samples), np.float32)
-    k = 0
-    for _ in range(cfg.n_ticks):
-        sim.step()
-        if sim.tick % cfg.sample_ticks == 0 and k < cfg.n_samples:
-            for q in sim.queues:
-                for vt, *_ in q:
-                    queue[vt, k] += 1
-            k += 1
+    for k in range(cfg.n_samples):
+        sim.advance((k + 1) * cfg.sample_ticks)
+        queue[:, k] = sim.queued_types()
+    sim.advance(cfg.n_ticks)
     rec = sim.recorder
     with np.errstate(invalid="ignore", divide="ignore"):
         speed = rec.lane_dist[: rec.count].sum(axis=0) / rec.lane_time[: rec.count].sum(axis=0) * 3.6

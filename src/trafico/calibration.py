@@ -122,7 +122,7 @@ def flow_replica(cfg: SimConfig, seed: np.random.SeedSequence) -> tuple[float, f
     seconds = steps * DT
     flow = (int(sim.cum_veh.sum()) - crossed0) / seconds * 3600.0
     density = count / steps / ((hi - lo) / 1000.0)
-    return flow, density, sum(len(q) for q in sim.queues)
+    return flow, density, int(sim.queue_len.sum())
 
 
 def _run(tasks: list[tuple], workers: int) -> list:

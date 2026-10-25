@@ -86,7 +86,7 @@ def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) ->
         n = sim.n
         ts.append(sim.tick * DT)
         pax.append(sim.cum_pax - base_pax)
-        queued.append([len(q) for q in sim.queues])
+        queued.append(sim.queue_len)
         exit_queued.append(sim.exit_q.copy())
         exit_closed.append(sim.exit_closed.copy())
         veh.append(sim.cum_veh - base_veh)

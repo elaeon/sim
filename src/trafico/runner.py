@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from trafico.config import DT, SimConfig
-from trafico.engine import Simulation
+from trafico.engine import Simulation, compile_kernel
 from trafico.metrics import EMIS_SERIES, LANE_STATS, SERIES, RunningStats, derive_series, lane_speed_histogram
 
 
@@ -140,6 +140,7 @@ def run_many(
         for k, (i, r) in enumerate(tasks):
             push(k, run_replica(cfgs[i], seeds[i][r]))
     else:
+        compile_kernel(cfgs[0])  # una vez aquí: los procesos lo cargan de la caché en vez de compilarlo cada uno
         with ProcessPoolExecutor(max_workers=workers) as pool:
             window = 2 * workers
             running: dict[Future, int] = {}
