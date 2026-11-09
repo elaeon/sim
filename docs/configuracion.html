@@ -256,6 +256,13 @@ uv run trafico-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 
       todos los escenarios en un solo grupo de procesos y respeta <code>[execution] workers = 0</code> (tantos como
       CPU; antes corría en un solo proceso), y cada paso del motor es ~20 % más rápido con aceleración y frenado
       graduales. Los resultados son idénticos a los de antes con la misma semilla.</li>
+    <li>Motor compilado: el paso de la simulación (<code>src/trafico/kernel.py</code>) se compila con
+      <a href="https://numba.pydata.org/">numba</a> y corre ~40 veces más rápido (una réplica de 9 000 s simulados
+      con dos carriles, un semáforo peatonal y dos topes: de 24 s a 0.6 s; 4 réplicas en paralelo: de 49 s a 1.8 s).
+      Los resultados son idénticos bit a bit a los de antes con la misma semilla. La primera corrida después de
+      instalar o de cambiar <code>kernel.py</code> compila el motor (~1 min) y lo guarda en
+      <code>src/trafico/__pycache__</code>; las siguientes lo cargan en menos de 1 s. Ver
+      <a href="#execution">[execution]</a>.</li>
     <li>Nueva <a href="#api">API de Python (<code>trafico.api</code>) y <code>resultados.json</code></a>: cada corrida
       escribe un resumen en JSON de formato estable y los comandos aceptan <code>--json</code> (imprime ese JSON en
       stdout); la API corre lo mismo que los comandos con argumentos con nombre y devuelve el resultado ya leído.</li>
@@ -1173,6 +1180,12 @@ bottleneck_time_std = 30.0</code></pre>
         <td>≥ 0.</td></tr>
     </tbody>
   </table></div>
+  <p>El paso de la simulación está compilado con numba (<code>src/trafico/kernel.py</code>). La primera corrida después
+    de instalar o de cambiar ese archivo lo compila, ~1 min sin mostrar avance; numba lo guarda en
+    <code>src/trafico/__pycache__</code> y las siguientes corridas lo cargan en menos de 1 s. Con varios procesos, el
+    principal lo compila (o lo carga) antes de repartir las réplicas, así que cada proceso solo lo carga. Para depurar
+    el paso con <code>pdb</code> o <code>print</code>, <code>NUMBA_DISABLE_JIT=1 uv run trafico …</code> corre el mismo
+    código como Python puro: da los mismos resultados, unas 100 veces más lento.</p>
 </section>
 
 <section id="output">

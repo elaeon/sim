@@ -904,8 +904,7 @@ def test_exit_queue_storage_is_in_meters():
     que la cola se vacía; una cola vacía acepta a cualquiera aunque mida menos que él."""
     sim = _empty_sim(length=100, lanes=1, red=2, green=200, start_phase="green", run=20, exit_capacity=6.0,
                      exit_storage=3 * CAR_EXIT_M)  # fmt: skip
-    sim.exit_items[0].append(CAR_EXIT_M)
-    sim.exit_q[0] = CAR_EXIT_M
+    sim._queue_exit(0, CAR_EXIT_M)
     bus = _place(sim, BUS, 95.0, pax=10)
     left_at = None
     while not sim.lane_crossed[0] and sim.tick < 400:
