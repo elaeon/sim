@@ -19,6 +19,7 @@ trafico-ver = "trafico.cli:view_main"
 trafico-variantes = "trafico.cli:variants_main"
 trafico-emisiones = "trafico.cli:emissions_main"
 trafico-calibrar = "trafico.cli:calibrate_main"
+rail = "rail.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]
@@ -31,3 +32,6 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.build-backend]
+module-name = ["trafico", "rail"]
