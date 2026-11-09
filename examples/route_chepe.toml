@@ -1,0 +1,294 @@
+# Chepe (Ferrocarril Chihuahua al Pacífico): Los Mochis -> Chihuahua through the Copper Canyon.
+#
+# Curated, APPROXIMATE data for a simple visual simulation; not survey data.
+# - km: distance from Los Mochis, derived from the official kilometre posts (counted from
+#   Ojinaga) as km = 921 - official_km. Total ~653 km, 86 tunnels, 37 major bridges.
+# - lat/lon: approximate location of each town or landmark (decimal degrees).
+# - elevation_m: approximate elevation above sea level.
+# - max_speed_kmh: speed limit from this point until the next point that sets one
+#   (inherited when omitted). Calibrated so Los Mochis -> Creel takes ~9 h 40 min,
+#   the published Chepe Express time.
+# - dwell_min: stop time at a station (stations only).
+# - kind: "station" (the train stops), "landmark" (annotated, no stop) or
+#   "waypoint" (only shapes the map line).
+# - label_offset: optional [dx, dy] offset of the map label, in points.
+
+name = "Chepe: Los Mochis - Chihuahua"
+
+# Used only with `rail --realistic`: the real track geometry from OpenStreetMap (downloaded once
+# into track_file, next to this file; (c) OpenStreetMap contributors, ODbL) and slow motion
+# through the Copper Canyon. Route points are snapped onto the track and km becomes the real
+# distance along it.
+[realistic]
+track_file = "track_chepe.csv"
+osm_relation = 5977762   # "Chihuahua al Pacífico" (route=train, Ferromex)
+slow_from = "Témoris"
+slow_to = "Creel"
+slow_factor = 3.0
+
+[train]
+accel_ms2 = 0.3   # starting acceleration
+brake_ms2 = 0.5   # service braking
+dt_s = 1.0        # time step
+
+[[point]]
+name = "Los Mochis"
+kind = "station"
+km = 0
+lat = 25.770
+lon = -108.965
+elevation_m = 10
+max_speed_kmh = 70
+note = "Start of the line, Sinaloa coastal plain"
+label_offset = [8, -10]
+
+[[point]]
+name = "El Sufragio"
+kind = "waypoint"
+km = 40
+lat = 26.080
+lon = -108.780
+elevation_m = 40
+
+[[point]]
+name = "El Fuerte"
+kind = "station"
+km = 83
+lat = 26.410
+lon = -108.620
+elevation_m = 90
+max_speed_kmh = 45
+dwell_min = 10
+note = "Colonial town; the climb into the Sierra Madre begins"
+label_offset = [8, -6]
+
+[[point]]
+name = "Puente Río Fuerte"
+kind = "landmark"
+km = 115
+lat = 26.600
+lon = -108.470
+elevation_m = 120
+note = "Río Fuerte bridge: the longest on the line (~500 m)"
+label_offset = [10, -4]
+
+[[point]]
+name = "Puente Chínipas"
+kind = "landmark"
+km = 160
+lat = 26.960
+lon = -108.360
+elevation_m = 250
+note = "Chínipas bridge: the highest on the line (~90 m)"
+label_offset = [10, -4]
+
+[[point]]
+name = "Agua Caliente"
+kind = "waypoint"
+km = 185
+lat = 27.110
+lon = -108.310
+elevation_m = 550
+
+[[point]]
+name = "El Lazo"
+kind = "landmark"
+km = 205
+lat = 27.220
+lon = -108.290
+elevation_m = 900
+note = "El Lazo: the track loops over itself to gain height"
+label_offset = [-12, 0]
+
+[[point]]
+name = "Témoris"
+kind = "station"
+km = 214
+lat = 27.270
+lon = -108.270
+elevation_m = 1030
+max_speed_kmh = 31
+dwell_min = 5
+note = "Témoris: waterfalls and the steepest part of the climb"
+label_offset = [-12, 4]
+
+[[point]]
+name = "Río Septentrión"
+kind = "waypoint"
+km = 235
+lat = 27.360
+lon = -108.160
+elevation_m = 1400
+
+[[point]]
+name = "Bahuichivo"
+kind = "station"
+km = 253
+lat = 27.410
+lon = -108.070
+elevation_m = 1600
+dwell_min = 5
+note = "Bahuichivo: access to Cerocahui and Urique canyon"
+label_offset = [-12, 6]
+
+[[point]]
+name = "Cuiteco"
+kind = "station"
+km = 259
+lat = 27.440
+lon = -108.000
+elevation_m = 1600
+dwell_min = 3
+note = "Cuiteco: small mission village"
+label_offset = [-4, -12]
+
+[[point]]
+name = "Puente La Laja"
+kind = "landmark"
+km = 280
+lat = 27.470
+lon = -107.930
+elevation_m = 2000
+note = "La Laja bridge: the second highest on the line"
+label_offset = [8, -28]
+
+[[point]]
+name = "San Rafael"
+kind = "station"
+km = 288
+lat = 27.490
+lon = -107.890
+elevation_m = 2200
+dwell_min = 5
+note = "San Rafael: top of the canyon wall"
+label_offset = [-12, 8]
+
+[[point]]
+name = "Posada Barrancas"
+kind = "station"
+km = 297
+lat = 27.520
+lon = -107.845
+elevation_m = 2220
+dwell_min = 5
+note = "Posada Barrancas / Areponápuchi: Adventure Park and cable car"
+label_offset = [8, -12]
+
+[[point]]
+name = "Divisadero"
+kind = "station"
+km = 299
+lat = 27.530
+lon = -107.830
+elevation_m = 2240
+dwell_min = 20
+note = "Divisadero: viewpoint over the Copper Canyon (Barrancas del Cobre)"
+label_offset = [10, -2]
+
+[[point]]
+name = "Pitorreal"
+kind = "waypoint"
+km = 318
+lat = 27.620
+lon = -107.740
+elevation_m = 2400
+
+[[point]]
+name = "Los Ojitos"
+kind = "landmark"
+km = 331
+lat = 27.670
+lon = -107.700
+elevation_m = 2450
+note = "Los Ojitos: highest point (~2450 m), Continental Divide"
+label_offset = [10, -6]
+
+[[point]]
+name = "La Pera"
+kind = "landmark"
+km = 341
+lat = 27.710
+lon = -107.680
+elevation_m = 2400
+note = "La Pera: horseshoe loop around a hill"
+label_offset = [-10, 6]
+
+[[point]]
+name = "Creel"
+kind = "station"
+km = 357
+lat = 27.752
+lon = -107.635
+elevation_m = 2340
+max_speed_kmh = 50
+dwell_min = 10
+note = "Creel: heart of the Sierra Tarahumara (end of Chepe Express)"
+label_offset = [10, -2]
+
+[[point]]
+name = "San Juanito"
+kind = "station"
+km = 401
+lat = 27.970
+lon = -107.600
+elevation_m = 2400
+dwell_min = 5
+note = "San Juanito: one of the coldest towns in Mexico"
+label_offset = [10, -2]
+
+[[point]]
+name = "Bocoyna valley"
+kind = "waypoint"
+km = 440
+lat = 28.250
+lon = -107.470
+elevation_m = 2200
+
+[[point]]
+name = "La Junta"
+kind = "station"
+km = 471
+lat = 28.470
+lon = -107.330
+elevation_m = 2000
+max_speed_kmh = 65
+dwell_min = 10
+note = "La Junta: railway junction, leaving the sierra"
+label_offset = [-12, 6]
+
+[[point]]
+name = "Anáhuac"
+kind = "waypoint"
+km = 500
+lat = 28.470
+lon = -107.080
+elevation_m = 2050
+
+[[point]]
+name = "Cuauhtémoc"
+kind = "station"
+km = 526
+lat = 28.405
+lon = -106.866
+elevation_m = 2060
+dwell_min = 10
+note = "Cuauhtémoc: apple orchards and Mennonite fields"
+label_offset = [-4, -14]
+
+[[point]]
+name = "Gran Morelos"
+kind = "waypoint"
+km = 580
+lat = 28.500
+lon = -106.450
+elevation_m = 1750
+
+[[point]]
+name = "Chihuahua"
+kind = "station"
+km = 653
+lat = 28.635
+lon = -106.075
+elevation_m = 1440
+note = "Chihuahua: end of the line"
+label_offset = [-12, 8]

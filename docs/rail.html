@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulación de tren</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --line: #e1e0d9;
+    --accent: #2a78d6;
+    --code-bg: #f0efec;
+    --note-bg: #eef4fc;
+    --warn-bg: #fdf3e1;
+    --warn-line: #eda100;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --line: #2c2c2a;
+      --accent: #3987e5;
+      --code-bg: #262624;
+      --note-bg: #16243a;
+      --warn-bg: #2e2412;
+      --warn-line: #c98500;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --line: #2c2c2a;
+    --accent: #3987e5;
+    --code-bg: #262624;
+    --note-bg: #16243a;
+    --warn-bg: #2e2412;
+    --warn-line: #c98500;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+  header h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 8px; }
+  header p { color: var(--ink-2); margin: 0; }
+  nav {
+    margin: 24px 0 8px; display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  nav a {
+    color: var(--ink-2); text-decoration: none; font-size: 0.9rem;
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+    background: var(--surface);
+  }
+  nav a:hover { color: var(--accent); border-color: var(--accent); }
+  section {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px 20px 8px; margin-top: 24px;
+  }
+  h2 { font-size: 1.3rem; margin: 0 0 4px; }
+  h2 code { font-size: 1.1rem; }
+  h3 { font-size: 1.05rem; margin: 20px 0 6px; }
+  .lead { color: var(--ink-2); margin: 0 0 12px; }
+  code {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 0.88em; background: var(--code-bg); border-radius: 4px; padding: 1px 5px;
+  }
+  pre {
+    background: var(--code-bg); border-radius: 8px; padding: 12px 14px; overflow-x: auto;
+    font-size: 0.85rem; line-height: 1.5; margin: 8px 0 16px;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .table-scroll { overflow-x: auto; margin: 8px 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  td:first-child { white-space: nowrap; }
+  td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .note, .warn {
+    border-left: 3px solid var(--accent); background: var(--note-bg);
+    border-radius: 0 8px 8px 0; padding: 10px 14px; margin: 12px 0 16px;
+  }
+  .warn { border-left-color: var(--warn-line); background: var(--warn-bg); }
+  .note p, .warn p { margin: 0 0 6px; }
+  .note p:last-child, .warn p:last-child { margin-bottom: 0; }
+  ul { padding-left: 1.2rem; }
+  li { margin: 4px 0; }
+  footer { color: var(--muted); font-size: 0.85rem; margin-top: 32px; }
+  @media (max-width: 600px) {
+    header h1 { font-size: 1.5rem; }
+    section { padding: 16px 12px 4px; }
+    th, td { padding: 6px 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Simulación de tren (<code>rail</code>)</h1>
+  <p>Referencia de <strong>rail</strong>, una simulación sencilla de un tren a lo largo de una ruta con un video
+    horizontal (16:9), al estilo del video de tráfico. El ejemplo es el Chepe de Los Mochis a Chihuahua por las
+    Barrancas del Cobre (~653 km). El código es un paquete aparte, <code>src/rail/</code>, que no depende de
+    <code>trafico</code>. La simulación de tráfico se documenta en <a href="configuracion.html">configuracion.html</a>.</p>
+</header>
+
+<nav>
+  <a href="#uso">Uso</a>
+  <a href="#modelo">Modelo</a>
+  <a href="#ruta">Archivo de ruta</a>
+  <a href="#realistic">Modo realista</a>
+  <a href="#opciones">Opciones</a>
+  <a href="#salidas">Salidas</a>
+</nav>
+
+<section id="uso">
+  <h2>Uso</h2>
+  <pre><code>uv run rail                                   # examples/route_chepe.toml → resultados/&lt;ID&gt;_chepe/
+uv run rail --realistic                       # vía real + cámara lenta en las Barrancas → resultados/&lt;ID&gt;_chepe_realistic/
+uv run rail mi_ruta.toml --name prueba
+uv run rail --duration 90 --format mp4 --depart 07:30
+uv run rail --no-video                        # solo horario, resumen y route.png</code></pre>
+  <p>La ruta no usa <code>config.toml</code>: se describe en su propio TOML, por defecto
+    <code>examples/route_chepe.toml</code>. Sin <code>--realistic</code> todo funciona sin internet y el resultado
+    es el de siempre.</p>
+</section>
+
+<section id="modelo">
+  <h2>Modelo</h2>
+  <p class="lead">Cinemático en una dimensión, con paso fijo de <code>dt_s</code>.</p>
+  <p>El tren acelera con <code>accel_ms2</code> hasta el límite del tramo y frena con <code>brake_ms2</code> a tiempo
+    para el siguiente límite más bajo y para detenerse en cada estación. En cada estación espera
+    <code>dwell_min</code>. La posición en el mapa y la altitud se interpolan linealmente por km entre los puntos de
+    la ruta. No modela pendientes, potencia ni túneles: la velocidad por tramo resume todo eso. Con los límites del
+    ejemplo, Los Mochis → Creel tarda ~9 h 40 min, el tiempo publicado del Chepe Express.</p>
+  <div class="warn">
+    <p><strong>Datos aproximados.</strong> Los km se derivan de los kilómetros oficiales, que se cuentan desde
+      Ojinaga (km = 921 − km oficial). Las coordenadas son las de cada localidad y las altitudes son aproximadas.
+      Sin <code>--realistic</code>, el trazo del mapa une esos puntos con líneas rectas.</p>
+  </div>
+</section>
+
+<section id="ruta">
+  <h2>Archivo de ruta</h2>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>texto</td><td class="num">"route"</td>
+        <td>Título del video y del resumen.</td><td>—</td></tr>
+      <tr><td><code>[train] accel_ms2</code></td><td>número</td><td class="num">0.3</td>
+        <td>Aceleración al arrancar (m/s²).</td><td>&gt; 0.</td></tr>
+      <tr><td><code>[train] brake_ms2</code></td><td>número</td><td class="num">0.5</td>
+        <td>Frenado de servicio (m/s²).</td><td>&gt; 0.</td></tr>
+      <tr><td><code>[train] dt_s</code></td><td>número</td><td class="num">1.0</td>
+        <td>Paso de tiempo (s).</td><td>&gt; 0.</td></tr>
+      <tr><td><code>[[point]] name</code></td><td>texto</td><td class="num">—</td>
+        <td>Nombre de la estación, del hito o del punto de trazo.</td><td>Obligatorio.</td></tr>
+      <tr><td><code>[[point]] kind</code></td><td>texto</td><td class="num">—</td>
+        <td><code>"station"</code>: el tren se detiene. <code>"landmark"</code>: se anota en el mapa y en el perfil,
+          sin parada. <code>"waypoint"</code>: solo da forma al trazo y al perfil.</td>
+        <td>El primero y el último deben ser <code>"station"</code>.</td></tr>
+      <tr><td><code>[[point]] km</code></td><td>número</td><td class="num">—</td>
+        <td>Distancia desde el origen.</td><td>Empieza en 0 y crece estrictamente.</td></tr>
+      <tr><td><code>[[point]] lat</code>, <code>lon</code></td><td>número</td><td class="num">—</td>
+        <td>Coordenadas en grados decimales.</td><td>Obligatorio.</td></tr>
+      <tr><td><code>[[point]] elevation_m</code></td><td>número</td><td class="num">—</td>
+        <td>Altitud sobre el nivel del mar (m).</td><td>Obligatorio.</td></tr>
+      <tr><td><code>[[point]] max_speed_kmh</code></td><td>número</td><td class="num">el anterior</td>
+        <td>Límite de velocidad desde este punto hasta el siguiente que fije otro.</td>
+        <td>El primer punto debe fijarlo; &gt; 0.</td></tr>
+      <tr><td><code>[[point]] dwell_min</code></td><td>número</td><td class="num">0</td>
+        <td>Minutos de parada en la estación.</td><td>≥ 0, solo en estaciones.</td></tr>
+      <tr><td><code>[[point]] note</code></td><td>texto</td><td class="num">""</td>
+        <td>Anotación que el video muestra al pasar por el punto y que aparece en la lista de
+          <code>route.png</code>.</td><td>—</td></tr>
+      <tr><td><code>[[point]] label_offset</code></td><td>[dx, dy]</td><td class="num">[8, 0]</td>
+        <td>Desplazamiento de la etiqueta en el mapa, en puntos tipográficos. Si dx &lt; 0, la etiqueta va a la
+          izquierda.</td><td>—</td></tr>
+      <tr><td><code>[realistic] track_file</code></td><td>texto</td><td class="num">—</td>
+        <td>CSV con el trazo real (<code>lat,lon</code>), relativo al archivo de ruta.</td>
+        <td>Obligatorio si existe <code>[realistic]</code>.</td></tr>
+      <tr><td><code>[realistic] osm_relation</code></td><td>entero</td><td class="num">—</td>
+        <td>Relación de OpenStreetMap que se descarga cuando <code>track_file</code> no existe. Sin ella, el CSV
+          debe existir.</td><td>—</td></tr>
+      <tr><td><code>[realistic] slow_from</code>, <code>slow_to</code></td><td>texto</td><td class="num">—</td>
+        <td>Nombres de los puntos donde empieza y termina la cámara lenta.</td>
+        <td>Van juntos; <code>slow_from</code> antes que <code>slow_to</code>.</td></tr>
+      <tr><td><code>[realistic] slow_factor</code></td><td>número</td><td class="num">1.0</td>
+        <td>Cuántas veces más lento se reproduce ese tramo.</td><td>≥ 1.</td></tr>
+    </tbody>
+  </table></div>
+  <p>La sección <code>[realistic]</code> solo se usa con <code>--realistic</code>; sin esa opción se ignora.</p>
+</section>
+
+<section id="realistic">
+  <h2>Modo realista: <code>--realistic</code></h2>
+  <p class="lead">Usa el trazo real de la vía, tomado de OpenStreetMap, y reproduce las Barrancas del Cobre en
+    cámara lenta.</p>
+  <ul>
+    <li><strong>Trazo real.</strong> La primera vez se descarga la relación <code>osm_relation</code> (para el
+      Chepe, la 5977762 «Chihuahua al Pacífico») desde la API Overpass y se guarda en <code>track_file</code>
+      (<code>examples/track_chepe.csv</code>). Se reintenta en un servidor espejo si el principal está ocupado.
+      Las siguientes corridas leen el CSV y no necesitan internet. Para volver a descargarla, borra el CSV.</li>
+    <li><strong>Puntos sobre la vía.</strong> Cada estación, hito y punto de trazo se proyecta sobre la vía, y su km
+      pasa a ser la distancia real a lo largo de ella. Para el Chepe, la vía mide 653.4 km de Los Mochis a
+      Chihuahua (oficial: 653 km). Las altitudes y los límites de velocidad siguen saliendo del archivo de
+      ruta.</li>
+    <li><strong>Acercamiento.</strong> En la esquina superior izquierda del mapa aparece un recuadro con el tramo
+      <code>slow_from</code> – <code>slow_to</code> (Témoris – Creel) y el tren moviéndose en él. Un rectángulo
+      punteado marca ese tramo en el mapa, y el perfil lo sombrea.</li>
+    <li><strong>Cámara lenta.</strong> En ese tramo el video avanza <code>slow_factor</code> veces más lento
+      (×3 para el Chepe) y muestra «slow motion ×3» arriba a la derecha. El video dura 90 s por defecto en vez de
+      60 s, para que el resto del viaje no pase demasiado rápido.</li>
+  </ul>
+  <div class="note">
+    <p>Datos de la vía: © colaboradores de OpenStreetMap, bajo licencia ODbL. El video y <code>route.png</code>
+      llevan esa atribución.</p>
+  </div>
+</section>
+
+<section id="opciones">
+  <h2>Opciones del comando</h2>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Opción</th><th>Defecto</th><th>Descripción</th></tr></thead>
+    <tbody>
+      <tr><td><code>route</code></td><td><code>examples/route_chepe.toml</code></td><td>Archivo de ruta.</td></tr>
+      <tr><td><code>--name</code></td><td>nombre del archivo sin <code>route_</code></td>
+        <td>Sufijo de la carpeta de resultados. Con <code>--realistic</code> se agrega <code>_realistic</code>.</td></tr>
+      <tr><td><code>--realistic</code></td><td>—</td>
+        <td>Trazo real de OpenStreetMap, acercamiento y cámara lenta (ver <a href="#realistic">Modo realista</a>).</td></tr>
+      <tr><td><code>--duration</code></td><td class="num">60 (90 con <code>--realistic</code>)</td>
+        <td>Segundos de video: el viaje completo se comprime a esta duración.</td></tr>
+      <tr><td><code>--fps</code></td><td class="num">25</td><td>Cuadros por segundo.</td></tr>
+      <tr><td><code>--format</code></td><td>webm</td><td><code>webm</code>, <code>mp4</code> o <code>gif</code>,
+        igual que en el video de tráfico (<a href="configuracion.html#animation"><code>[animation]</code></a>).</td></tr>
+      <tr><td><code>--depart</code></td><td>06:00</td><td>Hora de salida (HH:MM) del reloj y del horario.</td></tr>
+      <tr><td><code>--no-video</code></td><td>—</td><td>No genera el video.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="salidas">
+  <h2>Salidas</h2>
+  <p>Se guardan en <code>resultados/&lt;fecha-hora&gt;_&lt;nombre&gt;/</code>. Nunca se sobrescribe nada:</p>
+  <ul>
+    <li><code>summary.txt</code>: distancia, horas de salida y llegada, tiempo total, tiempo de espera en paradas y
+      velocidad media. Si la ruta pasa por Creel, el tiempo hasta Creel para compararlo con el Chepe Express. Con
+      <code>--realistic</code>, también el origen de la vía y el tramo en cámara lenta.</li>
+    <li><code>timetable.csv</code>: una fila por estación con km, altitud, llegada, salida y espera. Si se llega
+      después de medianoche, la hora lleva el sufijo <code>(+1d)</code>.</li>
+    <li><code>route.png</code>: el mapa, el perfil de altitud y la lista de puntos de interés con su km.</li>
+    <li><code>journey.webm</code> (o <code>.mp4</code>/<code>.gif</code>), de 1280×720: a la izquierda, el mapa con
+      el tramo recorrido en azul y el tren en rojo; a la derecha, el reloj, el km, la velocidad, la altitud y la
+      próxima parada. Al pasar por un hito o una estación aparece su nombre y su nota, y un anillo lo resalta en el
+      mapa. Abajo a la derecha va el perfil de altitud con la posición del tren.</li>
+    <li>Una copia del archivo de ruta usado y, con <code>--realistic</code>, del CSV de la vía.</li>
+  </ul>
+</section>
+
+<footer>rail · simulación de tren</footer>
+</div>
+</body>
+</html>
