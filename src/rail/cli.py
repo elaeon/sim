@@ -11,6 +11,7 @@ from pathlib import Path
 
 from rail.route import RouteError, load_route
 from rail.sim import clock, duration, simulate, timetable
+from rail.elevation import elevation_path
 from rail.track import realistic_route, track_path
 from rail.common import make_run_dir, project_root
 
@@ -68,6 +69,8 @@ def summary_text(route, journey, depart_s: float) -> str:
     ]
     if route.track is not None:
         lines.append(f"track               {route.track.source}")
+    if route.track is not None and route.track.elevation_m is not None:
+        lines.append(f"elevation           {route.track.elevation_source}")
     slow = route.slow_section()
     if slow is not None:
         lines.append(f"slow motion         x{slow[2]:g}, {route.realistic.slow_from} - {route.realistic.slow_to} "
@@ -94,6 +97,8 @@ def run(argv: list[str] | None = None) -> Path:
     (run_dir / route_path.name).write_text(route.text, encoding="utf-8")
     if args.realistic:
         shutil.copyfile(track_path(route), run_dir / track_path(route).name)
+        if route.realistic.elevation_file is not None:
+            shutil.copyfile(elevation_path(route), run_dir / elevation_path(route).name)
     (run_dir / "summary.txt").write_text(summary_text(route, journey, depart_s), encoding="utf-8")
     rows = timetable(journey, depart_s)
     with open(run_dir / "timetable.csv", "w", newline="", encoding="utf-8") as fh:

@@ -230,3 +230,93 @@ def test_chepe_on_the_real_track_keeps_its_calibration():
     assert 645 <= route.length_km <= 660  # official: 653 km
     journey = simulate(route)
     assert 9.0 <= journey.arrival("Creel") / 3600 <= 10.5
+
+
+def test_chepe_express_stops_are_highlighted(chepe):
+    route, _ = chepe
+    assert [p.name for p in route.stations if p.highlight] == ["Los Mochis", "El Fuerte", "Bahuichivo", "Divisadero",
+                                                               "Creel"]  # fmt: skip
+    assert route.highlight_label == "Chepe Express stop"
+
+
+@pytest.mark.parametrize(("index", "value"), [(1, True), (0, "yes")])
+def test_highlight_only_on_stations_and_boolean(index, value):
+    data = {**TINY, "point": [dict(p) for p in TINY["point"]]}
+    data["point"][index]["highlight"] = value  # index 1 is a landmark
+    with pytest.raises(RouteError, match="highlight"):
+        parse_route(data)
+
+
+# ------------------------------------------------------------------ SRTM elevation
+
+
+def _fake_elevation(monkeypatch):
+    """Offline OpenTopoData: elevation = 1000 * lon + 500, recording the size of each request."""
+    calls = []
+
+    def request(lat, lon, dataset):
+        calls.append(len(lat))
+        return 1000 * np.asarray(lon) + 500
+
+    monkeypatch.setattr("rail.elevation._request", request)
+    monkeypatch.setattr("rail.elevation.PAUSE_S", 0.0)
+    return calls
+
+
+def _tiny_with_elevation(tmp_path):
+    _tiny_with_track(tmp_path)
+    data = {**TINY, "realistic": {**REALISTIC, "elevation_file": "elevation_tiny.csv", "elevation_step_km": 0.05}}
+    return parse_route(data, path=tmp_path / "route_tiny.toml")
+
+
+def test_elevation_is_downloaded_in_chunks_and_applied(tmp_path, monkeypatch):
+    calls = _fake_elevation(monkeypatch)
+    route = realistic_route(_tiny_with_elevation(tmp_path), log=lambda _: None)
+    assert (tmp_path / "elevation_tiny.csv").is_file()
+    assert len(calls) > 1 and max(calls) <= 100  # public API limit per request
+    for p in route.points:  # points take the terrain elevation at their place on the track
+        assert p.elevation_m == pytest.approx(1000 * p.lon + 500, abs=2)
+        assert route.locate(p.km)[2] == pytest.approx(p.elevation_m, abs=2)
+    assert route.track.elevation_source.startswith("srtm90m")
+    calls.clear()
+    realistic_route(_tiny_with_elevation(tmp_path), log=lambda _: None)
+    assert calls == []  # second run reads the cached CSV
+
+
+def test_elevation_file_of_another_track_is_rejected(tmp_path, monkeypatch):
+    _fake_elevation(monkeypatch)
+    route = _tiny_with_elevation(tmp_path)
+    realistic_route(route, log=lambda _: None)
+    path = tmp_path / "elevation_tiny.csv"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    shifted = [lines[0], lines[1]] + [",".join([r.split(",")[0], str(float(r.split(",")[1]) + 0.1), *r.split(",")[2:]])
+                                      for r in lines[2:]]  # ~11 km north  # fmt: skip
+    path.write_text("\n".join(shifted) + "\n", encoding="utf-8")
+    with pytest.raises(TrackError, match="does not match the track"):
+        realistic_route(route, log=lambda _: None)
+
+
+def test_running_median_removes_a_tunnel_spike():
+    from rail.elevation import running_median
+
+    profile = np.linspace(100, 200, 21)
+    profile[10] += 300  # SRTM measures the hill above a tunnel
+    smooth = running_median(profile, 5)
+    assert smooth[10] == pytest.approx(150, abs=6) and smooth[0] == pytest.approx(100, abs=6)
+
+
+def test_chepe_includes_sufragio_loreto_and_pitorreal(chepe):
+    route, journey = chepe
+    names = [s.name for s in route.stations]
+    for name in ("Sufragio", "Loreto", "Pitorreal"):
+        assert name in names and name in [s.name for s in journey.stops]
+    assert names.index("Sufragio") < names.index("El Fuerte") < names.index("Loreto") < names.index("Témoris")
+    assert names.index("Divisadero") < names.index("Pitorreal") < names.index("Creel")
+
+
+@pytest.mark.skipif(not (CHEPE.parent / "elevation_chepe.csv").is_file(), reason="Chepe elevation not downloaded")
+def test_chepe_srtm_elevations_match_known_stations():
+    route = realistic_route(load_route(CHEPE), log=lambda _: None)
+    known = {"Los Mochis": 10, "El Fuerte": 90, "Divisadero": 2240, "Creel": 2340, "Chihuahua": 1440}
+    for name, elevation in known.items():
+        assert route.point(name).elevation_m == pytest.approx(elevation, abs=60)

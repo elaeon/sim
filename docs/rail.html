@@ -150,8 +150,11 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
     ejemplo, Los Mochis → Creel tarda ~9 h 40 min, el tiempo publicado del Chepe Express.</p>
   <div class="warn">
     <p><strong>Datos aproximados.</strong> Los km se derivan de los kilómetros oficiales, que se cuentan desde
-      Ojinaga (km = 921 − km oficial). Las coordenadas son las de cada localidad y las altitudes son aproximadas.
-      Sin <code>--realistic</code>, el trazo del mapa une esos puntos con líneas rectas.</p>
+      Ojinaga (km = 921 − km oficial). Las coordenadas son las de cada localidad o, donde existe, la de la estación
+      en OpenStreetMap (Sufragio, Loreto, Pitorreal). Las altitudes del ejemplo son las del terreno según SRTM en
+      cada punto de la vía real, suavizadas (ver <a href="#realistic">Modo realista</a>). Sin
+      <code>--realistic</code>, el trazo del mapa une esos puntos con líneas rectas y el perfil se interpola entre
+      ellos.</p>
   </div>
 </section>
 
@@ -162,6 +165,9 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
     <tbody>
       <tr><td><code>name</code></td><td>texto</td><td class="num">"route"</td>
         <td>Título del video y del resumen.</td><td>—</td></tr>
+      <tr><td><code>highlight_label</code></td><td>texto</td><td class="num">"highlighted stop"</td>
+        <td>Texto de la leyenda para las estaciones con <code>highlight = true</code>. En el ejemplo,
+          <code>"Chepe Express stop"</code>.</td><td>—</td></tr>
       <tr><td><code>[train] accel_ms2</code></td><td>número</td><td class="num">0.3</td>
         <td>Aceleración al arrancar (m/s²).</td><td>&gt; 0.</td></tr>
       <tr><td><code>[train] brake_ms2</code></td><td>número</td><td class="num">0.5</td>
@@ -191,6 +197,12 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
       <tr><td><code>[[point]] label_offset</code></td><td>[dx, dy]</td><td class="num">[8, 0]</td>
         <td>Desplazamiento de la etiqueta en el mapa, en puntos tipográficos. Si dx &lt; 0, la etiqueta va a la
           izquierda.</td><td>—</td></tr>
+      <tr><td><code>[[point]] highlight</code></td><td>booleano</td><td class="num">false</td>
+        <td>Dibuja la estación en otro color (verde relleno, con la etiqueta en negritas) en el mapa, el
+          acercamiento, el perfil y la lista de <code>route.png</code>, y agrega una leyenda al mapa. En el ejemplo
+          marca las paradas del Chepe Express: Los Mochis, El Fuerte, Bahuichivo, Divisadero y Creel. El tren de la
+          simulación sigue parando en todas las estaciones.</td>
+        <td>Solo en estaciones.</td></tr>
       <tr><td><code>[realistic] track_file</code></td><td>texto</td><td class="num">—</td>
         <td>CSV con el trazo real (<code>lat,lon</code>), relativo al archivo de ruta.</td>
         <td>Obligatorio si existe <code>[realistic]</code>.</td></tr>
@@ -202,6 +214,14 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
         <td>Van juntos; <code>slow_from</code> antes que <code>slow_to</code>.</td></tr>
       <tr><td><code>[realistic] slow_factor</code></td><td>número</td><td class="num">1.0</td>
         <td>Cuántas veces más lento se reproduce ese tramo.</td><td>≥ 1.</td></tr>
+      <tr><td><code>[realistic] elevation_file</code></td><td>texto</td><td class="num">—</td>
+        <td>CSV con la altitud del terreno a lo largo de la vía (<code>km,lat,lon,elevation_m</code>), relativo al
+          archivo de ruta. Si no existe, se descarga. Sin esta clave, las altitudes salen de
+          <code>elevation_m</code>.</td><td>—</td></tr>
+      <tr><td><code>[realistic] elevation_dataset</code></td><td>texto</td><td class="num">"srtm90m"</td>
+        <td>Conjunto de datos de OpenTopoData usado para la descarga.</td><td>—</td></tr>
+      <tr><td><code>[realistic] elevation_step_km</code></td><td>número</td><td class="num">1.0</td>
+        <td>Separación de las muestras a lo largo de la vía.</td><td>&gt; 0.</td></tr>
     </tbody>
   </table></div>
   <p>La sección <code>[realistic]</code> solo se usa con <code>--realistic</code>; sin esa opción se ignora.</p>
@@ -218,8 +238,16 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
       Las siguientes corridas leen el CSV y no necesitan internet. Para volver a descargarla, borra el CSV.</li>
     <li><strong>Puntos sobre la vía.</strong> Cada estación, hito y punto de trazo se proyecta sobre la vía, y su km
       pasa a ser la distancia real a lo largo de ella. Para el Chepe, la vía mide 653.4 km de Los Mochis a
-      Chihuahua (oficial: 653 km). Las altitudes y los límites de velocidad siguen saliendo del archivo de
-      ruta.</li>
+      Chihuahua (oficial: 653 km). Los límites de velocidad siguen saliendo del archivo de ruta.</li>
+    <li><strong>Altitud real.</strong> Con <code>elevation_file</code>, la primera vez se toma una muestra de la vía
+      cada <code>elevation_step_km</code> (655 puntos para el Chepe) y se pide su altitud a la API pública de
+      OpenTopoData (modelo de terreno SRTM de 90 m), en grupos de 100 puntos y una consulta por segundo. Se guarda en
+      <code>examples/elevation_chepe.csv</code> y las siguientes corridas no necesitan internet. SRTM mide el
+      terreno, no la vía: bajo un puente da el fondo de la barranca y sobre un túnel la cima del cerro. Por eso el
+      perfil se suaviza con una mediana móvil de 5 km, y cada estación e hito toma la altitud del perfil en su km.
+      Comparadas con valores publicados, las diferencias son de pocas decenas de metros (Divisadero 2246 m contra
+      2240 m; Creel 2349 m contra ~2340 m). Si se vuelve a descargar la vía, también hay que borrar este CSV; si no
+      coincide con la vía, el programa avisa.</li>
     <li><strong>Acercamiento.</strong> En la esquina superior izquierda del mapa aparece un recuadro con el tramo
       <code>slow_from</code> – <code>slow_to</code> (Témoris – Creel) y el tren moviéndose en él. Un rectángulo
       punteado marca ese tramo en el mapa, y el perfil lo sombrea.</li>
@@ -228,8 +256,8 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
       60 s, para que el resto del viaje no pase demasiado rápido.</li>
   </ul>
   <div class="note">
-    <p>Datos de la vía: © colaboradores de OpenStreetMap, bajo licencia ODbL. El video y <code>route.png</code>
-      llevan esa atribución.</p>
+    <p>Datos de la vía: © colaboradores de OpenStreetMap, bajo licencia ODbL. Altitud: SRTM (NASA), vía
+      OpenTopoData. El video y <code>route.png</code> llevan esa atribución.</p>
   </div>
 </section>
 
@@ -260,15 +288,18 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
   <ul>
     <li><code>summary.txt</code>: distancia, horas de salida y llegada, tiempo total, tiempo de espera en paradas y
       velocidad media. Si la ruta pasa por Creel, el tiempo hasta Creel para compararlo con el Chepe Express. Con
-      <code>--realistic</code>, también el origen de la vía y el tramo en cámara lenta.</li>
+      <code>--realistic</code>, también el origen de la vía y de la altitud, y el tramo en cámara lenta.</li>
     <li><code>timetable.csv</code>: una fila por estación con km, altitud, llegada, salida y espera. Si se llega
       después de medianoche, la hora lleva el sufijo <code>(+1d)</code>.</li>
     <li><code>route.png</code>: el mapa, el perfil de altitud y la lista de puntos de interés con su km.</li>
     <li><code>journey.webm</code> (o <code>.mp4</code>/<code>.gif</code>), de 1280×720: a la izquierda, el mapa con
       el tramo recorrido en azul y el tren en rojo; a la derecha, el reloj, el km, la velocidad, la altitud y la
-      próxima parada. Al pasar por un hito o una estación aparece su nombre y su nota, y un anillo lo resalta en el
+      próxima parada. El reloj es la hora del día en el viaje (salida de <code>--depart</code> más el tiempo
+      simulado, incluidas las paradas); debajo se muestra la hora de salida y el tiempo transcurrido
+      (p. ej. «departure 06:00 · 11h 35min elapsed»). Al pasar por un hito o una estación aparece su nombre y su nota, y un anillo lo resalta en el
       mapa. Abajo a la derecha va el perfil de altitud con la posición del tren.</li>
-    <li>Una copia del archivo de ruta usado y, con <code>--realistic</code>, del CSV de la vía.</li>
+    <li>Una copia del archivo de ruta usado y, con <code>--realistic</code>, de los CSV de la vía y de la
+      altitud.</li>
   </ul>
 </section>
 
