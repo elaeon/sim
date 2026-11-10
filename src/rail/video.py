@@ -16,12 +16,14 @@ import numpy as np
 
 from rail.common import BASELINE, GRID, INK, INK_2, MUTED, SURFACE, free_path, h264_encoder
 from rail.route import Point, Route
-from rail.sim import Journey, clock
+from rail.sim import Journey, clock, duration
 
 TRACK = "#c3c2b7"
 TRAVELLED = "#2a78d6"
 TRAIN = "#e34948"
 STATION = "#0b0b0b"
+HIGHLIGHT = "#1baf7a"  # highlighted stations (e.g. Chepe Express stops)
+HIGHLIGHT_INK = "#0e7a52"  # their labels: darker, readable on the light background
 LANDMARK = "#eb6834"
 TERRAIN = "#e8e2d0"
 SIZE_IN = (12.8, 7.2)  # 1280x720 at 100 dpi
@@ -38,6 +40,31 @@ def _points_of_interest(route: Route) -> list[Point]:
     return [p for p in route.points if p.kind in ("station", "landmark")]
 
 
+def _station_style(p: Point) -> dict:
+    """Marker colours of a station: filled green when highlighted, hollow otherwise."""
+    return {"mfc": HIGHLIGHT, "mec": HIGHLIGHT_INK} if p.highlight else {"mfc": SURFACE, "mec": STATION}
+
+
+def _label_style(p: Point) -> dict:
+    return {"color": HIGHLIGHT_INK, "weight": "bold"} if p.highlight else {"color": INK}
+
+
+def _add_legend(route: Route, ax) -> None:
+    """Map legend (lower right, empty in the Chepe map), only when some station is highlighted."""
+    from matplotlib.lines import Line2D
+
+    if not any(p.highlight for p in route.stations):
+        return
+    handles = [
+        Line2D([], [], ls="", marker="o", ms=6, mew=1.3, mfc=HIGHLIGHT, mec=HIGHLIGHT_INK, label=route.highlight_label),
+        Line2D([], [], ls="", marker="o", ms=6, mew=1.3, mfc=SURFACE, mec=STATION, label="other station"),
+        Line2D([], [], ls="", marker="^", ms=6, color=LANDMARK, label="landmark"),
+    ]
+    legend = ax.legend(handles=handles, loc="lower right", fontsize=7.5, frameon=True, framealpha=0.9,
+                       edgecolor=BASELINE, facecolor=SURFACE, borderpad=0.6)  # fmt: skip
+    legend.set_zorder(7)
+
+
 def _build_figure(route: Route):
     """Static figure: titles, map, profile and, with a real track and a slow section, a zoomed inset.
 
@@ -47,14 +74,20 @@ def _build_figure(route: Route):
 
     fig = Figure(figsize=SIZE_IN, dpi=DPI, facecolor=SURFACE)
     fig.text(0.03, 0.955, route.name, fontsize=16, weight="bold", color=INK, ha="left", va="center")
-    source = "real track (OpenStreetMap), approximate stations and elevations" if route.track is not None \
-        else "approximate curated data"
+    if route.track is None:
+        source = "approximate curated data"
+    elif route.track.elevation_m is None:
+        source = "real track (OpenStreetMap), approximate stations and elevations"
+    else:
+        source = "real track (OpenStreetMap), terrain elevation (SRTM)"
     fig.text(0.03, 0.915, f"{route.length_km:.0f} km · {len(route.stations)} stations · "
              f"{len(route.landmarks)} landmarks · {source}", fontsize=9.5, color=INK_2,
              ha="left", va="center")  # fmt: skip
     if route.track is not None:
-        fig.text(0.03, 0.012, "Track: © OpenStreetMap contributors (ODbL)", fontsize=7, color=MUTED, ha="left",
-                 va="bottom")  # fmt: skip
+        credits = "Track: © OpenStreetMap contributors (ODbL)"
+        if route.track.elevation_m is not None:
+            credits += " · Elevation: SRTM (NASA) via OpenTopoData"
+        fig.text(0.03, 0.012, credits, fontsize=7, color=MUTED, ha="left", va="bottom")
 
     km = np.linspace(0, route.length_km, DENSE_SAMPLES)
     elev = route.locate(km)[2]
@@ -73,15 +106,17 @@ def _build_figure(route: Route):
     for side in ax_map.spines.values():
         side.set_color(BASELINE)
     for p in route.stations:
-        ax_map.plot(p.lon, p.lat, "o", ms=5, mfc=SURFACE, mec=STATION, mew=1.3, zorder=3)
+        ax_map.plot(p.lon, p.lat, "o", ms=6 if p.highlight else 5, mew=1.3, zorder=3, **_station_style(p))
         ax_map.annotate(p.name, (p.lon, p.lat), xytext=p.label_offset, textcoords="offset points", fontsize=7.5,
-                        color=INK, ha="left" if p.label_offset[0] >= 0 else "right", va="center", zorder=4)  # fmt: skip
+                        ha="left" if p.label_offset[0] >= 0 else "right", va="center", zorder=4,
+                        **_label_style(p))  # fmt: skip
     for p in route.landmarks:
         ax_map.plot(p.lon, p.lat, "^", ms=6, color=LANDMARK, zorder=3)
         ax_map.annotate(p.name, (p.lon, p.lat), xytext=p.label_offset, textcoords="offset points", fontsize=7,
                         color=LANDMARK, style="italic", ha="left" if p.label_offset[0] >= 0 else "right",
                         va="center", zorder=4, arrowprops={"arrowstyle": "-", "color": LANDMARK, "lw": 0.5,
                                                            "shrinkA": 1, "shrinkB": 4})  # fmt: skip
+    _add_legend(route, ax_map)
 
     # Elevation profile.
     ax_prof = fig.add_axes((0.54, 0.08, 0.43, 0.40))
@@ -102,8 +137,9 @@ def _build_figure(route: Route):
     for p in route.stations:
         x_label = max(p.km, last_label + route.length_km * 0.02)  # shift labels that would overlap to the right
         ax_prof.plot([p.km, p.km, x_label], [p.elevation_m, top * 0.64, top * 0.7], color=BASELINE, lw=0.6, zorder=0)
-        ax_prof.plot(p.km, p.elevation_m, "o", ms=3.5, mfc=SURFACE, mec=STATION, mew=1, zorder=3)
-        ax_prof.text(x_label, top * 0.71, p.name, rotation=90, fontsize=6.5, color=INK, ha="center", va="bottom")
+        ax_prof.plot(p.km, p.elevation_m, "o", ms=4 if p.highlight else 3.5, mew=1, zorder=3, **_station_style(p))
+        ax_prof.text(x_label, top * 0.71, p.name, rotation=90, fontsize=6.5, ha="center", va="bottom",
+                     **_label_style(p))  # fmt: skip
         last_label = x_label
     for p in route.landmarks:
         ax_prof.plot(p.km, p.elevation_m, "^", ms=4.5, color=LANDMARK, zorder=3)
@@ -138,20 +174,22 @@ def _build_inset(route: Route, ax_map):
         side.set_color(MUTED)
     spec = route.realistic
     ax.set_title(f"{spec.slow_from} – {spec.slow_to} (×{factor:g} slower)", fontsize=7.5, color=INK_2, pad=3)
-    last_label = -1e9
-    for p in route.points:
-        if p.kind == "waypoint" or not (km_from <= p.km <= km_to):
-            continue
-        if p.kind == "station":
-            ax.plot(p.lon, p.lat, "o", ms=4, mfc=SURFACE, mec=STATION, mew=1, zorder=3)
-            if p.km - last_label >= INSET_LABEL_GAP_KM:  # labels to the upper left, or lower right near the edge
-                left = p.lon > x0 + 0.25 * (x1 - x0)
-                ax.annotate(p.name, (p.lon, p.lat), xytext=(-4, 4) if left else (5, -3), textcoords="offset points",
-                            fontsize=6, color=INK_2, ha="right" if left else "left", va="bottom" if left else "top",
-                            zorder=4, clip_on=True)  # fmt: skip
-                last_label = p.km
-        else:
+    shown = [p for p in route.points if p.kind != "waypoint" and km_from <= p.km <= km_to]
+    labeled: list[Point] = []  # highlighted stations first, so a close neighbour never hides them
+    for p in sorted((p for p in shown if p.kind == "station"), key=lambda p: (not p.highlight, p.km)):
+        if all(abs(p.km - q.km) >= INSET_LABEL_GAP_KM for q in labeled):
+            labeled.append(p)
+    for p in shown:
+        if p.kind != "station":
             ax.plot(p.lon, p.lat, "^", ms=4.5, color=LANDMARK, zorder=3)
+            continue
+        ax.plot(p.lon, p.lat, "o", ms=4.5 if p.highlight else 4, mew=1, zorder=3, **_station_style(p))
+        if p in labeled:  # labels to the upper left, or lower right near the left edge
+            left = p.lon > x0 + 0.25 * (x1 - x0)
+            ax.annotate(p.name, (p.lon, p.lat), xytext=(-4, 4) if left else (5, -3), textcoords="offset points",
+                        fontsize=6, color=HIGHLIGHT_INK if p.highlight else INK_2,
+                        weight="bold" if p.highlight else "normal", ha="right" if left else "left",
+                        va="bottom" if left else "top", zorder=4, clip_on=True)  # fmt: skip
     return ax
 
 
@@ -177,7 +215,7 @@ def plot_route(route: Route, path: Path) -> Path:
     pois = [p for p in _points_of_interest(route) if p.note]
     step = min(0.032, 0.34 / max(len(pois), 1))
     for i, p in enumerate(pois):
-        color = LANDMARK if p.kind == "landmark" else INK_2
+        color = LANDMARK if p.kind == "landmark" else HIGHLIGHT_INK if p.highlight else INK_2
         fig.text(0.54, 0.83 - i * step, f"km {p.km:>3.0f}  {p.note}", fontsize=7, color=color, ha="left",
                  va="center", family="monospace")  # fmt: skip
     path = free_path(path)
@@ -210,7 +248,8 @@ def render_journey(route: Route, journey: Journey, path: Path, *, duration_s: fl
     train_map, = ax_map.plot([], [], "o", ms=9, color=TRAIN, mec=SURFACE, mew=1.5, zorder=6, animated=True)
     done_prof, = ax_prof.plot([], [], color=TRAVELLED, lw=2, zorder=2, animated=True)
     train_prof, = ax_prof.plot([], [], "o", ms=7, color=TRAIN, mec=SURFACE, mew=1.2, zorder=6, animated=True)
-    big = fig.text(0.54, 0.84, "", fontsize=22, weight="bold", color=INK, ha="left", va="center", animated=True)
+    big = fig.text(0.54, 0.855, "", fontsize=22, weight="bold", color=INK, ha="left", va="center", animated=True)
+    elapsed = fig.text(0.54, 0.808, "", fontsize=10, color=MUTED, ha="left", va="center", animated=True)
     stats = fig.text(0.54, 0.765, "", fontsize=11, color=INK_2, ha="left", va="center", family="monospace",
                      animated=True)  # fmt: skip
     nxt = fig.text(0.54, 0.715, "", fontsize=11, color=INK_2, ha="left", va="center", animated=True)
@@ -219,7 +258,7 @@ def render_journey(route: Route, journey: Journey, path: Path, *, duration_s: fl
     note = fig.text(0.54, 0.61, "", fontsize=10, color=INK, ha="left", va="center", animated=True)
     badge = fig.text(0.97, 0.955, "", fontsize=10, weight="bold", color=LANDMARK, ha="right", va="center",
                      animated=True)  # fmt: skip
-    moving = [done_map, ring_map, train_map, done_prof, train_prof, big, stats, nxt, title, note, badge]
+    moving = [done_map, ring_map, train_map, done_prof, train_prof, big, elapsed, stats, nxt, title, note, badge]
     if ax_inset is not None:
         done_inset, = ax_inset.plot([], [], color=TRAVELLED, lw=2, solid_capstyle="round", zorder=2, animated=True)
         train_inset, = ax_inset.plot([], [], "o", ms=7, color=TRAIN, mec=SURFACE, mew=1.2, zorder=6, animated=True)
@@ -240,6 +279,7 @@ def render_journey(route: Route, journey: Journey, path: Path, *, duration_s: fl
         train_map.set_data([lon], [lat])
         train_prof.set_data([km], [elev])
         big.set_text(clock(depart_s + times[i]))
+        elapsed.set_text(f"departure {clock(depart_s)} · {duration(times[i])} elapsed")
         stats.set_text(f"km {km:5.1f} / {route.length_km:.0f}   {v:4.0f} km/h   {elev:5.0f} m")
         k = int(np.searchsorted(next_stop_km, km - 1e-3))
         if k < len(route.stations):
@@ -252,7 +292,8 @@ def render_journey(route: Route, journey: Journey, path: Path, *, duration_s: fl
             title.set_text(current.name)
             note.set_text(current.note)
             ring_map.set_data([current.lon], [current.lat])
-            ring_map.set_markeredgecolor(LANDMARK if current.kind == "landmark" else STATION)
+            ring_map.set_markeredgecolor(LANDMARK if current.kind == "landmark"
+                                         else HIGHLIGHT_INK if current.highlight else STATION)  # fmt: skip
             title.set_color(LANDMARK if current.kind == "landmark" else INK)
         else:
             title.set_text("")

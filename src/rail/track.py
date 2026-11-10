@@ -164,7 +164,13 @@ def snap_route(route: Route, latlon: np.ndarray, source: str = "") -> Route:
 
 
 def realistic_route(route: Route, log=print) -> Route:
-    """The route on its real track (downloaded once and cached)."""
+    """The route on its real track and, with [realistic] elevation_file, terrain elevation (both cached)."""
     path = ensure_track(route, log)
     latlon, source = load_track(path)
-    return snap_route(route, latlon, source)
+    route = snap_route(route, latlon, source)
+    if route.realistic.elevation_file is None:
+        return route
+    from rail.elevation import apply_elevation, ensure_elevation, load_elevation
+
+    data, elevation_source = load_elevation(ensure_elevation(route, log))
+    return apply_elevation(route, data, elevation_source)

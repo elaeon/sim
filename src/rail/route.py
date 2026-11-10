@@ -27,6 +27,7 @@ class Point:
     dwell_min: float = 0.0
     note: str = ""
     label_offset: tuple[float, float] = (8.0, 0.0)
+    highlight: bool = False  # drawn in a distinct colour (e.g. the Chepe Express stops)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,9 @@ class RealisticSpec:
     slow_from: str | None = None  # name of the point where slow motion starts
     slow_to: str | None = None  # name of the point where it ends
     slow_factor: float = 1.0  # how many times slower the video plays in that section
+    elevation_file: str | None = None  # CSV with terrain elevation along the track (SRTM); None keeps elevation_m
+    elevation_dataset: str = "srtm90m"  # OpenTopoData dataset used to download elevation_file when missing
+    elevation_step_km: float = 1.0  # sample spacing along the track for the download
 
 
 @dataclass(frozen=True, eq=False)
@@ -55,6 +59,8 @@ class Track:
     lat: np.ndarray
     lon: np.ndarray
     source: str = ""
+    elevation_m: np.ndarray | None = None  # terrain elevation at each vertex (smoothed SRTM), if loaded
+    elevation_source: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +69,7 @@ class Route:
     points: tuple[Point, ...]
     train: TrainSpec
     text: str = ""  # original TOML, copied to the results folder
+    highlight_label: str = ""  # legend text for highlighted stations
     path: Path | None = None  # route file, to resolve relative paths
     realistic: RealisticSpec | None = None
     track: Track | None = None  # set by rail.track.realistic_route
@@ -101,7 +108,10 @@ class Route:
     def locate(self, km):
         """(lon, lat, elevation_m) at distance km, linearly interpolated (scalar or array)."""
         line_km, lon, lat = self.line()
-        elevation = np.interp(km, self._column("km"), self._column("elevation_m"))
+        if self.track is not None and self.track.elevation_m is not None:
+            elevation = np.interp(km, line_km, self.track.elevation_m)
+        else:
+            elevation = np.interp(km, self._column("km"), self._column("elevation_m"))
         return np.interp(km, line_km, lon), np.interp(km, line_km, lat), elevation
 
     def speed_limit(self, km: float) -> float:
@@ -143,10 +153,13 @@ def parse_route(data: dict, text: str = "", path: Path | None = None) -> Route:
         if dwell < 0 or (dwell > 0 and item["kind"] != "station"):
             raise RouteError(f"{where}: dwell_min must be >= 0 and only set on stations")
         offset = item.get("label_offset", (8.0, 0.0))
+        highlight = item.get("highlight", False)
+        if not isinstance(highlight, bool) or (highlight and item["kind"] != "station"):
+            raise RouteError(f"{where}: highlight must be true or false, and only set on stations")
         points.append(Point(name=str(item["name"]), kind=item["kind"], km=float(item["km"]), lat=float(item["lat"]),
                             lon=float(item["lon"]), elevation_m=float(item["elevation_m"]),
                             max_speed_kmh=float(limit), dwell_min=dwell, note=str(item.get("note", "")),
-                            label_offset=(float(offset[0]), float(offset[1]))))  # fmt: skip
+                            label_offset=(float(offset[0]), float(offset[1])), highlight=highlight))  # fmt: skip
     if points[0].kind != "station" or points[-1].kind != "station":
         raise RouteError("the first and last points must be stations")
     if points[0].km != 0:
@@ -159,7 +172,7 @@ def parse_route(data: dict, text: str = "", path: Path | None = None) -> Route:
         raise RouteError("[train] accel_ms2, brake_ms2 and dt_s must be positive")
     realistic = _parse_realistic(data.get("realistic"), points)
     return Route(name=str(data.get("name", "route")), points=tuple(points), train=train, text=text, path=path,
-                 realistic=realistic)  # fmt: skip
+                 realistic=realistic, highlight_label=str(data.get("highlight_label", "highlighted stop")))  # fmt: skip
 
 
 def _parse_realistic(raw: dict | None, points: list[Point]) -> RealisticSpec | None:
@@ -173,6 +186,10 @@ def _parse_realistic(raw: dict | None, points: list[Point]) -> RealisticSpec | N
         raise RouteError("[realistic] track_file must be a file name")
     if spec.slow_factor < 1:
         raise RouteError("[realistic] slow_factor must be >= 1")
+    if spec.elevation_file is not None and (not isinstance(spec.elevation_file, str) or not spec.elevation_file):
+        raise RouteError("[realistic] elevation_file must be a file name")
+    if not spec.elevation_step_km > 0:
+        raise RouteError("[realistic] elevation_step_km must be > 0")
     if (spec.slow_from is None) != (spec.slow_to is None):
         raise RouteError("[realistic] slow_from and slow_to go together")
     if spec.slow_from is not None:
