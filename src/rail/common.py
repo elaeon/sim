@@ -1,7 +1,7 @@
-"""Small shared helpers: palette, results folders and video encoder choice.
+"""Small shared helpers: results folders and video encoder choice.
 
-Copied from the traffic package (trafico/plotting.py, trafico/settings.py, trafico/movement.py)
-so that rail stays independent of it.
+Copied from the traffic package (trafico/settings.py, trafico/movement.py) so that rail stays
+independent of it. The colour palette lives in rail.theme.
 """
 
 from __future__ import annotations
@@ -10,15 +10,6 @@ import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
-
-# Same palette as the traffic plots.
-SURFACE = "#fcfcfb"
-INK = "#0b0b0b"
-INK_2 = "#52514e"
-MUTED = "#898781"
-GRID = "#e1e0d9"
-BASELINE = "#c3c2b7"
-
 
 def project_root() -> Path:
     """Project root (where pyproject.toml is); the current directory if the package is not installed editable."""

@@ -9,11 +9,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from rail.route import RouteError, load_route
+from rail.route import RouteError, load_route, orient
 from rail.sim import clock, duration, simulate, timetable
 from rail.elevation import elevation_path
 from rail.track import realistic_route, track_path
 from rail.common import make_run_dir, project_root
+from rail.theme import THEMES, get_theme
 
 DEFAULT_ROUTE = Path("examples") / "route_chepe.toml"
 DURATION_S = 60.0
@@ -29,8 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
             f"summary.txt, timetable.csv, route.png and a landscape video in {RESULTS_DIR}/<date-time>_<name>/."
         ),
     )
-    p.add_argument("route", nargs="?", type=Path, default=None,
+    p.add_argument("route_file", nargs="?", type=Path, default=None,
                    help=f"route TOML file (default: {DEFAULT_ROUTE})")  # fmt: skip
+    p.add_argument("--route", default=None, metavar="FROM-TO",
+                   help="direction of travel, from the route file's 'ends': e.g. mochis-chihuahua (default, the "
+                        "file's order) or chihuahua-mochis")  # fmt: skip
     p.add_argument("--name", default=None, help="results folder suffix (default: the route file name without 'route_')")
     p.add_argument("--duration", type=float, default=None,
                    help=f"video length in seconds (default: {DURATION_S:g}; {REALISTIC_DURATION_S:g} with --realistic)")
@@ -38,6 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=("webm", "mp4", "gif"), default="webm", help="video format (default: webm)")
     p.add_argument("--depart", default="06:00", help="departure time of day, HH:MM (default: 06:00)")
     p.add_argument("--no-video", action="store_true", help="skip the video (timetable and route.png only)")
+    p.add_argument("--style", choices=tuple(THEMES), default="default",
+                   help="colour style of route.png and the video: default or cream_crimson (crimson on cream; "
+                        "default: default)")  # fmt: skip
     p.add_argument("--realistic", action="store_true",
                    help="use the real track from OpenStreetMap (downloaded once, see [realistic] in the route file), "
                         "with a zoomed inset and slow motion through the scenic section")  # fmt: skip
@@ -75,24 +82,29 @@ def summary_text(route, journey, depart_s: float) -> str:
     if slow is not None:
         lines.append(f"slow motion         x{slow[2]:g}, {route.realistic.slow_from} - {route.realistic.slow_to} "
                      f"(km {slow[0]:.0f}-{slow[1]:.0f})")  # fmt: skip
-    if any(s.name == "Creel" for s in journey.stops):  # Chepe Express end point, used for calibration
-        lines.append(f"to Creel            {duration(journey.arrival('Creel'))} (published Chepe Express: ~9h 40min)")
+    stops = {s.name: s for s in journey.stops}
+    if "Los Mochis" in stops and "Creel" in stops:  # Chepe Express section, used for calibration
+        a, b = sorted((stops["Los Mochis"], stops["Creel"]), key=lambda s: s.arrival_s)
+        label = f"{a.name} - {b.name}"
+        lines.append(f"{label:<19} {duration(b.arrival_s - a.departure_s)} (published Chepe Express: ~9h 40min)")
     return "\n".join(lines) + "\n"
 
 
 def run(argv: list[str] | None = None) -> Path:
     args = build_parser().parse_args(argv)
     root = project_root()
-    route_path = args.route or root / DEFAULT_ROUTE
+    route_path = args.route_file or root / DEFAULT_ROUTE
     try:
         route = load_route(route_path)
         depart_s = parse_clock(args.depart)
         if args.realistic:
-            route = realistic_route(route)
+            route = realistic_route(route)  # snapping needs the file's order; reverse afterwards
+        route = orient(route, args.route)
     except (OSError, RouteError, ValueError) as exc:
         sys.exit(f"Error: {exc}")
     journey = simulate(route)
-    name = args.name or route_path.stem.removeprefix("route_") + ("_realistic" if args.realistic else "")
+    name = args.name or (route_path.stem.removeprefix("route_") + (f"_{route.route_id}" if route.reversed else "")
+                         + ("_realistic" if args.realistic else ""))  # fmt: skip
     run_dir = make_run_dir(root / RESULTS_DIR, name, datetime.now())
     (run_dir / route_path.name).write_text(route.text, encoding="utf-8")
     if args.realistic:
@@ -108,11 +120,12 @@ def run(argv: list[str] | None = None) -> Path:
 
     from rail.video import plot_route, render_journey
 
-    plot_route(route, run_dir / "route.png")
+    theme = get_theme(args.style)
+    plot_route(route, run_dir / "route.png", theme)
     if not args.no_video:
         seconds = args.duration or (REALISTIC_DURATION_S if args.realistic else DURATION_S)
         render_journey(route, journey, run_dir / "journey", duration_s=seconds, fps=args.fps,
-                       fmt=args.format, depart_s=depart_s)  # fmt: skip
+                       fmt=args.format, depart_s=depart_s, theme=theme)  # fmt: skip
     print((run_dir / "summary.txt").read_text(encoding="utf-8"), end="")
     print(f"Results in {run_dir}")
     return run_dir

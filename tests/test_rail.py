@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from rail.cli import run
-from rail.route import RouteError, load_route, parse_route
+from rail.route import RouteError, directions, load_route, orient, parse_route, reversed_route
 from rail.sim import clock, simulate, timetable
 from rail.track import (
     TrackError, chain_ways, ensure_track, haversine_km, load_track, realistic_route, save_track, snap_route,
@@ -120,7 +120,7 @@ def test_cli_writes_timetable_summary_and_png(tmp_path, monkeypatch):
     assert run_dir.parent == tmp_path / "resultados" and run_dir.name.endswith("_tiny")
     for name in ("summary.txt", "timetable.csv", "route.png", "route_tiny.toml"):
         assert (run_dir / name).is_file()
-    assert "to Creel" in (run_dir / "summary.txt").read_text(encoding="utf-8")
+    assert "Los Mochis - Creel" in (run_dir / "summary.txt").read_text(encoding="utf-8")
 
 
 # ------------------------------------------------------------------ --realistic
@@ -320,3 +320,127 @@ def test_chepe_srtm_elevations_match_known_stations():
     known = {"Los Mochis": 10, "El Fuerte": 90, "Divisadero": 2240, "Creel": 2340, "Chihuahua": 1440}
     for name, elevation in known.items():
         assert route.point(name).elevation_m == pytest.approx(elevation, abs=60)
+
+
+# ------------------------------------------------------------------ --route (direction of travel)
+
+
+def test_chepe_directions_come_from_ends(chepe):
+    route, _ = chepe
+    assert directions(route) == ("mochis-chihuahua", "chihuahua-mochis")
+    assert orient(route, None) is route and orient(route, "mochis-chihuahua") is route
+    with pytest.raises(RouteError, match="chihuahua-mochis"):
+        orient(route, "chihuahua-creel")
+
+
+def test_reversed_route_runs_from_the_other_end(chepe):
+    route, _ = chepe
+    back = orient(route, "chihuahua-mochis")
+    assert back.reversed and back.route_id == "chihuahua-mochis"
+    assert back.name == "Chepe: Chihuahua - Los Mochis"
+    assert [p.name for p in back.points] == [p.name for p in reversed(route.points)]
+    assert back.points[0].km == 0 and back.length_km == pytest.approx(route.length_km)
+    for p in back.points:  # same place on the line, measured from the other end
+        assert p.km == pytest.approx(route.length_km - route.point(p.name).km)
+    # Each segment keeps its own limit: the one set at its western point in the file.
+    for km in np.linspace(1, route.length_km - 1, 200):
+        assert back.speed_limit(route.length_km - km) == route.speed_limit(km)
+
+
+def test_reversing_twice_gives_the_original(chepe):
+    route, _ = chepe
+    twice = reversed_route(reversed_route(route))
+    assert twice.points == route.points and twice.name == route.name and twice.ends == route.ends
+    assert not twice.reversed
+
+
+def test_reversed_journey_stops_in_the_opposite_order(chepe):
+    route, journey = chepe
+    back = simulate(orient(route, "chihuahua-mochis"))
+    assert [s.name for s in back.stops] == [s.name for s in reversed(journey.stops)]
+    assert back.duration_s == pytest.approx(journey.duration_s, rel=0.03)  # same line, almost the same time
+    limits = np.array([orient(route, "chihuahua-mochis").speed_limit(k) for k in back.km])
+    assert np.all(back.speed_kmh <= limits + 1e-9)
+
+
+def test_reversed_realistic_route_flips_track_elevation_and_slow_section(tmp_path, monkeypatch):
+    _fake_elevation(monkeypatch)
+    route = realistic_route(_tiny_with_elevation(tmp_path), log=lambda _: None)
+    back = reversed_route(route)
+    assert back.track.km[0] == 0 and np.all(np.diff(back.track.km) > 0)
+    for p in back.points:
+        assert back.locate(p.km)[:2] == pytest.approx((p.lon, p.lat))
+        assert back.locate(p.km)[2] == pytest.approx(route.locate(route.point(p.name).km)[2])
+    assert (back.realistic.slow_from, back.realistic.slow_to) == ("C", "Bridge")
+    km_from, km_to, _ = back.slow_section()
+    assert km_from == pytest.approx(0.0) and km_to == pytest.approx(back.point("Bridge").km)
+
+
+def test_ends_default_to_station_slugs_and_are_validated():
+    route = parse_route(TINY)
+    assert directions(route) == ("a-c", "c-a")
+    with pytest.raises(RouteError, match="ends"):
+        parse_route({**TINY, "ends": ["same", "same"]})
+
+
+def test_cli_route_option_names_the_folder_after_the_direction(tmp_path, monkeypatch):
+    monkeypatch.setattr("rail.cli.project_root", lambda: tmp_path)
+    route_file = tmp_path / "route_tiny.toml"
+    route_file.write_text(CHEPE.read_text(encoding="utf-8"), encoding="utf-8")
+    run_dir = run([str(route_file), "--route", "chihuahua-mochis", "--no-video"])
+    assert run_dir.name.endswith("_tiny_chihuahua-mochis")
+    rows = (run_dir / "timetable.csv").read_text(encoding="utf-8").splitlines()
+    assert rows[1].startswith("Chihuahua,0.0") and rows[-1].startswith("Los Mochis,")
+    assert "Creel - Los Mochis" in (run_dir / "summary.txt").read_text(encoding="utf-8")
+
+
+def test_credits_start_with_the_author_then_the_data_sources(chepe, tmp_path, monkeypatch):
+    from rail.video import credits_text
+
+    route, _ = chepe
+    assert route.author == "Cream Crimson"
+    assert credits_text(route) == "Author: Cream Crimson · Data: curated route file (approximate)"
+    _fake_elevation(monkeypatch)
+    real = realistic_route(_tiny_with_elevation(tmp_path), log=lambda _: None)
+    assert credits_text(real) == ("Track: © OpenStreetMap contributors (ODbL) · "
+                                  "Elevation: SRTM (NASA) via OpenTopoData")  # no author in TINY  # fmt: skip
+
+
+# ------------------------------------------------------------------ styles
+
+def test_cream_crimson_style_colours_route_png(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from rail.theme import THEMES
+
+    monkeypatch.setattr("rail.cli.project_root", lambda: tmp_path)
+    route_file = tmp_path / "route_tiny.toml"
+    route_file.write_text(CHEPE.read_text(encoding="utf-8"), encoding="utf-8")
+    pngs = {style: run([str(route_file), "--no-video", "--style", style]) / "route.png"
+            for style in ("default", "cream_crimson")}  # fmt: skip
+    for style, png in pngs.items():
+        corner = Image.open(png).convert("RGB").getpixel((3, 3))
+        assert "#{:02x}{:02x}{:02x}".format(*corner) == THEMES[style].surface.lower()
+
+
+def test_unknown_style_is_rejected(tmp_path, monkeypatch):
+    from rail.theme import get_theme
+
+    with pytest.raises(ValueError, match="cream_crimson"):
+        get_theme("crimson")
+    with pytest.raises(SystemExit):
+        run(["--no-video", "--style", "crimson"])
+
+
+def test_cream_crimson_style_colours_the_video(tmp_path):
+    from PIL import Image
+
+    from rail.theme import THEMES
+
+    route = parse_route(TINY)
+    theme = THEMES["cream_crimson"]
+    path = render_journey(route, simulate(route), tmp_path / "journey", duration_s=1, fps=4, fmt="gif", dpi=30,
+                          theme=theme)  # fmt: skip
+    corner = Image.open(path).convert("RGB").getpixel((2, 2))
+    expected = tuple(int(theme.surface[i:i + 2], 16) for i in (1, 3, 5))
+    assert all(abs(a - b) <= 8 for a, b in zip(corner, expected))  # the GIF palette may round colours

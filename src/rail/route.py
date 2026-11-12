@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -70,9 +71,17 @@ class Route:
     train: TrainSpec
     text: str = ""  # original TOML, copied to the results folder
     highlight_label: str = ""  # legend text for highlighted stations
+    author: str = ""  # shown in the credits line of the video and route.png
     path: Path | None = None  # route file, to resolve relative paths
     realistic: RealisticSpec | None = None
     track: Track | None = None  # set by rail.track.realistic_route
+    ends: tuple[str, str] = ("start", "end")  # short names of the first and last station, for --route
+    reversed: bool = False  # True when travelling from the last point of the file to the first
+
+    @property
+    def route_id(self) -> str:
+        """Direction of travel as '<from>-<to>', e.g. 'mochis-chihuahua'."""
+        return f"{self.ends[0]}-{self.ends[1]}"
 
     @property
     def length_km(self) -> float:
@@ -171,8 +180,56 @@ def parse_route(data: dict, text: str = "", path: Path | None = None) -> Route:
     if min(train.accel_ms2, train.brake_ms2, train.dt_s) <= 0:
         raise RouteError("[train] accel_ms2, brake_ms2 and dt_s must be positive")
     realistic = _parse_realistic(data.get("realistic"), points)
+    ends = data.get("ends", (slug(points[0].name), slug(points[-1].name)))
+    if (not isinstance(ends, (list, tuple)) or len(ends) != 2 or not all(isinstance(e, str) and e for e in ends)
+            or ends[0] == ends[1] or any("-" in e for e in ends)):
+        raise RouteError("ends must be two different short names without '-', e.g. [\"mochis\", \"chihuahua\"]")
     return Route(name=str(data.get("name", "route")), points=tuple(points), train=train, text=text, path=path,
-                 realistic=realistic, highlight_label=str(data.get("highlight_label", "highlighted stop")))  # fmt: skip
+                 realistic=realistic, highlight_label=str(data.get("highlight_label", "highlighted stop")),
+                 author=str(data.get("author", "")),
+                 ends=(ends[0], ends[1]))  # fmt: skip
+
+
+def slug(name: str) -> str:
+    """Short lowercase name for a route end: 'Los Mochis' -> 'los_mochis'."""
+    return re.sub(r"[^0-9a-z]+", "_", name.lower()).strip("_") or "end"
+
+
+def directions(route: Route) -> tuple[str, str]:
+    """The two values --route accepts: the file's order and the opposite one."""
+    return route.route_id, f"{route.ends[1]}-{route.ends[0]}"
+
+
+def orient(route: Route, route_id: str | None) -> Route:
+    """The route travelled in the direction route_id ('<from>-<to>'); None keeps the file's order."""
+    forward, backward = directions(route)
+    if route_id is None or route_id == forward:
+        return route
+    if route_id == backward:
+        return reversed_route(route)
+    raise RouteError(f"unknown --route {route_id!r}; choose {forward!r} or {backward!r}")
+
+
+def reversed_route(route: Route) -> Route:
+    """The same line travelled the other way: km measured from the other end, limits and slow section flipped."""
+    length = route.length_km
+    pts = route.points
+    # The limit set at a point covers the segment towards the next one; travelling backwards, the segment that
+    # starts at point k (towards k-1) is that same segment, so it takes the limit set at point k-1.
+    points = tuple(replace(pts[k], km=length - pts[k].km,
+                           max_speed_kmh=pts[k - 1].max_speed_kmh if k > 0 else pts[k].max_speed_kmh)
+                   for k in range(len(pts) - 1, -1, -1))  # fmt: skip
+    track = route.track
+    if track is not None:
+        track = replace(track, km=length - track.km[::-1], lat=track.lat[::-1], lon=track.lon[::-1],
+                        elevation_m=None if track.elevation_m is None else track.elevation_m[::-1])  # fmt: skip
+    realistic = route.realistic
+    if realistic is not None and realistic.slow_from is not None:
+        realistic = replace(realistic, slow_from=realistic.slow_to, slow_to=realistic.slow_from)
+    first, last = pts[0].name, pts[-1].name
+    name = route.name.replace(first, "\0").replace(last, first).replace("\0", last)  # swap the ends in the title
+    return replace(route, name=name, points=points, track=track, realistic=realistic,
+                   ends=(route.ends[1], route.ends[0]), reversed=not route.reversed)  # fmt: skip
 
 
 def _parse_realistic(raw: dict | None, points: list[Point]) -> RealisticSpec | None:
