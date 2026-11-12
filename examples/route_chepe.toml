@@ -17,7 +17,9 @@
 #   stops listed on chepe.mx: Los Mochis, El Fuerte, Bahuichivo, Divisadero, Creel).
 
 name = "Chepe: Los Mochis - Chihuahua"
+ends = ["mochis", "chihuahua"]   # `rail --route mochis-chihuahua` (default) or `--route chihuahua-mochis`
 highlight_label = "Chepe Express stop"
+author = "Cream Crimson"   # credited in the video and route.png, next to the data sources
 
 # Used only with `rail --realistic`: the real track geometry from OpenStreetMap (downloaded once
 # into track_file, next to this file; (c) OpenStreetMap contributors, ODbL) and slow motion
@@ -47,7 +49,7 @@ lat = 25.770
 lon = -108.965
 elevation_m = 16
 max_speed_kmh = 70
-note = "Start of the line, Sinaloa coastal plain"
+note = "Los Mochis: Pacific terminus, on the Sinaloa coastal plain"
 label_offset = [8, -10]
 
 [[point]]
@@ -71,7 +73,7 @@ lon = -108.620
 elevation_m = 105
 max_speed_kmh = 45
 dwell_min = 10
-note = "Colonial town; the climb into the Sierra Madre begins"
+note = "El Fuerte: colonial town at the foot of the Sierra Madre"
 label_offset = [8, -6]
 
 [[point]]
@@ -120,7 +122,7 @@ km = 205
 lat = 27.220
 lon = -108.290
 elevation_m = 914
-note = "El Lazo: the track loops over itself to gain height"
+note = "El Lazo: the track loops over itself to gain or lose height"
 label_offset = [-12, 0]
 
 [[point]]
@@ -132,7 +134,7 @@ lon = -108.270
 elevation_m = 1174
 max_speed_kmh = 32
 dwell_min = 5
-note = "Témoris: waterfalls and the steepest part of the climb"
+note = "Témoris: waterfalls, on the steepest section of the line"
 label_offset = [-12, 4]
 
 [[point]]
@@ -251,7 +253,7 @@ lon = -107.635
 elevation_m = 2349
 max_speed_kmh = 50
 dwell_min = 10
-note = "Creel: heart of the Sierra Tarahumara (end of Chepe Express)"
+note = "Creel: heart of the Sierra Tarahumara (Chepe Express terminus)"
 label_offset = [10, -2]
 
 [[point]]
@@ -282,7 +284,7 @@ lon = -107.330
 elevation_m = 2065
 max_speed_kmh = 65
 dwell_min = 10
-note = "La Junta: railway junction, leaving the sierra"
+note = "La Junta: railway junction at the edge of the sierra"
 label_offset = [-12, 6]
 
 [[point]]
@@ -319,5 +321,5 @@ km = 653
 lat = 28.635
 lon = -106.075
 elevation_m = 1453
-note = "Chihuahua: end of the line"
+note = "Chihuahua: eastern terminus, capital of the state"
 label_offset = [-12, 8]

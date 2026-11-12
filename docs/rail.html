@@ -132,6 +132,7 @@
   <h2>Uso</h2>
   <pre><code>uv run rail                                   # examples/route_chepe.toml → resultados/&lt;ID&gt;_chepe/
 uv run rail --realistic                       # vía real + cámara lenta en las Barrancas → resultados/&lt;ID&gt;_chepe_realistic/
+uv run rail --route chihuahua-mochis           # el mismo viaje en sentido contrario → resultados/&lt;ID&gt;_chepe_chihuahua-mochis/
 uv run rail mi_ruta.toml --name prueba
 uv run rail --duration 90 --format mp4 --depart 07:30
 uv run rail --no-video                        # solo horario, resumen y route.png</code></pre>
@@ -165,6 +166,17 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
     <tbody>
       <tr><td><code>name</code></td><td>texto</td><td class="num">"route"</td>
         <td>Título del video y del resumen.</td><td>—</td></tr>
+      <tr><td><code>ends</code></td><td>[texto, texto]</td><td class="num">nombres de la primera y la última
+          estación</td>
+        <td>Nombres cortos de los extremos de la ruta, para <code>--route</code>: con
+          <code>["mochis", "chihuahua"]</code> se aceptan <code>mochis-chihuahua</code> (el orden del archivo) y
+          <code>chihuahua-mochis</code>. Sin esta clave se forman con los nombres de las estaciones en minúsculas
+          (<code>los_mochis-chihuahua</code>).</td>
+        <td>Dos nombres distintos, sin <code>-</code>.</td></tr>
+      <tr><td><code>author</code></td><td>texto</td><td class="num">""</td>
+        <td>Autoría que se muestra en la línea de créditos, abajo a la izquierda del video y de
+          <code>route.png</code>, antes de las fuentes de datos («Author: Cream Crimson · Track: © OpenStreetMap
+          contributors (ODbL) · Elevation: SRTM (NASA) via OpenTopoData»). Vacía, no se muestra.</td><td>—</td></tr>
       <tr><td><code>highlight_label</code></td><td>texto</td><td class="num">"highlighted stop"</td>
         <td>Texto de la leyenda para las estaciones con <code>highlight = true</code>. En el ejemplo,
           <code>"Chepe Express stop"</code>.</td><td>—</td></tr>
@@ -268,7 +280,14 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
     <tbody>
       <tr><td><code>route</code></td><td><code>examples/route_chepe.toml</code></td><td>Archivo de ruta.</td></tr>
       <tr><td><code>--name</code></td><td>nombre del archivo sin <code>route_</code></td>
-        <td>Sufijo de la carpeta de resultados. Con <code>--realistic</code> se agrega <code>_realistic</code>.</td></tr>
+        <td>Sufijo de la carpeta de resultados. En sentido contrario se agrega el sentido
+          (<code>_chihuahua-mochis</code>) y con <code>--realistic</code>, <code>_realistic</code>.</td></tr>
+      <tr><td><code>--route</code></td><td><code>mochis-chihuahua</code> (el orden del archivo)</td>
+        <td>Sentido del viaje, <code>&lt;desde&gt;-&lt;hasta&gt;</code> con los nombres de <code>ends</code>. En
+          sentido contrario (<code>chihuahua-mochis</code>), los km se miden desde Chihuahua, el título y el perfil se
+          invierten, cada tramo conserva su límite de velocidad y la cámara lenta va de Creel a Témoris. La carpeta de
+          resultados lleva el sentido en el nombre. Con un valor que no corresponde a la ruta, el programa muestra
+          los dos aceptados.</td></tr>
       <tr><td><code>--realistic</code></td><td>—</td>
         <td>Trazo real de OpenStreetMap, acercamiento y cámara lenta (ver <a href="#realistic">Modo realista</a>).</td></tr>
       <tr><td><code>--duration</code></td><td class="num">60 (90 con <code>--realistic</code>)</td>
@@ -278,6 +297,12 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
         igual que en el video de tráfico (<a href="configuracion.html#animation"><code>[animation]</code></a>).</td></tr>
       <tr><td><code>--depart</code></td><td>06:00</td><td>Hora de salida (HH:MM) del reloj y del horario.</td></tr>
       <tr><td><code>--no-video</code></td><td>—</td><td>No genera el video.</td></tr>
+      <tr><td><code>--style</code></td><td>default</td><td>Estilo de color de <code>route.png</code> y del video:
+        <code>default</code> (la paleta de las gráficas de tráfico) o <code>cream_crimson</code> (carmesí
+        <code>#993138</code> sobre fondo crema <code>#FAF6EE</code>, copiado del tema <code>cream_crimson</code> de
+        <code>estilo.py</code> de multi-dashboard). En <code>cream_crimson</code> las paradas del Chepe Express van en
+        carmesí, los hitos en ocre, el tramo recorrido en azul, el tren en verde azulado y el texto en Roboto u Open Sans si están instalados. Los colores están en
+        <code>src/rail/theme.py</code>.</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -287,11 +312,12 @@ uv run rail --no-video                        # solo horario, resumen y route.pn
   <p>Se guardan en <code>resultados/&lt;fecha-hora&gt;_&lt;nombre&gt;/</code>. Nunca se sobrescribe nada:</p>
   <ul>
     <li><code>summary.txt</code>: distancia, horas de salida y llegada, tiempo total, tiempo de espera en paradas y
-      velocidad media. Si la ruta pasa por Creel, el tiempo hasta Creel para compararlo con el Chepe Express. Con
+      velocidad media. Si la ruta pasa por Los Mochis y Creel, el tiempo entre ambas (en el sentido del viaje) para compararlo con el Chepe Express. Con
       <code>--realistic</code>, también el origen de la vía y de la altitud, y el tramo en cámara lenta.</li>
     <li><code>timetable.csv</code>: una fila por estación con km, altitud, llegada, salida y espera. Si se llega
       después de medianoche, la hora lleva el sufijo <code>(+1d)</code>.</li>
-    <li><code>route.png</code>: el mapa, el perfil de altitud y la lista de puntos de interés con su km.</li>
+    <li><code>route.png</code>: el mapa, el perfil de altitud y la lista de puntos de interés con su km, con los
+      colores de <code>--style</code> (el video también los usa).</li>
     <li><code>journey.webm</code> (o <code>.mp4</code>/<code>.gif</code>), de 1280×720: a la izquierda, el mapa con
       el tramo recorrido en azul y el tren en rojo; a la derecha, el reloj, el km, la velocidad, la altitud y la
       próxima parada. El reloj es la hora del día en el viaje (salida de <code>--depart</code> más el tiempo
