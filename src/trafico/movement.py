@@ -195,12 +195,12 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
             if lane in cfg.bump_lanes(bump):
                 pos = bump.position
                 ax.axhline(pos, color=MUTED, linewidth=1.5, linestyle=(0, (6, 2, 1, 2)), zorder=1)
-                ax.annotate("tope · peatones" if pos in crossings else "tope", (0, pos),
+                ax.annotate("bump · pedestrians" if pos in crossings else "bump", (0, pos),
                             xycoords=("axes fraction", "data"), xytext=(4, 3), textcoords="offset points", ha="left",
                             fontsize=8, color=INK_2)  # fmt: skip
         for k, pos in _stops(cfg, lane):
             ax.axhline(pos, color=TYPE_COLORS[k], linewidth=1, linestyle=(0, (1, 2)), zorder=1)
-            ax.annotate(f"parada {cfg.specs[k].name}", (1, pos), xycoords=("axes fraction", "data"),
+            ax.annotate(f"stop {cfg.specs[k].name}", (1, pos), xycoords=("axes fraction", "data"),
                         xytext=(-4, 3), textcoords="offset points", ha="right", fontsize=8, color=INK_2)  # fmt: skip
         sel = occ_lane == lane
         r, fr = occ_rows[sel], occ_frame[sel]
@@ -217,22 +217,22 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
         ax.add_collection(LineCollection(segs, colors=colors, linewidths=0.9, zorder=2))
         ax.set_ylim(0, cfg.length * 1.04)
         ax.set_title(_lane_label(lane, lanes, assigned[lane]), loc="left", fontsize=10, color=INK, pad=6)
-        ax.set_ylabel("posición (m)", color=INK_2, fontsize=9)
+        ax.set_ylabel("position (m)", color=INK_2, fontsize=9)
     axes[-1].set_xlim(traj.t[0], traj.t[-1])
-    axes[-1].set_xlabel("Tiempo simulado (s)", color=INK_2, fontsize=9)
+    axes[-1].set_xlabel("Simulated time (s)", color=INK_2, fontsize=9)
 
     fh = fig.get_figheight()
-    fig.suptitle("Diagrama espacio-tiempo por carril", x=0.075, y=1 - 0.25 / fh, ha="left",
+    fig.suptitle("Space-time diagram per lane", x=0.075, y=1 - 0.25 / fh, ha="left",
                  fontsize=14, color=INK, fontweight="bold")  # fmt: skip
     fig.text(
         0.075, 1 - 0.56 / fh,
-        f"{title_note} · pendiente = velocidad, tramo horizontal = detenido, "
-        f"línea punteada = {'semáforo' if cfg.has_light else 'final del tramo'} ({cfg.length:g} m)",
+        f"{title_note} · slope = speed, horizontal stretch = stopped, "
+        f"dashed line = {'traffic light' if cfg.has_light else 'end of the segment'} ({cfg.length:g} m)",
         ha="left", fontsize=9, color=INK_2,
     )  # fmt: skip
     _type_legend(fig, cfg, 1 - 0.7 / fh, [*phase_handles(cfg, per_light=True),
                                           Line2D([], [], color=INK_2, linewidth=1, linestyle=(0, (4, 3)),
-                                                 label="línea de alto")])  # fmt: skip
+                                                 label="stop line")])  # fmt: skip
     fig.subplots_adjust(left=0.075, right=0.975, top=1 - 1.3 / fh, bottom=0.55 / fh)
     fig.savefig(path, dpi=150, facecolor=SURFACE)
 
@@ -304,25 +304,25 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     ax.spines["bottom"].set_color(BASELINE)
     ax.tick_params(colors=MUTED, labelcolor=INK_2, labelsize=8, length=0)
     ax.set_yticks(range(lanes), labels)
-    ax.set_xlabel("posición (m)", color=INK_2, fontsize=9)
+    ax.set_xlabel("position (m)", color=INK_2, fontsize=9)
     for bump in cfg.bumps:
         pos, bump_lanes = bump.position, cfg.bump_lanes(bump)
         for lane in bump_lanes:  # tope: franja rayada a lo ancho del carril
             ax.add_patch(Rectangle((pos - 0.4, lane - 0.45), 0.8, 0.9, facecolor=YELLOW_PHASE, edgecolor=INK_2,
                                    hatch="////", linewidth=0.6, zorder=1))  # fmt: skip
         if bump_lanes:  # una sola etiqueta por tope, sobre el carril con tope de más arriba
-            label = "tope · peatones" if bump.pedestrian else "tope"
+            label = "bump · pedestrians" if bump.pedestrian else "bump"
             ax.annotate(label, (pos, max(bump_lanes) + 0.45), xytext=(0, 1),
                         textcoords="offset points", ha="center", va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
     for lane in range(lanes):
         for k, pos in _stops(cfg, lane):
             ax.plot([pos, pos], [lane - 0.45, lane + 0.45], color=TYPE_COLORS[k], linewidth=2, zorder=1,
                     solid_capstyle="butt")  # fmt: skip
-            ax.annotate("parada", (pos, lane + 0.45), xytext=(0, 1), textcoords="offset points", ha="center",
+            ax.annotate("stop", (pos, lane + 0.45), xytext=(0, 1), textcoords="offset points", ha="center",
                         va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
     # Cola de entrada: vehículos que ya llegaron a cada carril pero aún no caben en el tramo.
     queue_x = -0.12 * queue_pad
-    ax.text(queue_x, lanes - 0.5, "en cola", ha="right", va="bottom", fontsize=7, color=INK_2)
+    ax.text(queue_x, lanes - 0.5, "queued", ha="right", va="bottom", fontsize=7, color=INK_2)
     queue_texts = [
         ax.text(queue_x, lane, "", ha="right", va="center", fontsize=9, color=INK, family="monospace", animated=True)
         for lane in range(lanes)
@@ -332,13 +332,13 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     exit_x = cfg.length + margin + exit_pad
     exit_texts = []
     if exit_lanes:
-        ax.text(exit_x, lanes - 0.5, "salida", ha="right", va="bottom", fontsize=7, color=INK_2)
+        ax.text(exit_x, lanes - 0.5, "exit", ha="right", va="bottom", fontsize=7, color=INK_2)
         exit_texts = [
             (lane, ax.text(exit_x, lane, "", ha="right", va="center", fontsize=9, color=INK, family="monospace",
                            animated=True))
             for lane in exit_lanes
         ]  # fmt: skip
-        ax.annotate("salida: m ocupados/mide\nen rojo, no cabe el siguiente: línea cerrada", (exit_x, -0.5), xytext=(0, -20),
+        ax.annotate("exit: occupied m/length\nin red, the next one does not fit: line closed", (exit_x, -0.5), xytext=(0, -20),
                     textcoords="offset points", ha="right", va="top", fontsize=7, color=INK_2)  # fmt: skip
     storage = cfg.lane_exit_storage
     # Semáforo: un tramo por carril; los carriles sin semáforo siempre en verde. Sin semáforo no se dibuja.
@@ -355,20 +355,20 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     # Leyenda de los semáforos peatonales (verde para los vehículos salvo con peatones esperando), sobre su línea.
     walkers = [line for line, _ in sources if line.light is not None and line.light.pedestrian]
     for line in walkers:
-        ax.annotate("semáforo peatonal", (line.position, lanes - 0.5), xytext=(0, 1), textcoords="offset points",
+        ax.annotate("pedestrian light", (line.position, lanes - 0.5), xytext=(0, 1), textcoords="offset points",
                     ha="center", va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
     cars = PolyCollection([], linewidths=0.9, zorder=2, animated=True)
     ax.add_collection(cars)
     # Reloj: tiempo simulado y tiempo real (de proceso) = simulado / time_scale, como en --run.
     clock = fig.text(0.975, 1 - 0.3 / fh, "", ha="right", fontsize=11, color=INK, family="monospace",
                      animated=True)  # fmt: skip
-    fig.text(0.02, 1 - 0.3 / fh, "Movimiento de los vehículos", ha="left", fontsize=13, color=INK,
+    fig.text(0.02, 1 - 0.3 / fh, "Vehicle movement", ha="left", fontsize=13, color=INK,
              fontweight="bold")  # fmt: skip
     fig.text(0.02, 1 - 0.55 / fh,
-             f"{title_note} · video ×{anim.speed:g} · borde oscuro = detenido"
-             + (" · claro = mercancía" if any(sp.cargo_prob > 0 for sp in cfg.specs) else "")
-             + (" · negro = bottleneck" if cfg.bottleneck_active else "")
-             + (" · semáforo peatonal: rojo solo con peatones esperando" if walkers else ""),
+             f"{title_note} · video ×{anim.speed:g} · dark border = stopped"
+             + (" · light = goods" if any(sp.cargo_prob > 0 for sp in cfg.specs) else "")
+             + (" · black = bottleneck" if cfg.bottleneck_active else "")
+             + (" · pedestrian light: red only with pedestrians waiting" if walkers else ""),
              ha="left", fontsize=9, color=INK_2)  # fmt: skip
     counters = _crossing_counters(fig, traj, width_in, 1 - 0.68 / fh)
 
@@ -400,7 +400,7 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
 
     def progress(i: int) -> None:
         if (i + 1) % 20 == 0 or i + 1 == len(frames):
-            sys.stderr.write(f"\r  video: cuadro {i + 1}/{len(frames)}")
+            sys.stderr.write(f"\r  video: frame {i + 1}/{len(frames)}")
             sys.stderr.flush()
 
     dpi = 110
@@ -408,7 +408,7 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     ffmpeg = shutil.which(matplotlib.rcParams["animation.ffmpeg_path"]) or shutil.which("ffmpeg")
     fmt = anim.format
     if ffmpeg is None and fmt != "gif":
-        sys.stderr.write(f"  Aviso: no se encontró ffmpeg; el video se escribe como GIF en vez de {fmt}\n")
+        sys.stderr.write(f"  Warning: ffmpeg not found; writing the video as a GIF instead of {fmt}\n")
         fmt = "gif"
     path = _free_path(path.with_name(f"{path.name}.{fmt}"))
     if fmt == "gif":
@@ -454,7 +454,7 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
         proc.wait()
     sys.stderr.write("\n")
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg terminó con código {proc.returncode}")
+        raise RuntimeError(f"ffmpeg exited with code {proc.returncode}")
     return path
 
 
@@ -473,7 +473,7 @@ def _crossing_counters(fig, traj: Trajectories, width_in: float, y: float) -> li
 
     fh = fig.get_figheight()
     square = 0.12  # pulgadas
-    title = f"Cruzaron {traj.cfg.line_name} en el video:"
+    title = f"Crossed {traj.cfg.line_name} in the video:"
     fig.text(0.02, y, title, ha="left", va="center", fontsize=9, color=INK_2)
     x = 0.02 + (0.075 * len(title) + 0.15) / width_in
     counters = []
@@ -505,7 +505,7 @@ def _hms(seconds: float) -> str:
 
 def _clock_text(t_sim: float) -> str:
     """Reloj del video: tiempo simulado en horas, minutos y segundos."""
-    return f"simulado {_hms(t_sim)}"
+    return f"simulated {_hms(t_sim)}"
 
 
 def _free_path(path: Path) -> Path:
@@ -521,12 +521,12 @@ def _free_path(path: Path) -> Path:
 def visualize(cfg: SimConfig, seed: int, anim: AnimationOptions, out_dir: Path, run_name: str) -> list[Path]:
     """Graba la réplica elegida en la ventana de [animation] y escribe el diagrama y el video."""
     start, end = anim.window(cfg)
-    print(f"Movimiento: réplica {anim.replica}, t = {start:g}–{end:g} s simulados, video ×{anim.speed:g} "
-          f"a {anim.fps} cuadros/s (~{(end - start) / anim.speed:.0f} s de video)")  # fmt: skip
+    print(f"Movement: replica {anim.replica}, t = {start:g}–{end:g} simulated s, video ×{anim.speed:g} "
+          f"at {anim.fps} frames/s (~{(end - start) / anim.speed:.0f} s of video)")  # fmt: skip
     traj = record(cfg, seed, anim.replica, start, end)
     tag = f"{start:g}-{end:g}s"
-    note = f"corrida {run_name} · semilla {seed} · réplica {anim.replica}"
-    diagram = _free_path(out_dir / f"espacio_tiempo_{tag}.png")
+    note = f"run {run_name} · seed {seed} · replica {anim.replica}"
+    diagram = _free_path(out_dir / f"space_time_{tag}.png")
     plot_space_time(traj, diagram, f"{note} · t = {start:g}–{end:g} s")  # su eje x está en segundos
-    video = render_video(traj, out_dir / f"movimiento_{tag}", anim, f"{note} · t = {_hms(start)}–{_hms(end)}")
+    video = render_video(traj, out_dir / f"movement_{tag}", anim, f"{note} · t = {_hms(start)}–{_hms(end)}")
     return [diagram, video]

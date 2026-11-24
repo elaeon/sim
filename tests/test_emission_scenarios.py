@@ -32,12 +32,12 @@ def test_command_compares_bumps(root, capsys):
     llegan, pero con tope tardan más y emiten más CO2 por km. Escribe tablas, datos, parámetros y la gráfica, y
     redibuja sin simular ni sobrescribir."""
     folder = emissions(["prueba"])
-    assert folder.parent == root / "resultados" and folder.name.endswith("_prueba")
+    assert folder.parent == root / "results" and folder.name.endswith("_prueba")
     files = {p.name for p in folder.iterdir()}
     assert {PLOT_NAME, DATA_NAME, META_NAME, TABLE_CSV, POSITION_CSV, SUMMARY_NAME, BASE_CONFIG_NAME} <= files
     assert CONFIG_NAME not in files and latest_run_dir(folder.parent) is None  # no es una corrida de `traffic`
     meta = json.loads((folder / META_NAME).read_text())
-    assert meta["escenarios"] == ["sin tope", "tope a 80 m"] and meta["topes_m"] == [[], [80.0]]
+    assert meta["escenarios"] == ["no bump", "bump at 80 m"] and meta["topes_m"] == [[], [80.0]]
     assert meta["contaminantes"] == ["co2", "nox", "voc"] and meta["semilla"] == 7
     with np.load(folder / DATA_NAME) as d:
         arrived = d["crossed_veh"][:, CAR]
@@ -46,56 +46,56 @@ def test_command_compares_bumps(root, capsys):
         assert d["emissions_pos"].shape[:2] == (2, len(POLLUTANTS)) and d["flow"].shape[0] == 2
     assert abs(arrived[0] - arrived[1]) <= 2 and travel[1] > travel[0] and co2[1] > 1.2 * co2[0]
     out = capsys.readouterr().out
-    assert "2 escenarios × 2 réplicas" in out and "auto: CO2 (g/km)" in out
-    assert "co2_cambio_pct" in (folder / TABLE_CSV).read_text().splitlines()[0]
+    assert "2 scenarios × 2 replicas" in out and "auto: CO2 (g/km)" in out
+    assert "co2_change_pct" in (folder / TABLE_CSV).read_text().splitlines()[0]
 
-    emissions(["--redibujar", str(folder)])
-    assert (folder / "comparacion_emisiones-2.png").stat().st_size > 10_000
+    emissions(["--redraw", str(folder)])
+    assert (folder / "emission_comparison-2.png").stat().st_size > 10_000
     assert (folder / PLOT_NAME).stat().st_size > 10_000
 
 
 def test_command_with_and_without_light(root):
-    folder = emissions(["--semaforo", "ambos", "--topes", "sin", "60", "--replicas", "1"])
+    folder = emissions(["--light", "both", "--bumps", "none", "60", "--replicas", "1"])
     meta = json.loads((folder / META_NAME).read_text())
-    assert meta["escenarios"] == ["sin tope · con semáforo", "tope a 60 m · con semáforo",
-                                  "sin tope · sin semáforo", "tope a 60 m · sin semáforo"]  # fmt: skip
+    assert meta["escenarios"] == ["no bump · with traffic light", "bump at 60 m · with traffic light",
+                                  "no bump · without traffic light", "bump at 60 m · without traffic light"]  # fmt: skip
     assert meta["semaforo"] == [True, True, False, False]
 
 
 def test_command_errors(root):
     with pytest.raises(SystemExit):
-        emissions(["--topes", "sin", "cien"])
+        emissions(["--bumps", "none", "cien"])
     with pytest.raises(SystemExit):
-        emissions(["--topes", "500"])  # fuera del tramo
+        emissions(["--bumps", "500"])  # fuera del tramo
     with pytest.raises(SystemExit):
-        emissions(["--redibujar", str(root)])  # no es una comparación
+        emissions(["--redraw", str(root)])  # no es una comparación
     (root / CONFIG_NAME).write_text((root / CONFIG_NAME).read_text().replace("accel = 2.5\n", ""), encoding="utf-8")
     with pytest.raises(SystemExit):
         emissions([])  # sin accel, los autos no emiten
 
 
 def test_scenarios_with_several_bumps(root):
-    """--topes 30,60 es un escenario con dos topes (también hay uno por cada sección [[speed_bump]])."""
+    """--bumps 30,60 es un escenario con dos topes (también hay uno por cada sección [[speed_bump]])."""
     from trafico.cli import _bumps
     from trafico.emission_scenarios import scenario_label
 
-    assert _bumps(["sin", "30,60", "45"], None, 100.0) == ((), (30.0, 60.0), (45.0,))
+    assert _bumps(["none", "30,60", "45"], None, 100.0) == ((), (30.0, 60.0), (45.0,))
     assert _bumps(None, (70.0, 20.0), 100.0) == ((), (20.0, 70.0))
     assert _bumps(None, None, 100.0) == ((), (50.0,))
-    assert scenario_label((60.0, 30.0), None) == "topes a 30 y 60 m" and scenario_label((), True) == "sin tope · con semáforo"
-    assert scenario_label(45.0, False) == "tope a 45 m · sin semáforo" and scenario_label(None, None) == "sin tope"
+    assert scenario_label((60.0, 30.0), None) == "bumps at 30 and 60 m" and scenario_label((), True) == "no bump · with traffic light"
+    assert scenario_label(45.0, False) == "bump at 45 m · without traffic light" and scenario_label(None, None) == "no bump"
     with pytest.raises(SystemExit):
-        emissions(["--topes", "30;60"])
-    folder = emissions(["--topes", "sin", "30,60", "--replicas", "1"])
+        emissions(["--bumps", "30;60"])
+    folder = emissions(["--bumps", "none", "30,60", "--replicas", "1"])
     meta = json.loads((folder / META_NAME).read_text())
-    assert meta["escenarios"] == ["sin tope", "topes a 30 y 60 m"] and meta["topes_m"] == [[], [30.0, 60.0]]
+    assert meta["escenarios"] == ["no bump", "bumps at 30 and 60 m"] and meta["topes_m"] == [[], [30.0, 60.0]]
     with np.load(folder / DATA_NAME) as d:
         co2 = d["emissions"][:, CAR, POLLUTANTS.index("co2")] / d["veh_km"][:, CAR]
     assert co2[1] > 1.2 * co2[0]
 
 
 def test_semaforo_option_switches_every_light(root):
-    """--semaforo no/si apaga o enciende todos los semáforos, también los intermedios."""
+    """--light no/yes apaga o enciende todos los semáforos, también los intermedios."""
     from dataclasses import replace
 
     from trafico.config import Light, SimConfig
@@ -108,7 +108,7 @@ def test_semaforo_option_switches_every_light(root):
                   replicas=1, run=3.0)  # fmt: skip
     (on_name, on), (off_name, off) = build_configs(base, s)
     assert on.has_light and on.inner_lights and not off.has_light and not off.inner_lights and not off.any_light
-    assert on_name == "sin tope · con semáforo" and off_name == "sin tope · sin semáforo"
+    assert on_name == "no bump · with traffic light" and off_name == "no bump · without traffic light"
 
 
 def test_scenarios_keep_the_pedestrian_crossing_of_the_bump():
@@ -127,7 +127,7 @@ def test_scenarios_keep_the_pedestrian_crossing_of_the_bump():
     (_, plain), (_, one), (_, two) = build_configs(base, s)
     assert plain.pedestrian_spots == () and not plain.stop_lines
     assert one.pedestrian_spots == (("tope", 60.0),) and one.speed_bumps == (bump,)
-    # Un tope en otra posición es como el configurado (con sus peatones); --carriles-tope reemplaza sus carriles.
+    # Un tope en otra posición es como el configurado (con sus peatones); --bump-lanes reemplaza sus carriles.
     assert two.pedestrian_spots == (("tope", 30.0), ("tope", 90.0)) and two.bumps[1].pedestrian_crossing.mean == 2
 
 

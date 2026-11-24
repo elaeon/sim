@@ -54,11 +54,11 @@ def test_animation_settings():
     s = parse_settings("[execution]\nrun = 10\n[animation]\nstart = 90\nduration = 50\n", Path("x.toml"))
     assert s.animation.window(s.sim) == (90.0, 100.0)  # no pasa del final de la corrida
     for text, message in [
-        ("[animation]\nstart = 100\n", r"\[animation\] start debe estar entre 0 y 100"),
-        ("[animation]\nduration = 0\n", r"\[animation\] duration debe ser mayor que 0"),
-        ("[animation]\nfps = 0\n", r"\[animation\] fps debe estar entre 1 y 60"),
-        ("[animation]\nreplica = 9\n", r"\[animation\] replica debe estar entre 1 y 8"),
-        ("[animation]\nzoom = 2\n", r"claves desconocidas: \[animation\] zoom"),
+        ("[animation]\nstart = 100\n", r"\[animation\] start must be between 0 and 100"),
+        ("[animation]\nduration = 0\n", r"\[animation\] duration must be greater than 0"),
+        ("[animation]\nfps = 0\n", r"\[animation\] fps must be between 1 and 60"),
+        ("[animation]\nreplica = 9\n", r"\[animation\] replica must be between 1 and 8"),
+        ("[animation]\nzoom = 2\n", r"unknown keys: \[animation\] zoom"),
     ]:
         with pytest.raises(ConfigError, match=message):
             parse_settings("[execution]\nrun = 10\n" + text, Path("x.toml"))
@@ -69,15 +69,15 @@ def test_viewer_command_writes_into_run_folder(root, capsys):
     before = {p.name for p in run_dir.iterdir()}
     paths = view([])  # sin argumento: la corrida más reciente
     assert [p.parent for p in paths] == [run_dir, run_dir]
-    assert {p.name for p in paths} == {"espacio_tiempo_5-9s.png", "movimiento_5-9s.webm"} or paths[1].suffix == ".gif"
+    assert {p.name for p in paths} == {"space_time_5-9s.png", "movement_5-9s.webm"} or paths[1].suffix == ".gif"
     assert all(p.stat().st_size > 1000 for p in paths)
     # Una segunda vista con otra ventana no sobrescribe nada; con la misma, agrega un sufijo.
-    again = view([str(run_dir), "--inicio", "5"])
+    again = view([str(run_dir), "--start", "5"])
     assert {p.name for p in again}.isdisjoint({p.name for p in paths})
     assert before <= {p.name for p in run_dir.iterdir()}
     with pytest.raises(SystemExit):
         view([str(root / "no_existe")])
-    assert "no es una carpeta de corrida" in capsys.readouterr().err
+    assert "is not a run folder" in capsys.readouterr().err
 
 
 def test_animation_option_in_run(root):
@@ -87,14 +87,14 @@ def test_animation_option_in_run(root):
     )
     run_dir = run([])
     names = {p.name for p in run_dir.iterdir()}
-    assert "espacio_tiempo_5-9s.png" in names
-    assert "movimiento_5-9s.webm" in names or "movimiento_5-9s.gif" in names
+    assert "space_time_5-9s.png" in names
+    assert "movement_5-9s.webm" in names or "movement_5-9s.gif" in names
 
 
 def test_gif_without_ffmpeg(root, monkeypatch):
     run_dir = run([])
     monkeypatch.setattr("shutil.which", lambda *a, **k: None)
-    paths = view([str(run_dir), "--duracion", "1"])
+    paths = view([str(run_dir), "--duration", "1"])
     assert paths[1].suffix == ".gif" and paths[1].stat().st_size > 1000
 
 
@@ -104,7 +104,7 @@ def test_video_formats(root, fmt):
     import subprocess
 
     run_dir = run([])
-    paths = view([str(run_dir), "--duracion", "1", "--formato", fmt])
+    paths = view([str(run_dir), "--duration", "1", "--format", fmt])
     video = paths[1]
     if shutil.which("ffmpeg") is None:
         assert video.suffix == ".gif"
@@ -118,16 +118,16 @@ def test_video_formats(root, fmt):
 def test_video_format_setting():
     s = parse_settings("[execution]\nrun = 10\n", Path("x.toml"))
     assert s.animation.format == "webm"
-    with pytest.raises(ConfigError, match=r"\[animation\] format debe ser 'webm', 'mp4', 'gif'"):
+    with pytest.raises(ConfigError, match=r"\[animation\] format must be 'webm', 'mp4', 'gif'"):
         parse_settings('[execution]\nrun = 10\n[animation]\nformat = "avi"\n', Path("x.toml"))
 
 
 def test_video_clock_shows_simulated_time_as_hms():
     from trafico.movement import _clock_text
 
-    assert _clock_text(360.0) == "simulado 00:06:00"
-    assert _clock_text(3725.9) == "simulado 01:02:05"  # los décimos no se muestran
-    assert _clock_text(0.0) == "simulado 00:00:00"
+    assert _clock_text(360.0) == "simulated 00:06:00"
+    assert _clock_text(3725.9) == "simulated 01:02:05"  # los décimos no se muestran
+    assert _clock_text(0.0) == "simulated 00:00:00"
 
 
 def test_crossing_counters_start_with_the_window():
@@ -207,10 +207,10 @@ def test_outputs_with_several_lights(root):
     )
     (root / CONFIG_NAME).write_text(text, encoding="utf-8")
     run_dir = run([])
-    summary = (run_dir / "resumen.txt").read_text(encoding="utf-8")
-    assert "semáforos a 60 m: rojo 8 s / verde 12 s, empieza en verde · a 150 m: rojo 10 s / verde 10 s" in summary
-    assert (run_dir / "movilidad_pasajeros.png").stat().st_size > 10_000
-    paths = view([str(run_dir), "--duracion", "2"])
+    summary = (run_dir / "summary.txt").read_text(encoding="utf-8")
+    assert "traffic lights at 60 m: red 8 s / green 12 s, starts green · at 150 m: red 10 s / green 10 s" in summary
+    assert (run_dir / "passenger_mobility.png").stat().st_size > 10_000
+    paths = view([str(run_dir), "--duration", "2"])
     assert all(p.stat().st_size > 1000 for p in paths)
     cfg = parse_settings((root / CONFIG_NAME).read_text(encoding="utf-8"), Path("x.toml")).sim
     traj = record(cfg, seed=1, replica=1, start=0, end=25)
@@ -232,13 +232,13 @@ def test_outputs_with_pedestrians(root):
     )
     (root / CONFIG_NAME).write_text(text, encoding="utf-8")
     run_dir = run([])
-    summary = (run_dir / "resumen.txt").read_text(encoding="utf-8")
-    assert "peatonal: rojo 6 s con peatones en espera, verde mínimo 4 s, amarillo 2 s" in summary
-    assert "Paso peatonal en el tope" in summary and "Semáforo peatonal a 60 m" in summary
-    assert "con el semáforo de" not in summary.split("Semáforo peatonal a 60 m")[0]  # no hay anterior a 60 m
-    block = summary.split("Peatones (media por réplica):")[1].splitlines()
-    assert "paso peatonal del tope a 30 m" in block[1] and "semáforo peatonal a 60 m" in block[2]
-    paths = view([str(run_dir), "--duracion", "2"])
+    summary = (run_dir / "summary.txt").read_text(encoding="utf-8")
+    assert "pedestrian: red 6 s with pedestrians waiting, minimum green 4 s, yellow 2 s" in summary
+    assert "Pedestrian crossing at the bump" in summary and "Pedestrian light at 60 m" in summary
+    assert "with the light at" not in summary.split("Pedestrian light at 60 m")[0]  # no hay anterior a 60 m
+    block = summary.split("Pedestrians (mean per replica):")[1].splitlines()
+    assert "pedestrian crossing at the bump at 30 m" in block[1] and "pedestrian light at 60 m" in block[2]
+    paths = view([str(run_dir), "--duration", "2"])
     assert all(p.stat().st_size > 1000 for p in paths)
     cfg = parse_settings((root / CONFIG_NAME).read_text(encoding="utf-8"), Path("x.toml")).sim
     traj = record(cfg, seed=1, replica=1, start=0, end=30)

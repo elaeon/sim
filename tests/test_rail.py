@@ -117,7 +117,7 @@ def test_cli_writes_timetable_summary_and_png(tmp_path, monkeypatch):
     route_file = tmp_path / "route_tiny.toml"
     route_file.write_text(CHEPE.read_text(encoding="utf-8"), encoding="utf-8")
     run_dir = run([str(route_file), "--no-video"])
-    assert run_dir.parent == tmp_path / "resultados" and run_dir.name.endswith("_tiny")
+    assert run_dir.parent == tmp_path / "results" and run_dir.name.endswith("_tiny")
     for name in ("summary.txt", "timetable.csv", "route.png", "route_tiny.toml"):
         assert (run_dir / name).is_file()
     assert "Los Mochis - Creel" in (run_dir / "summary.txt").read_text(encoding="utf-8")

@@ -65,8 +65,8 @@ def emissions_label(cfg: SimConfig) -> str | None:
         for k in active if cfg.specs[k].emits
     ]  # fmt: skip
     silent = [cfg.specs[k].name for k in active if not cfg.specs[k].emits]
-    return "Emisiones (modelo de Int Panis et al., 2006): " + " · ".join(parts) + (
-        f" · sin emisiones (sin coeficientes o sin accel/decel): {', '.join(silent)}" if silent else "")
+    return "Emissions (Int Panis et al., 2006 model): " + " · ".join(parts) + (
+        f" · no emissions (no coefficients or no accel/decel): {', '.join(silent)}" if silent else "")
 
 
 def emission_rate(coef: np.ndarray, v, a) -> np.ndarray:

@@ -1,5 +1,5 @@
 """Comparación de variantes: el escenario de una configuración con distintos largos de tramo y
-repartos del semáforo (`uv run traffic-variantes`).
+repartos del semáforo (`uv run traffic-variants`).
 
 Cada combinación de largo y semáforo es un escenario que corre `replicas` réplicas con las mismas
 semillas que `traffic` (SeedSequence.spawn), así que las variantes comparten los números
@@ -23,13 +23,13 @@ from trafico.config import DT, Rate, SimConfig
 from trafico.engine import Simulation
 from trafico.settings import ConfigError, RunOptions, validate_config
 
-PLOT_NAME = "variantes_semaforo.png"
-DATA_NAME = "datos.npz"
-META_NAME = "variantes.json"
-BASE_CONFIG_NAME = "config_base.toml"  # no se llama config.toml: la carpeta no es una corrida de `traffic`
-SPEED_CSV = "velocidad_por_carril.csv"
-QUEUE_CSV = "cola_entrada.csv"
-SUMMARY_NAME = "resumen.txt"
+PLOT_NAME = "light_variants.png"
+DATA_NAME = "data.npz"
+META_NAME = "variants.json"
+BASE_CONFIG_NAME = "base_config.toml"  # no se llama config.toml: la carpeta no es una corrida de `traffic`
+SPEED_CSV = "speed_per_lane.csv"
+QUEUE_CSV = "entry_queue.csv"
+SUMMARY_NAME = "summary.txt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,8 +48,8 @@ class Variants:
 def light_name(red: float, green: float) -> str:
     """Nombre de un reparto del semáforo: «rojo > verde», «rojo = verde» o «verde > rojo»."""
     if abs(red - green) < DT / 2:
-        return "rojo = verde"
-    return "rojo > verde" if red > green else "verde > rojo"
+        return "red = green"
+    return "red > green" if red > green else "green > red"
 
 
 def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple[str, ...]) -> SimConfig:
@@ -63,13 +63,13 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
     keys = [s.key for s in base.specs]
     for key in without:
         if key not in keys:
-            raise ConfigError(f"--sin: no existe el tipo {key!r} (claves: {', '.join(keys)})")
+            raise ConfigError(f"--without: there is no vehicle type {key!r} (keys: {', '.join(keys)})")
     old = tuple(range(base.lanes)) if lanes is None else lanes
     for ln in old:
         if not 0 <= ln < base.lanes:
-            raise ConfigError(f"--carriles: cada carril debe estar entre 0 y {base.lanes - 1}")
+            raise ConfigError(f"--lanes: each lane must be between 0 and {base.lanes - 1}")
     if len(set(old)) != len(old):
-        raise ConfigError("--carriles: hay carriles repetidos")
+        raise ConfigError("--lanes: there are repeated lanes")
     new_of = {ln: i for i, ln in enumerate(old)}
 
     specs, rates = [], []
@@ -79,13 +79,13 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
             spec = replace(spec, lane=None, exclusive=False, stop_position=None, bottleneck_prob=0.0)
         elif spec.lane is not None:
             if spec.lane not in new_of:
-                raise ConfigError(f"[vehicles.{spec.key}] lane = {spec.lane} no está en --carriles "
-                                  f"({', '.join(map(str, old))}); agrega ese carril o saca el tipo con --sin")  # fmt: skip
+                raise ConfigError(f"[vehicles.{spec.key}] lane = {spec.lane} is not in --lanes "
+                                  f"({', '.join(map(str, old))}); add that lane or remove the type with --without")  # fmt: skip
             spec = replace(spec, lane=new_of[spec.lane])
         specs.append(spec)
         rates.append(rate)
     if not any(rate.expected > 0 for rate in rates):
-        raise ConfigError("no queda ningún tipo con tasa > 0 (revisa --sin y [demand])")
+        raise ConfigError("no type with a rate > 0 is left (check --without and [demand])")
 
     bn_lanes = base.bottleneck.stop_lanes
     bumps = []
@@ -125,7 +125,7 @@ def scenario(reduced: SimConfig, v: Variants, length: float, red: float, green: 
     try:
         validate_config(cfg, RunOptions(replicas=v.replicas))
     except ConfigError as exc:
-        raise ConfigError(f"tramo de {length:g} m, semáforo {red:g}/{green:g}: {exc}") from None
+        raise ConfigError(f"{length:g} m segment, light {red:g}/{green:g}: {exc}") from None
     return cfg
 
 
@@ -177,13 +177,13 @@ def metadata(base: SimConfig, v: Variants, seed: int, argv: list[str]) -> dict:
     limits = reduced.lane_max_kmh
     old = list(range(base.lanes)) if v.lanes is None else list(v.lanes)
     return {
-        "comando": "uv run traffic-variantes " + " ".join(argv),
+        "comando": "uv run traffic-variants " + " ".join(argv),
         "semilla": seed,
         "largos_m": list(v.lengths),
         "semaforos": [{"rojo_s": r, "verde_s": g, "nombre": light_name(r, g)} for r, g in v.lights],
         "carriles_base": old,
         "carriles": [
-            f"carril {i} ({limits[i]:g} km/h)" if np.isfinite(limits[i]) else f"carril {i}" for i in range(reduced.lanes)
+            f"lane {i} ({limits[i]:g} km/h)" if np.isfinite(limits[i]) else f"lane {i}" for i in range(reduced.lanes)
         ],
         "sin": list(v.without),
         "tipos": keys,
@@ -208,8 +208,8 @@ def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
     lights = meta["semaforos"]
     with open(folder / SPEED_CSV, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["tramo_m", "semaforo", "rojo_s", "verde_s", "carril", "velocidad_kmh_media", "velocidad_kmh_sd",
-                    "cola_final_media", "cola_max_media", "cruzan_media"])  # fmt: skip
+        w.writerow(["segment_m", "light", "red_s", "green_s", "lane", "speed_kmh_mean", "speed_kmh_sd",
+                    "final_queue_mean", "max_queue_mean", "crossing_mean"])  # fmt: skip
         for li, L in enumerate(meta["largos_m"]):
             for vi, light in enumerate(lights):
                 q = queue[li, vi]
@@ -222,7 +222,7 @@ def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
     with open(folder / QUEUE_CSV, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         cols = [(li, vi) for li in range(len(meta["largos_m"])) for vi in range(len(lights))]
-        w.writerow(["t_sim_s"] + [f"{meta['largos_m'][li]:g}m_{lights[vi]['rojo_s']:g}-{lights[vi]['verde_s']:g}_media"
+        w.writerow(["t_sim_s"] + [f"{meta['largos_m'][li]:g}m_{lights[vi]['rojo_s']:g}-{lights[vi]['verde_s']:g}_mean"
                                   for li, vi in cols])  # fmt: skip
         means = queue.mean(axis=2)
         for i, ti in enumerate(t):
@@ -232,7 +232,7 @@ def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
 
 def summary_text(meta: dict, speed: np.ndarray, queue: np.ndarray, queue_label: str) -> str:
     lanes = meta["carriles"]
-    head = ["tramo", "semáforo"] + lanes + [f"cola final ({queue_label})"]
+    head = ["segment", "traffic light"] + lanes + [f"final queue ({queue_label})"]
     rows = []
     for li, L in enumerate(meta["largos_m"]):
         for vi, light in enumerate(meta["semaforos"]):
@@ -242,8 +242,8 @@ def summary_text(meta: dict, speed: np.ndarray, queue: np.ndarray, queue_label: 
     widths = [max(len(r[i]) for r in [head] + rows) for i in range(len(head))]
     lines = ["  ".join(c.rjust(w) if i > 1 else c.ljust(w) for i, (c, w) in enumerate(zip(r, widths)))
              for r in [head] + rows]  # fmt: skip
-    return "\n".join(["Velocidad media por carril (toda la corrida, incluye detenidos) y vehículos en la cola de entrada"
-                      " al final (media de las réplicas):", "", *lines])  # fmt: skip
+    return "\n".join(["Mean speed per lane (whole run, including stopped vehicles) and vehicles in the entry queue"
+                      " at the end (mean of the replicas):", "", *lines])  # fmt: skip
 
 
 def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
@@ -267,9 +267,11 @@ def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
 
 def load(folder: Path) -> tuple[dict, dict[str, np.ndarray]]:
     """Parámetros y datos de una comparación ya corrida."""
-    meta_path, data_path = folder / META_NAME, folder / DATA_NAME
+    from trafico.results import existing
+
+    meta_path, data_path = existing(folder, META_NAME), existing(folder, DATA_NAME)
     if not (meta_path.is_file() and data_path.is_file()):
-        raise ConfigError(f"{folder} no es una carpeta de traffic-variantes (faltan {META_NAME} o {DATA_NAME})")
+        raise ConfigError(f"{folder} is not a traffic-variants folder ({META_NAME} or {DATA_NAME} is missing)")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     with np.load(data_path) as d:
         data = {k: d[k] for k in d.files}

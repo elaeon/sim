@@ -1,6 +1,6 @@
 """`resultados.json`: el resumen de una corrida en un formato estable para programas (scripts, agentes, un servidor).
 
-Cada comando (`traffic`, `traffic-variantes`, `traffic-emisiones`, con o sin `--separacion`, y `traffic-calibrar`) lo
+Cada comando (`traffic`, `traffic-variants`, `traffic-emissions`, con o sin `--spacing`, y `traffic-calibrate`) lo
 escribe al final en la
 carpeta de resultados. Tiene siempre la misma cabecera y las métricas de cada modo bajo `"metricas"`:
 
@@ -22,7 +22,26 @@ from pathlib import Path
 import numpy as np
 
 SCHEMA = 1
-RESULTS_NAME = "resultados.json"
+RESULTS_NAME = "results.json"
+# Output files renamed to English on 2026-11-24: folders written before still use these names, so the readers
+# fall back to them (see `existing`).
+LEGACY_NAMES = {
+    "results.json": "resultados.json",
+    "scenarios.json": "escenarios.json",
+    "variants.json": "variantes.json",
+    "data.npz": "datos.npz",
+    "summary.txt": "resumen.txt",
+    "calibration.csv": "calibracion.csv",
+}
+
+
+def existing(folder: Path, name: str) -> Path:
+    """Path of `name` in `folder`, or of its old Spanish name if only that one exists (folders from earlier versions)."""
+    path = folder / name
+    legacy = LEGACY_NAMES.get(name)
+    if not path.is_file() and legacy is not None and (folder / legacy).is_file():
+        return folder / legacy
+    return path
 MODES = ("corrida", "variantes", "emisiones", "separacion", "calibracion")
 
 
@@ -73,11 +92,11 @@ def write_results(folder: Path, doc: dict) -> Path:
 
 def mode_of(folder: Path) -> str | None:
     """Modo de una carpeta de resultados sin `resultados.json` (de una versión anterior), por sus archivos."""
-    if (folder / "calibracion.csv").is_file():
+    if existing(folder, "calibration.csv").is_file():
         return "calibracion"
-    meta_path = folder / "escenarios.json"
+    meta_path = existing(folder, "scenarios.json")
     if not meta_path.is_file():
-        return "corrida" if (folder / "resumen.txt").is_file() else None
+        return "corrida" if existing(folder, "summary.txt").is_file() else None
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     if meta.get("modo") == "separacion":
         return "separacion"
@@ -107,14 +126,14 @@ def read_results(folder: str | Path) -> dict:
     """`resultados.json` de una carpeta. Si no lo tiene (corrida de una versión anterior) y es una comparación o un
     barrido, lo reconstruye de sus datos sin escribir nada; para una corrida de `traffic` sin él, `FileNotFoundError`."""
     folder = Path(folder).expanduser()
-    path = folder / RESULTS_NAME
+    path = existing(folder, RESULTS_NAME)
     if path.is_file():
         return json.loads(path.read_text(encoding="utf-8"))
     if not folder.is_dir():
-        raise FileNotFoundError(f"{folder} no es una carpeta de resultados")
+        raise FileNotFoundError(f"{folder} is not a results folder")
     doc = rebuild(folder)
     if doc is None:
-        raise FileNotFoundError(f"{folder} no tiene {RESULTS_NAME}: es de una versión anterior; vuelve a correrla")
+        raise FileNotFoundError(f"{folder} has no {RESULTS_NAME}: it is from an earlier version; run it again")
     return doc
 
 
@@ -128,8 +147,9 @@ def list_runs(output_dir: str | Path | None = None, mode: str | None = None, lim
     for folder in sorted((p for p in base.iterdir() if p.is_dir()), reverse=True) if base.is_dir() else []:
         if created(folder) is None:
             continue
-        has = (folder / RESULTS_NAME).is_file()
-        kind = json.loads((folder / RESULTS_NAME).read_text(encoding="utf-8")).get("modo") if has else mode_of(folder)
+        path = existing(folder, RESULTS_NAME)
+        has = path.is_file()
+        kind = json.loads(path.read_text(encoding="utf-8")).get("modo") if has else mode_of(folder)
         if kind is None or (mode is not None and kind != mode):
             continue
         out.append({"id": folder.name, "carpeta": str(folder.resolve()), "modo": kind, "creado": created(folder),

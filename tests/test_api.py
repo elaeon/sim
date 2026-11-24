@@ -32,11 +32,11 @@ def test_plain_makes_json_safe():
 
 def test_simulate_returns_the_results_document(root):
     r = api.simulate()
-    assert r.mode == "corrida" and r.folder.parent == root / "resultados" and "Resultados en" in r.log
+    assert r.mode == "corrida" and r.folder.parent == root / "results" and "Results in" in r.log
     doc = r.results
     assert doc["schema"] == SCHEMA and doc["modo"] == "corrida" and doc["semilla"] == 7 and doc["replicas"] == 2
     assert doc["id"] == r.folder.name and doc["comando"] == "uv run traffic"
-    assert {"resumen.txt", RESULTS_NAME, CONFIG_NAME} <= set(r.files) and r.path("resumen.txt").is_file()
+    assert {"summary.txt", RESULTS_NAME, CONFIG_NAME} <= set(r.files) and r.path("summary.txt").is_file()
     car = doc["metricas"]["tipos"]["car"]
     assert car["nombre"] and car["tiempo_recorrido_s"] > 0 and car["vehiculos_cruzan"] > 0
     assert "co2_g_km" in car and car["co2_g_km"] > 0 and car["velocidad_media_kmh"] > 0
@@ -48,9 +48,9 @@ def test_simulate_returns_the_results_document(root):
 
 def test_compare_emissions_and_spacing(root):
     r = api.compare_emissions(bumps=["sin", 40, (40, 90)], replicas=1)
-    assert r.mode == "emisiones" and r.results["metricas"]["referencia"] == "sin tope"
+    assert r.mode == "emisiones" and r.results["metricas"]["referencia"] == "no bump"
     names = [s["nombre"] for s in r.results["metricas"]["escenarios"]]
-    assert names[0] == "sin tope" and len(names) == 3
+    assert names[0] == "no bump" and len(names) == 3
     first, second = (s["tipos"]["car"]["co2"] for s in r.results["metricas"]["escenarios"][:2])
     assert first["cambio_pct"] == 0 and second["cambio_pct"] > 0 and second["unidad"] == "g/km"
     assert r.results["metricas"]["escenarios"][2]["topes_m"] == [40.0, 90.0]
@@ -78,13 +78,13 @@ def test_compare_variants(root):
 
 
 def test_errors_are_config_errors(root):
-    with pytest.raises(api.ConfigError, match="--topes"):
+    with pytest.raises(api.ConfigError, match="--bumps"):
         api.compare_emissions(bumps=["xx"], replicas=1)
-    with pytest.raises(api.ConfigError, match="name solo se admite sin config"):
+    with pytest.raises(api.ConfigError, match="name is only accepted without config"):
         api.simulate(root, name="x")
-    with pytest.raises(api.ConfigError, match="al menos 2 topes"):
+    with pytest.raises(api.ConfigError, match="at least 2 bumps"):
         api.bump_spacing(distances=[20], chain=1, replicas=1)
-    with pytest.raises(api.ConfigError, match="no existe la carpeta"):
+    with pytest.raises(api.ConfigError, match="does not exist"):
         api.simulate("no/existe")
     with pytest.raises(FileNotFoundError):
         read_results(root / "nada")
@@ -97,14 +97,14 @@ def test_api_does_not_print(root, capsys):
 
 
 def test_json_flag_prints_only_the_results(root, capsys):
-    folder = emissions(["--separacion", "20", "--replicas", "1", "--json"])
+    folder = emissions(["--spacing", "20", "--replicas", "1", "--json"])
     out = capsys.readouterr()
     doc = json.loads(out.out)  # stdout es solo el JSON
     assert doc["modo"] == "separacion" and doc["carpeta"] == str(folder.resolve())
-    assert "Separación mínima" in out.err  # lo demás, a stderr
+    assert "Minimum spacing" in out.err  # lo demás, a stderr
     run(["--json"])
     assert json.loads(capsys.readouterr().out)["modo"] == "corrida"
-    variants(["--largos", "100", "--replicas", "1", "--json"])
+    variants(["--lengths", "100", "--replicas", "1", "--json"])
     assert json.loads(capsys.readouterr().out)["modo"] == "variantes"
 
 
@@ -124,15 +124,15 @@ def test_list_runs_and_rebuild(root):
         assert not (run_.folder / RESULTS_NAME).exists()
     corrida = api.simulate()
     (corrida.folder / RESULTS_NAME).unlink()
-    with pytest.raises(FileNotFoundError, match="vuelve a correrla"):
+    with pytest.raises(FileNotFoundError, match="run it again"):
         read_results(corrida.folder)
 
 
 def test_redraw_and_describe_config(root):
     r = api.bump_spacing(distances=[20, 40], replicas=1)
     path = api.redraw(r.folder)
-    assert path.name == "separacion_topes-2.png" and path.stat().st_size > 10_000
-    with pytest.raises(api.ConfigError, match="solo esas se redibujan"):
+    assert path.name == "bump_spacing-2.png" and path.stat().st_size > 10_000
+    with pytest.raises(api.ConfigError, match="only those can be redrawn"):
         api.redraw(api.simulate().folder)
     info = api.describe_config()
     assert info["tramo"]["largo_m"] == 150.0 and info["tramo"]["carriles"] == 2
@@ -140,3 +140,25 @@ def test_redraw_and_describe_config(root):
     assert [t["clave"] for t in info["tipos"]][0] == "car" and info["semaforo"]["activo"] is False
     json.dumps(info, allow_nan=False)
     assert api.describe_config(root)["config"] == str((root / CONFIG_NAME).resolve())
+
+
+def test_folders_with_the_old_spanish_file_names_still_load(root, tmp_path):
+    """Folders written before the output files were renamed (resultados.json, escenarios.json, datos.npz, …) still load
+    and redraw."""
+    import shutil
+
+    from trafico.results import LEGACY_NAMES
+
+    folder = api.compare_emissions(bumps=["none", 40], replicas=1).folder
+    old = tmp_path / folder.name
+    shutil.copytree(folder, old)
+    for new, legacy in LEGACY_NAMES.items():
+        if (old / new).is_file():
+            (old / new).rename(old / legacy)
+    assert (old / "resultados.json").is_file() and not (old / "results.json").exists()
+    assert api.read_results(old)["modo"] == "emisiones"
+    assert [r["id"] for r in api.list_runs(output_dir=tmp_path)] == [old.name]
+    (old / "resultados.json").unlink()  # without the document, it is rebuilt from escenarios.json and datos.npz
+    assert api.read_results(old)["metricas"]["referencia"] == "no bump"
+    api.redraw(old)
+    assert (old / "emission_comparison.png").is_file()

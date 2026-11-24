@@ -64,24 +64,24 @@ def test_missing_keys_take_defaults_and_overrides_apply():
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("[road]\nlenght = 200\n", "claves desconocidas: [road] lenght"),
-        ("[road]\nmax_line_speed = [40, true]\n", "[road] max_line_speed debe ser un número o una lista"),
-        ("[road]\nmax_line_speed = [40, 0]\n", "[road] max_line_speed: cada valor debe ser mayor que 0"),
+        ("[road]\nlenght = 200\n", "unknown keys: [road] lenght"),
+        ("[road]\nmax_line_speed = [40, true]\n", "[road] max_line_speed must be a number or a list"),
+        ("[road]\nmax_line_speed = [40, 0]\n", "[road] max_line_speed: each value must be greater than 0"),
         (
             "[road]\nmax_line_speed = [40, 50, 40]\n[initial]\noccupancy = [0.2, 0.3]\n",
-            "las listas por carril deben tener el mismo largo",
+            "the per-lane lists must have the same length",
         ),
-        ("[output]\nseries_csv = 1\n", "[output] series_csv debe ser true o false"),
-        ("[output]\nemisiones_csv = 1\n", "[output] emisiones_csv debe ser true o false"),
-        ("[road]\nlength = 10\n", "[road] length debe ser al menos"),
-        ("[demand]\ncar_rate = {min = 0, max = 0, mean = 0, std = 0}\nbike_rate = {min = 0, max = 0, mean = 0, std = 0}\nbus_rate = {min = 0, max = 0, mean = 0, std = 0}\n", "al menos un tipo"),
-        ("[traffic_light]\nred = 12.35\n", "múltiplo de 0.1"),
-        ("[vehicles.car]\npax = {min = 1, max = 6, mean = 9, std = 1}\n", "pax: mean debe estar entre min y max"),
-        ("[vehicles.car]\npax = {min = 1, max = 6, mean = 2}\n", "falta la clave obligatoria [vehicles.car.pax] std"),
-        ("[vehicles.car]\npax = {min = 1, max = 6.5, mean = 2, std = 1}\n", "[vehicles.car.pax] max debe ser"),
-        ("[vehicles.car]\npax = 2\n", "[vehicles.car] pax debe ser un diccionario"),
-        ("[vehicles.car]\npax_mean = 2\n", "los pasajeros van ahora en un diccionario"),
-        ("road = 3\n[road.x]\n", "TOML inválido"),
+        ("[output]\nseries_csv = 1\n", "[output] series_csv must be true or false"),
+        ("[output]\nemisiones_csv = 1\n", "[output] emisiones_csv must be true or false"),
+        ("[road]\nlength = 10\n", "[road] length must be at least"),
+        ("[demand]\ncar_rate = {min = 0, max = 0, mean = 0, std = 0}\nbike_rate = {min = 0, max = 0, mean = 0, std = 0}\nbus_rate = {min = 0, max = 0, mean = 0, std = 0}\n", "at least one vehicle type"),
+        ("[traffic_light]\nred = 12.35\n", "multiple of 0.1"),
+        ("[vehicles.car]\npax = {min = 1, max = 6, mean = 9, std = 1}\n", "pax: mean must be between min and max"),
+        ("[vehicles.car]\npax = {min = 1, max = 6, mean = 2}\n", "missing required key [vehicles.car.pax] std"),
+        ("[vehicles.car]\npax = {min = 1, max = 6.5, mean = 2, std = 1}\n", "[vehicles.car.pax] max must be"),
+        ("[vehicles.car]\npax = 2\n", "[vehicles.car] pax must be a dictionary"),
+        ("[vehicles.car]\npax_mean = 2\n", "passengers now go in a dictionary"),
+        ("road = 3\n[road.x]\n", "invalid TOML"),
     ],
 )
 def test_invalid_config_is_rejected(text, message):
@@ -105,11 +105,11 @@ def test_new_vehicle_type_from_config_only():
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        (SCOOTER.replace("pax = {min = 1, max = 1, mean = 1, std = 0}\n", ""), "falta la clave obligatoria [vehicles.scooter] pax"),
-        (SCOOTER.replace("scooter_rate = {min = 6, max = 6, mean = 6, std = 0}\n", ""), "falta la clave obligatoria [demand] scooter_rate"),
-        ("[demand]\ntruck_rate = {min = 2, max = 2, mean = 2, std = 0}\n", "define también su sección [vehicles.truck]"),
-        (SCOOTER + 'name = "bici"\n', "se repite bici"),
-        ("[vehicles]\nscooter = 3\n", "debe ser una sección [vehicles.scooter]"),
+        (SCOOTER.replace("pax = {min = 1, max = 1, mean = 1, std = 0}\n", ""), "missing required key [vehicles.scooter] pax"),
+        (SCOOTER.replace("scooter_rate = {min = 6, max = 6, mean = 6, std = 0}\n", ""), "missing required key [demand] scooter_rate"),
+        ("[demand]\ntruck_rate = {min = 2, max = 2, mean = 2, std = 0}\n", "also define its [vehicles.truck] section"),
+        (SCOOTER + 'name = "bici"\n', "repeated: bici"),
+        ("[vehicles]\nscooter = 3\n", "must be a section [vehicles.scooter]"),
     ],
 )
 def test_invalid_new_vehicle_is_rejected(text, message):
@@ -143,30 +143,30 @@ def test_lanes_come_from_per_lane_lists(text, lanes, limits, occupancy):
     [(3, (0.2, 0.3, 0.5)), (5, (0.2, 0.3, 0.5, 0.5, 0.5)), (2, (0.2, 0.3)), (1, (0.2,))],
 )
 def test_legacy_lanes_key_still_replicates_old_copies(lanes, expected):
-    """[road] lanes está obsoleto, pero las copias anteriores lo tienen: se acepta con un aviso
+    """[road] lanes is obsolete, pero las copias anteriores lo tienen: se acepta con un aviso
     y las listas se ajustan a él."""
     s = _parse(f"[road]\nlanes = {lanes}\n[initial]\noccupancy = [0.2, 0.3, 0.5]\n")
     assert s.sim.lanes == lanes
     assert s.sim.lane_initial_occupancy == expected
-    assert "[road] lanes está obsoleto" in s.notices[0]
+    assert "[road] lanes is obsolete" in s.notices[0]
 
 
 def test_removed_saturation_threshold_is_ignored_in_old_copies():
     s = _parse("[output]\nsaturation_threshold = 0.9\n")
-    assert any("saturation_threshold se eliminó" in n for n in s.notices)
+    assert any("saturation_threshold was removed" in n for n in s.notices)
 
 
 def test_removed_show_is_ignored_in_old_copies():
     s = _parse("[output]\nshow = false\n")
-    assert any("[output] show se eliminó" in n for n in s.notices)
+    assert any("[output] show was removed" in n for n in s.notices)
     assert not hasattr(s.run, "show") and not _parse("").notices
 
 
 def test_removed_slow_lane_key_is_ignored_in_old_copies():
-    """[demand] slow_lane se eliminó: con "right" (lo que se hace ahora) se ignora con un aviso; otro valor es error."""
+    """[demand] slow_lane was removed: con "right" (lo que se hace ahora) se ignora con un aviso; otro valor es error."""
     s = _parse('[demand]\nslow_lane = "right"\n')
-    assert any("slow_lane se eliminó" in n for n in s.notices)
-    with pytest.raises(ConfigError, match="slow_lane se eliminó"):
+    assert any("slow_lane was removed" in n for n in s.notices)
+    with pytest.raises(ConfigError, match="slow_lane was removed"):
         _parse('[demand]\nslow_lane = "random"\n')
 
 
@@ -175,11 +175,11 @@ def test_free_lanes_settings():
     exclusive = "[vehicles.bike]\nlane = 0\nexclusive = true\n[vehicles.bus]\nlane = 2\nexclusive = true\n"
     sim = _parse("[road]\nmax_line_speed = [20, 40, 50]\n[traffic_light]\nfree_lanes = [0, 2]\n" + exclusive).sim
     assert sim.free_lanes == (0, 2) and [sim.ignores_light(k) for k in range(3)] == [False, True, True]
-    with pytest.raises(ConfigError, match="free_lanes: el carril 1 no es exclusivo de ningún tipo"):
+    with pytest.raises(ConfigError, match="free_lanes: lane 1 is not exclusive to any type"):
         _parse("[road]\nmax_line_speed = [20, 40, 50]\n[traffic_light]\nfree_lanes = [1]\n" + exclusive)
-    with pytest.raises(ConfigError, match=r"\[traffic_light\] free_lanes: cada carril debe estar entre 0 y 1"):
+    with pytest.raises(ConfigError, match=r"\[traffic_light\] free_lanes: each lane must be between 0 and 1"):
         _parse("[traffic_light]\nfree_lanes = [2]\n")
-    with pytest.raises(ConfigError, match="free_lanes: hay carriles repetidos"):
+    with pytest.raises(ConfigError, match="free_lanes: there are repeated lanes"):
         _parse("[traffic_light]\nfree_lanes = [0, 0]\n")
 
 
@@ -187,12 +187,12 @@ def test_traffic_light_can_be_disabled():
     """enabled = false, o red, green y yellow en 0, quitan el semáforo; con fases, green debe ser > 0."""
     assert _parse("").sim.has_light
     off = _parse("[traffic_light]\nenabled = false\n").sim
-    assert not off.has_light and off.light_label == "sin semáforo" and off.line_name == "el final del tramo"
+    assert not off.has_light and off.light_label == "no traffic light" and off.line_name == "the end of the segment"
     assert not _parse("[traffic_light]\nred = 0\ngreen = 0\nyellow = 0\n").sim.has_light
     assert not _parse("[traffic_light]\nenabled = false\nred = 30\ngreen = 0\n").sim.has_light  # se ignoran
-    with pytest.raises(ConfigError, match="green debe ser mayor que 0"):
+    with pytest.raises(ConfigError, match="green must be greater than 0"):
         _parse("[traffic_light]\nred = 30\ngreen = 0\n")
-    with pytest.raises(ConfigError, match="enabled debe ser true o false"):
+    with pytest.raises(ConfigError, match="enabled must be true or false"):
         _parse("[traffic_light]\nenabled = 0\n")
 
 
@@ -209,15 +209,15 @@ def test_emission_settings():
     assert car.emission_coefs("nox")[1] == (0.5, 0, 0, 0, 0, 0) and car.emission_coefs("voc") is None
     assert _parse("[vehicles.car.emissions]\n").sim.specs[0].emissions == ()
     s = _parse("[vehicles.car.emissions]\nco2 = [1, 2, 3, 4, 5, 6]\n")
-    assert any("sin accel y decel no se calculan las emisiones de auto" in n for n in s.notices)
+    assert any("without accel and decel the emissions of auto are not computed" in n for n in s.notices)
 
 
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("[vehicles.car.emissions]\nco2 = [1, 2, 3, 4, 5]\n", "co2 debe ser una lista de 6 números"),
-        ("[vehicles.car.emissions]\nco = [1, 2, 3, 4, 5, 6]\n", "claves desconocidas: [vehicles.car.emissions] co"),
-        ("[vehicles.car.emissions]\npm_decel = [1, 2, 3, 4, 5, 6]\n", "pm_decel requiere pm"),
+        ("[vehicles.car.emissions]\nco2 = [1, 2, 3, 4, 5]\n", "co2 must be a list of 6 numbers"),
+        ("[vehicles.car.emissions]\nco = [1, 2, 3, 4, 5, 6]\n", "unknown keys: [vehicles.car.emissions] co"),
+        ("[vehicles.car.emissions]\npm_decel = [1, 2, 3, 4, 5, 6]\n", "pm_decel requires pm"),
     ],
 )
 def test_invalid_emissions_are_rejected(text, message):
@@ -259,14 +259,14 @@ pedestrian_time = 6
     assert [(b.position) for b in sim.crossings] == [40.5] and sim.pedestrian_spots == (("tope", 40.5),)
     assert _parse("[[speed_bump]]\nposition = 60\n").sim.speed_bumps[0].position == 60.0
     for text, message in (
-        ("[[speed_bump]]\nposition = 60\n[[speed_bump]]\nposition = 200\n", "position debe estar entre 0 y 200 m"),
-        ("[[speed_bump]]\nposition = 60\n[[speed_bump]]\nposition = 60\n", "position: hay topes en la misma posición"),
-        ("[[speed_bump]]\nposition = [60, 80]\n", "[[speed_bump]] position del tope 1 debe ser un número"),
-        ("[[speed_bump]]\nlanes = [0]\n", "[[speed_bump]] del tope 1: lanes requiere position"),
-        ("[[speed_bump]]\n", "[[speed_bump]] falta position en el tope 1"),
-        ("[[speed_bump]]\nposition = 60\nfoo = 1\n", "claves desconocidas en el tope 1 de [[speed_bump]]: foo"),
-        ("[[speed_bump]]\nposition = 60\nlanes = [5]\n", "[speed_bump] a 60 m lanes: cada carril debe estar entre 0 y 1"),
-        ("speed_bump = 3\n", "[speed_bump] debe ser una sección o una lista de secciones"),
+        ("[[speed_bump]]\nposition = 60\n[[speed_bump]]\nposition = 200\n", "position must be between 0 and 200 m"),
+        ("[[speed_bump]]\nposition = 60\n[[speed_bump]]\nposition = 60\n", "position: there are bumps at the same position"),
+        ("[[speed_bump]]\nposition = [60, 80]\n", "[[speed_bump]] position of bump 1 must be a number"),
+        ("[[speed_bump]]\nlanes = [0]\n", "[[speed_bump]] of bump 1: lanes requires position"),
+        ("[[speed_bump]]\n", "[[speed_bump]] position is missing in bump 1"),
+        ("[[speed_bump]]\nposition = 60\nfoo = 1\n", "unknown keys in bump 1 of [[speed_bump]]: foo"),
+        ("[[speed_bump]]\nposition = 60\nlanes = [5]\n", "[speed_bump] at 60 m lanes: each lane must be between 0 and 1"),
+        ("speed_bump = 3\n", "[speed_bump] must be a section or a list of sections"),
     ):
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -277,22 +277,22 @@ def test_speed_bump_position_as_a_list_is_the_old_format():
     con un aviso."""
     s = _parse("[road]\nmax_line_speed = [20, 40, 50]\n[speed_bump]\nposition = [120, 40.5]\nlanes = [1]\n")
     assert [(b.position, b.lanes) for b in s.sim.bumps] == [(40.5, (1,)), (120.0, (1,))]
-    assert any("position como lista se reemplazó por una sección [[speed_bump]]" in n for n in s.notices)
+    assert any("position as a list was replaced by one [[speed_bump]] section" in n for n in s.notices)
     assert not _parse("[speed_bump]\nposition = 60\n").notices
-    with pytest.raises(ConfigError, match="position debe ser un número o una lista de números"):
+    with pytest.raises(ConfigError, match="position must be a number or a list of numbers"):
         _parse("[speed_bump]\nposition = [60, 'x']\n")
 
 
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("[speed_bump]\nposition = 0\n", "[speed_bump] position debe estar entre 0 y 200 m"),
-        ("[speed_bump]\nposition = 200\n", "[speed_bump] position debe estar entre 0 y 200 m"),
-        ("[speed_bump]\nposition = 60\nlanes = [2]\n", "[speed_bump] a 60 m lanes: cada carril debe estar entre 0 y 1"),
-        ("[speed_bump]\nposition = 60\nlanes = [1, 1]\n", "[speed_bump] a 60 m lanes: hay carriles repetidos"),
-        ("[speed_bump]\nposition = 60\nlanes = []\n", "[speed_bump] a 60 m lanes no puede estar vacía"),
-        ("[speed_bump]\nlanes = [1]\n", "[speed_bump]: lanes requiere position"),
-        ("[vehicles.car]\nspeed_bump_kmh = 0\n", "[vehicles.car] speed_bump_kmh debe ser mayor que 0"),
+        ("[speed_bump]\nposition = 0\n", "[speed_bump] position must be between 0 and 200 m"),
+        ("[speed_bump]\nposition = 200\n", "[speed_bump] position must be between 0 and 200 m"),
+        ("[speed_bump]\nposition = 60\nlanes = [2]\n", "[speed_bump] at 60 m lanes: each lane must be between 0 and 1"),
+        ("[speed_bump]\nposition = 60\nlanes = [1, 1]\n", "[speed_bump] at 60 m lanes: there are repeated lanes"),
+        ("[speed_bump]\nposition = 60\nlanes = []\n", "[speed_bump] at 60 m lanes cannot be empty"),
+        ("[speed_bump]\nlanes = [1]\n", "[speed_bump]: lanes requires position"),
+        ("[vehicles.car]\nspeed_bump_kmh = 0\n", "[vehicles.car] speed_bump_kmh must be greater than 0"),
     ],
 )
 def test_invalid_speed_bump_is_rejected(text, message):
@@ -305,10 +305,10 @@ def test_removed_congestion_factor_is_ignored_in_old_copies():
     carriles para que las copias anteriores carguen igual."""
     s = _parse("[behavior]\ncongestion_factor = [0.05, 0.5, 0.4]\n")
     assert s.sim.lanes == 3
-    assert any("congestion_factor se eliminó" in n for n in s.notices)
+    assert any("congestion_factor was removed" in n for n in s.notices)
     s = _parse("[road]\nmax_line_speed = [40, 50]\n[behavior]\ncongestion_factor = 0.3\n")
-    assert s.sim.lanes == 2 and any("congestion_factor se eliminó" in n for n in s.notices)
-    with pytest.raises(ConfigError, match="las listas por carril deben tener el mismo largo"):
+    assert s.sim.lanes == 2 and any("congestion_factor was removed" in n for n in s.notices)
+    with pytest.raises(ConfigError, match="the per-lane lists must have the same length"):
         _parse("[road]\nmax_line_speed = [40, 50]\n[behavior]\ncongestion_factor = [0.1, 0.2, 0.3]\n")
 
 
@@ -316,8 +316,8 @@ def test_fixed_lane_per_type():
     s = _parse("[road]\nmax_line_speed = [50, 50, 50]\n[vehicles.bike]\nlane = 0\n[vehicles.bus]\nlane = 1\n")
     assert [spec.lane for spec in s.sim.specs] == [None, 0, 1]
     for text, message in [
-        ("[vehicles.bus]\nlane = 2\n", "[vehicles.bus] lane debe estar entre 0 (carril derecho) y 1"),
-        ("[vehicles.car]\nlane = 0\n", "[vehicles.car] lane solo aplica a tipos con lane_change = false"),
+        ("[vehicles.bus]\nlane = 2\n", "[vehicles.bus] lane must be between 0 (right lane) and 1"),
+        ("[vehicles.car]\nlane = 0\n", "[vehicles.car] lane only applies to types with lane_change = false"),
     ]:
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -332,9 +332,9 @@ def test_overtake_and_lane_change_thresholds_per_type():
     assert not car.overtake and car.lookahead is None and car.min_advantage is None
     for text, message in [
         (SCOOTER + "lane_change = false\novertake = true\n",
-         "[vehicles.scooter] overtake solo aplica a tipos con lane_change = true"),
-        ("[vehicles.bus]\nlookahead = 40\n", "[vehicles.bus] lookahead solo aplica a tipos con lane_change = true"),
-        ("[vehicles.car]\nmin_advantage = -1\n", "[vehicles.car] min_advantage no puede ser negativo"),
+         "[vehicles.scooter] overtake only applies to types with lane_change = true"),
+        ("[vehicles.bus]\nlookahead = 40\n", "[vehicles.bus] lookahead only applies to types with lane_change = true"),
+        ("[vehicles.car]\nmin_advantage = -1\n", "[vehicles.car] min_advantage cannot be negative"),
     ]:  # fmt: skip
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -345,13 +345,13 @@ def test_yellow_light_settings():
                "[behavior]\nyellow_approach = 40\nyellow_speed_factor = 0.6\n")  # fmt: skip
     assert s.sim.yellow == 3.0 and s.sim.cycle == 63.0
     assert s.sim.behavior.yellow_approach == 40.0 and s.sim.behavior.yellow_speed_factor == 0.6
-    assert s.sim.light_label == "rojo 25 s / verde 35 s / amarillo 3 s"
-    assert _parse("").sim.yellow == 0.0 and _parse("").sim.light_label == "rojo 30 s / verde 30 s"
+    assert s.sim.light_label == "red 25 s / green 35 s / yellow 3 s"
+    assert _parse("").sim.yellow == 0.0 and _parse("").sim.light_label == "red 30 s / green 30 s"
     for text, message in [
-        ("[traffic_light]\nyellow = -1\n", "[traffic_light] yellow no puede ser negativo"),
-        ("[traffic_light]\nyellow = 3.05\n", "[traffic_light] yellow debe ser múltiplo de 0.1 s"),
-        ("[behavior]\nyellow_speed_factor = 0\n", "[behavior] yellow_speed_factor debe estar en (0, 1]"),
-        ("[behavior]\nyellow_approach = -5\n", "[behavior] yellow_approach no puede ser negativo"),
+        ("[traffic_light]\nyellow = -1\n", "[traffic_light] yellow cannot be negative"),
+        ("[traffic_light]\nyellow = 3.05\n", "[traffic_light] yellow must be a multiple of 0.1 s"),
+        ("[behavior]\nyellow_speed_factor = 0\n", "[behavior] yellow_speed_factor must be in (0, 1]"),
+        ("[behavior]\nyellow_approach = -5\n", "[behavior] yellow_approach cannot be negative"),
     ]:
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -360,7 +360,7 @@ def test_yellow_light_settings():
 def test_leader_slowdown_setting():
     assert _parse("").sim.behavior.leader_slowdown == 0.25
     assert _parse("[behavior]\nleader_slowdown = 0.4\n").sim.behavior.leader_slowdown == 0.4
-    with pytest.raises(ConfigError, match=re.escape("[behavior] leader_slowdown debe estar en [0, 1)")):
+    with pytest.raises(ConfigError, match=re.escape("[behavior] leader_slowdown must be in [0, 1)")):
         _parse("[behavior]\nleader_slowdown = 1\n")
 
 
@@ -384,16 +384,16 @@ def test_cargo_type_and_variable_length():
     assert DEFAULT_SPECS[0].cargo_prob == 0 and DEFAULT_SPECS[0].longest == DEFAULT_SPECS[0].length
     for text, message in [
         (CARGA_TOML.replace("cargo_prob = 1", "cargo_prob = 0.5"),
-         "falta la clave obligatoria [vehicles.carga] pax"),
-        ("[vehicles.car]\ncargo_prob = 1.5\n", "[vehicles.car] cargo_prob debe estar entre 0 y 1"),
-        ("[vehicles.car]\nlength = {min = 4, max = 5, mean = 4.5, std = -1}\n", "[vehicles.car] length: std no puede ser negativa"),
-        ("[vehicles.car]\nlength = {min = 5, max = 6, mean = 4.5, std = 1}\n", "[vehicles.car] length: debe cumplirse 0 < min ≤ mean ≤ max"),
-        ("[vehicles.car]\nlength = {min = 0, max = 6, mean = 4.5, std = 1}\n", "[vehicles.car] length: debe cumplirse 0 < min"),
-        ("[vehicles.car]\nlength = {min = 4, max = 5, mean = 4.5}\n", "falta la clave obligatoria [vehicles.car.length] std"),
-        ("[vehicles.car]\nlength = 4.5\n", "[vehicles.car] length debe ser un diccionario"),
-        ("[vehicles.car]\nlength_std = 2\n", "el largo va ahora en un diccionario"),
+         "missing required key [vehicles.carga] pax"),
+        ("[vehicles.car]\ncargo_prob = 1.5\n", "[vehicles.car] cargo_prob must be between 0 and 1"),
+        ("[vehicles.car]\nlength = {min = 4, max = 5, mean = 4.5, std = -1}\n", "[vehicles.car] length: std cannot be negative"),
+        ("[vehicles.car]\nlength = {min = 5, max = 6, mean = 4.5, std = 1}\n", "[vehicles.car] length: 0 < min ≤ mean ≤ max must hold"),
+        ("[vehicles.car]\nlength = {min = 0, max = 6, mean = 4.5, std = 1}\n", "[vehicles.car] length: 0 < min"),
+        ("[vehicles.car]\nlength = {min = 4, max = 5, mean = 4.5}\n", "missing required key [vehicles.car.length] std"),
+        ("[vehicles.car]\nlength = 4.5\n", "[vehicles.car] length must be a dictionary"),
+        ("[vehicles.car]\nlength_std = 2\n", "length now goes in a dictionary"),
         (SCOOTER.replace("length = {min = 1.5, max = 1.5, mean = 1.5, std = 0}\n", ""),
-         "falta la clave obligatoria [vehicles.scooter] length"),
+         "missing required key [vehicles.scooter] length"),
     ]:  # fmt: skip
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -404,17 +404,17 @@ def test_variable_speed_setting():
     assert (car.slowest_kmh, car.speed_kmh, car.fastest_kmh, car.speed_std) == (60.0, 75.0, 90.0, 8.0)
     assert DEFAULT_SPECS[0].fastest_kmh == DEFAULT_SPECS[0].speed_kmh  # sin std, fija
     for text, message in [
-        ("[vehicles.car]\nspeed_kmh = 80\n", "[vehicles.car] speed_kmh debe ser un diccionario"),
+        ("[vehicles.car]\nspeed_kmh = 80\n", "[vehicles.car] speed_kmh must be a dictionary"),
         ("[vehicles.car]\nspeed_kmh = {min = 60, max = 90, mean = 75}\n",
-         "falta la clave obligatoria [vehicles.car.speed_kmh] std"),
+         "missing required key [vehicles.car.speed_kmh] std"),
         ("[vehicles.car]\nspeed_kmh = {min = 60, max = 90, mean = 75, std = -1}\n",
-         "[vehicles.car] speed_kmh: std no puede ser negativa"),
+         "[vehicles.car] speed_kmh: std cannot be negative"),
         ("[vehicles.car]\nspeed_kmh = {min = 80, max = 90, mean = 75, std = 5}\n",
-         "[vehicles.car] speed_kmh: debe cumplirse 0 < min ≤ mean ≤ max"),
+         "[vehicles.car] speed_kmh: 0 < min ≤ mean ≤ max must hold"),
         ("[vehicles.car]\nspeed_kmh = {min = 0, max = 90, mean = 75, std = 5}\n",
-         "[vehicles.car] speed_kmh: debe cumplirse 0 < min"),
+         "[vehicles.car] speed_kmh: 0 < min"),
         (SCOOTER.replace("speed_kmh = {min = 25, max = 25, mean = 25, std = 0}\n", ""),
-         "falta la clave obligatoria [vehicles.scooter] speed_kmh"),
+         "missing required key [vehicles.scooter] speed_kmh"),
     ]:  # fmt: skip
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -424,7 +424,7 @@ def test_pass_in_lane_setting():
     assert not _parse("").sim.specs[1].pass_in_lane  # por defecto, no
     bike = _parse("[vehicles.bike]\nabreast = 2\npass_in_lane = true\n").sim.specs[1]
     assert bike.pass_in_lane and bike.abreast == 2
-    with pytest.raises(ConfigError, match=re.escape("[vehicles.bike] pass_in_lane = true requiere abreast ≥ 2")):
+    with pytest.raises(ConfigError, match=re.escape("[vehicles.bike] pass_in_lane = true requires abreast ≥ 2")):
         _parse("[vehicles.bike]\npass_in_lane = true\n")
 
 
@@ -441,8 +441,8 @@ def test_gradual_dynamics_settings():
     car = _parse("[vehicles.car]\naccel = 2.5\ndecel = 4.5\n").sim.specs[0]
     assert (car.accel, car.decel) == (2.5, 4.5)
     for text, message in [
-        ("[vehicles.car]\naccel = 0\n", "[vehicles.car] accel debe estar en (0, 20] m/s²"),
-        ("[vehicles.car]\ndecel = 25\n", "[vehicles.car] decel debe estar en (0, 20] m/s²"),
+        ("[vehicles.car]\naccel = 0\n", "[vehicles.car] accel must be in (0, 20] m/s²"),
+        ("[vehicles.car]\ndecel = 25\n", "[vehicles.car] decel must be in (0, 20] m/s²"),
     ]:
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -453,7 +453,7 @@ def test_time_headway_settings():
     car = _parse("[vehicles.car]\ntime_headway = 1.1\n").sim.specs[0]
     assert car.time_headway == 1.1
     for text in ("[vehicles.car]\ntime_headway = 0\n", "[vehicles.car]\ntime_headway = 6\n"):
-        with pytest.raises(ConfigError, match=re.escape("[vehicles.car] time_headway debe estar entre 0 y 5 s")):
+        with pytest.raises(ConfigError, match=re.escape("[vehicles.car] time_headway must be between 0 and 5 s")):
             _parse(text)
 
 
@@ -463,9 +463,9 @@ def test_exit_queue_settings():
     sim = _parse("[exit]\ncapacity = [0, 15, 20]\nstorage = 8\n").sim
     assert sim.lanes == 3 and sim.lane_exit_capacity == (0.0, 15.0, 20.0) and sim.lane_exit_storage == (8.0,) * 3
     for text, message in [
-        ("[exit]\ncapacity = -1\n", "[exit] capacity: cada valor debe ser ≥ 0"),
-        ("[exit]\ncapacity = 10\nstorage = 0\n", "[exit] storage: cada valor debe ser > 0 m"),
-        ("[road]\nmax_line_speed = [30, 50]\n[exit]\ncapacity = [1, 2, 3]\n", "[exit] capacity tiene 3"),
+        ("[exit]\ncapacity = -1\n", "[exit] capacity: each value must be ≥ 0"),
+        ("[exit]\ncapacity = 10\nstorage = 0\n", "[exit] storage: each value must be > 0 m"),
+        ("[road]\nmax_line_speed = [30, 50]\n[exit]\ncapacity = [1, 2, 3]\n", "[exit] capacity has 3"),
     ]:  # fmt: skip
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -475,9 +475,9 @@ def test_summary_reports_cargo_share(root):
     text = FAST + CARGA_TOML.replace("carga_rate = {min = 1, max = 1, mean = 1, std = 0}", "carga_rate = {min = 30, max = 30, mean = 30, std = 0}") + "[vehicles.car]\ncargo_prob = 0.3\n"
     (root / CONFIG_NAME).write_text(text, encoding="utf-8")
     summary = (run([]) / SUMMARY_NAME).read_text()
-    row = next(line for line in summary.splitlines() if line.startswith("Con mercancía (%)"))
+    row = next(line for line in summary.splitlines() if line.startswith("Carrying goods (%)"))
     assert row.split()[-1] == "100.0"  # carga: toda con mercancía
-    pax_row = next(line for line in summary.splitlines() if line.startswith("Pasajeros por vehículo"))
+    pax_row = next(line for line in summary.splitlines() if line.startswith("Passengers per vehicle"))
     assert pax_row.split()[-1] == "—"  # sin pasajeros
 
 
@@ -487,9 +487,9 @@ def test_initial_occupancy_setting():
     assert s.lanes == 3 and s.lane_initial_occupancy == (0.2, 0.5, 0.5)
     assert _parse("[road]\nmax_line_speed = [30, 50]\n[initial]\noccupancy = 0.4\n").sim.lane_initial_occupancy == (0.4, 0.4)
     for text, message in [
-        ("[initial]\noccupancy = 1.2\n", "[initial] occupancy: cada valor debe estar en [0, 1]"),
+        ("[initial]\noccupancy = 1.2\n", "[initial] occupancy: each value must be in [0, 1]"),
         ("[road]\nmax_line_speed = [30, 50]\n[initial]\noccupancy = [0.1, 0.2, 0.3]\n",
-         "[initial] occupancy tiene 3"),
+         "[initial] occupancy has 3"),
     ]:  # fmt: skip
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -502,13 +502,13 @@ def test_reaction_time_settings():
     assert (b.reaction_min, b.reaction_max, b.reaction_mean, b.reaction_std) == (0.7, 3.0, None, None)
     assert _parse("").sim.behavior.reaction_std is None  # por defecto, uniforme
     for text, message in [
-        ("reaction = {min = 1, max = 3, mean = 2}", "[behavior] reaction: mean y std van juntas"),
-        ("reaction = {min = 1, mean = 2, std = 1}", "falta la clave obligatoria [behavior.reaction] max"),
-        ("reaction = {min = 1, max = 3, mean = 2, std = -1}", "[behavior] reaction: std no puede ser negativa"),
-        ("reaction = {min = 1, max = 3, mean = 9, std = 1}", "[behavior] reaction: mean debe estar entre min y max"),
-        ("reaction = {min = 3, max = 1}", "[behavior] reaction: debe cumplirse 0 < min ≤ max ≤ 600"),
-        ("reaction = 2", "[behavior] reaction debe ser un diccionario"),
-        ("reaction_min = 2", "la reacción va ahora en un diccionario"),
+        ("reaction = {min = 1, max = 3, mean = 2}", "[behavior] reaction: mean and std go together"),
+        ("reaction = {min = 1, mean = 2, std = 1}", "missing required key [behavior.reaction] max"),
+        ("reaction = {min = 1, max = 3, mean = 2, std = -1}", "[behavior] reaction: std cannot be negative"),
+        ("reaction = {min = 1, max = 3, mean = 9, std = 1}", "[behavior] reaction: mean must be between min and max"),
+        ("reaction = {min = 3, max = 1}", "[behavior] reaction: 0 < min ≤ max ≤ 600 must hold"),
+        ("reaction = 2", "[behavior] reaction must be a dictionary"),
+        ("reaction_min = 2", "reaction now goes in a dictionary"),
     ]:  # fmt: skip
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(f"[behavior]\n{text}\n")
@@ -521,14 +521,14 @@ def test_bottleneck_settings():
     assert default.bottleneck_lanes() == (0, 1) and default.bottleneck_zone() == (0.0, 200.0)
     assert not default.bottleneck_active
     for text, message in [
-        ("[bottleneck]\nstop_lanes = [5]\n", "[bottleneck] stop_lanes: cada carril debe estar entre 0 y 1"),
-        ("[bottleneck]\nstop_zone = [150, 250]\n", "[bottleneck] stop_zone requiere 0 ≤ inicio < fin ≤ 200"),
-        ("[bottleneck]\nstop_zone = 50\n", "[bottleneck] stop_zone debe ser una lista [inicio, fin]"),
-        ("[bottleneck]\nstop_lanes = 1\n", "[bottleneck] stop_lanes debe ser una lista de enteros"),
+        ("[bottleneck]\nstop_lanes = [5]\n", "[bottleneck] stop_lanes: each lane must be between 0 and 1"),
+        ("[bottleneck]\nstop_zone = [150, 250]\n", "[bottleneck] stop_zone requires 0 ≤ start < end ≤ 200"),
+        ("[bottleneck]\nstop_zone = 50\n", "[bottleneck] stop_zone must be a list [start, end]"),
+        ("[bottleneck]\nstop_lanes = 1\n", "[bottleneck] stop_lanes must be a list of integers"),
         # La probabilidad y la duración ya no van en [bottleneck]: el error dice a dónde se movieron.
         ("[bottleneck]\nstop_prob = 0.1\nstop_time_mean = 20\n",
-         "en [bottleneck] solo quedan stop_lanes y stop_zone: la probabilidad y la duración van en cada "
-         "[vehicles.<clave>] como bottleneck_prob, bottleneck_time_mean"),
+         "[bottleneck] only keeps stop_lanes and stop_zone: the probability and duration go in each "
+         "[vehicles.<key>] as bottleneck_prob, bottleneck_time_mean"),
     ]:  # fmt: skip
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -542,11 +542,11 @@ def test_bottleneck_per_type_settings():
     assert sim.bottleneck_prob(0) == 0.05 and sim.bottleneck_time(0) == (30.0, 0.0)  # duración por defecto
     assert sim.bottleneck_prob(1) == 0.0 and sim.bottleneck_active
     for text, message in [
-        ("[vehicles.car]\nbottleneck_prob = 1.5\n", "[vehicles.car] bottleneck_prob debe estar entre 0 y 1"),
+        ("[vehicles.car]\nbottleneck_prob = 1.5\n", "[vehicles.car] bottleneck_prob must be between 0 and 1"),
         ("[vehicles.car]\nbottleneck_time_std = -2\n",
-         "[vehicles.car] bottleneck_time_mean y bottleneck_time_std no pueden ser negativos"),
+         "[vehicles.car] bottleneck_time_mean and bottleneck_time_std cannot be negative"),
         ("[vehicles.bus]\nstop_position = 100\nbottleneck_prob = 0.5\n",
-         "[vehicles.bus] bottleneck_prob no aplica a un tipo con parada propia"),
+         "[vehicles.bus] bottleneck_prob does not apply to a type with its own stop"),
     ]:  # fmt: skip
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -557,7 +557,7 @@ def test_vehicle_type_limit():
     vehicle = SCOOTER[SCOOTER.index("[vehicles.scooter]") :]
     text = "[demand]\n" + "".join(f"{k}_rate = {{min = 1, max = 1, mean = 1, std = 0}}\n" for k in keys)
     text += "".join(vehicle.replace("scooter", k) for k in keys)
-    with pytest.raises(ConfigError, match=f"hasta {MAX_TYPES} tipos"):
+    with pytest.raises(ConfigError, match=f"up to {MAX_TYPES} vehicle types"):
         _parse(text)
 
 
@@ -611,32 +611,32 @@ def test_resolve_target(root, monkeypatch):
     monkeypatch.chdir(root)
     (root / "escenario").mkdir()
     (root / "otro.toml").write_text("", encoding="utf-8")
-    assert resolve_target(None) == Target(root / CONFIG_NAME, None, "corrida")
-    assert resolve_target("hora_pico") == Target(root / CONFIG_NAME, "hora_pico", "corrida")
+    assert resolve_target(None) == Target(root / CONFIG_NAME, None, "run")
+    assert resolve_target("hora_pico") == Target(root / CONFIG_NAME, "hora_pico", "run")
     assert resolve_target("escenario") == Target(Path("escenario") / CONFIG_NAME, None, "escenario")
     assert resolve_target(str(root / CONFIG_NAME)).config == root / CONFIG_NAME
-    with pytest.raises(ConfigError, match="debe llamarse config.toml"):
+    with pytest.raises(ConfigError, match="must be called config.toml"):
         resolve_target("otro.toml")
-    with pytest.raises(ConfigError, match="no existe la carpeta"):
-        resolve_target("resultados/no_existe")
+    with pytest.raises(ConfigError, match="does not exist"):
+        resolve_target("results/no_existe")
 
 
 def test_name_argument_and_replication(root, capsys):
     first = run(["hora pico"])  # nombre con espacio: se sanea
-    assert first.parent == root / "resultados" and _named(first, "hora_pico")
-    assert {p.name for p in first.iterdir()} == {CONFIG_NAME, PLOT_NAME, PAX_PLOT_NAME, CSV_NAME, SUMMARY_NAME, "resultados.json"}
+    assert first.parent == root / "results" and _named(first, "hora_pico")
+    assert {p.name for p in first.iterdir()} == {CONFIG_NAME, PLOT_NAME, PAX_PLOT_NAME, CSV_NAME, SUMMARY_NAME, "results.json"}
     assert (first / PLOT_NAME).stat().st_size > 10_000
     assert (first / PAX_PLOT_NAME).stat().st_size > 10_000
     lines = (first / CSV_NAME).read_text().splitlines()
-    assert lines[0].startswith("t_sim_s,t_proceso_s,cum_pax_auto_media")
-    assert "saturacion_carril1_media,saturacion_carril1_sd" in lines[0]  # 2 carriles
-    assert "velocidad_kmh_carril1_media,velocidad_kmh_carril1_sd" in lines[0]
-    assert "cruzan_veh_min_carril1_media,cruzan_veh_min_carril1_sd" in lines[0]
-    assert lines[0].endswith("cola_entrada_veh_carril1_media,cola_entrada_veh_carril1_sd")  # sin cola de salida
+    assert lines[0].startswith("t_sim_s,t_process_s,cum_pax_auto_mean")
+    assert "saturation_lane1_mean,saturation_lane1_sd" in lines[0]  # 2 carriles
+    assert "speed_kmh_lane1_mean,speed_kmh_lane1_sd" in lines[0]
+    assert "crossing_veh_min_lane1_mean,crossing_veh_min_lane1_sd" in lines[0]
+    assert lines[0].endswith("entry_queue_veh_lane1_mean,entry_queue_veh_lane1_sd")  # sin cola de salida
     assert len(lines) == 1 + 20  # 20 s simulados muestreados cada 1 s
     copy = tomllib.loads((first / CONFIG_NAME).read_text())
     assert copy["output"]["name"] == "hora_pico"
-    assert f"semilla {copy['execution']['seed']}" in (first / SUMMARY_NAME).read_text()
+    assert f"seed {copy['execution']['seed']}" in (first / SUMMARY_NAME).read_text()
 
     # Réplica desde la carpeta de resultados: conserva el nombre y los resultados.
     second = run([str(first)])
@@ -644,11 +644,11 @@ def test_name_argument_and_replication(root, capsys):
     assert (second / CSV_NAME).read_bytes() == (first / CSV_NAME).read_bytes()
     # Leer el config.toml de la copia directamente también conserva el nombre registrado.
     assert _named(run([str(first / CONFIG_NAME)]), "hora_pico")
-    assert "Pasajeros que cruzan" in capsys.readouterr().out
+    assert "Passengers crossing" in capsys.readouterr().out
 
 
 def test_default_and_folder_names(root):
-    assert _named(run([]), "corrida")
+    assert _named(run([]), "run")
     scenario = root / "escenarios" / "lluvia"
     scenario.mkdir(parents=True)
     (scenario / CONFIG_NAME).write_text(FAST, encoding="utf-8")
@@ -659,13 +659,13 @@ def test_default_and_folder_names(root):
 
 def test_cli_reports_config_errors(root, capsys):
     with pytest.raises(SystemExit) as exc:
-        run(["resultados/no_existe"])
+        run(["results/no_existe"])
     assert exc.value.code == 2
-    assert "no existe la carpeta" in capsys.readouterr().err
+    assert "does not exist" in capsys.readouterr().err
     (root / "vacia").mkdir()
     with pytest.raises(SystemExit):
         run([str(root / "vacia")])
-    assert "no existe el archivo de configuración" in capsys.readouterr().err
+    assert "configuration file" in capsys.readouterr().err
 
 
 def test_run_with_new_vehicle_type(tmp_path):
@@ -674,13 +674,13 @@ def test_run_with_new_vehicle_type(tmp_path):
     (folder / CONFIG_NAME).write_text(
         SCOOTER
         + "[execution]\nrun = 2\nreplicas = 2\nworkers = 1\n"
-        + f'[output]\ndir = "{tmp_path / "resultados"}"\nprogress = false\n',
+        + f'[output]\ndir = "{tmp_path / "results"}"\nprogress = false\n',
         encoding="utf-8",
     )
     run_dir = run([str(folder)])
     assert _named(run_dir, "con_scooter")
     header = (run_dir / CSV_NAME).read_text().splitlines()[0]
-    assert "cum_pax_scooter_media" in header
+    assert "cum_pax_scooter_mean" in header
     assert "scooter" in (run_dir / SUMMARY_NAME).read_text()
 
 
@@ -693,11 +693,11 @@ def test_exclusive_lanes():
     assert s.sim.allowed_lanes(0) == (2,)
     assert s.sim.free_flow_kmh(0) == 50
     for text, message in [
-        ("[vehicles.bike]\nexclusive = true\n", "[vehicles.bike] exclusive = true requiere un carril fijo (lane)"),
+        ("[vehicles.bike]\nexclusive = true\n", "[vehicles.bike] exclusive = true requires a fixed lane (lane)"),
         (
             "[road]\nmax_line_speed = [40, 40]\n[vehicles.bike]\nlane = 0\nexclusive = true\n"
             "[vehicles.bus]\nlane = 1\nexclusive = true\n",
-            "[vehicles.car] no le queda carril",
+            "[vehicles.car] has no lane left",
         ),
     ]:
         with pytest.raises(ConfigError, match=re.escape(message)):
@@ -716,9 +716,9 @@ def test_bus_stop_settings():
     assert s.sim.specs[0].stop_position is None  # los demás tipos no paran
     assert _parse("[vehicles.bus]\nstop_position = 150\n").sim.specs[BUS].stop_time_mean == 20.0
     for text, message in [
-        ("[vehicles.bus]\nstop_position = 5\n", "[vehicles.bus] stop_position debe estar entre 12 "),
-        ("[vehicles.bus]\nstop_position = 250\n", "y 200 m (el semáforo)"),
-        ("[vehicles.bus]\nstop_position = 150\nstop_time_std = -1\n", "no pueden ser negativos"),
+        ("[vehicles.bus]\nstop_position = 5\n", "[vehicles.bus] stop_position must be between 12 "),
+        ("[vehicles.bus]\nstop_position = 250\n", "and 200 m (the traffic light)"),
+        ("[vehicles.bus]\nstop_position = 150\nstop_time_std = -1\n", "cannot be negative"),
     ]:
         with pytest.raises(ConfigError, match=re.escape(message)):
             _parse(text)
@@ -734,14 +734,14 @@ def test_rate_is_a_dictionary():
 @pytest.mark.parametrize(
     ("demand", "message"),
     [
-        ("car_rate = 15", "car_rate debe ser un diccionario"),
-        ("car_rate = {min = 1, max = 20, mean = 15}", "falta la clave obligatoria [demand.car_rate] std"),
-        ('car_rate = {min = 1, max = "20", mean = 15, std = 5}', "[demand.car_rate] max debe ser"),
-        ("car_rate = {min = 1, max = 20, mean = 15, std = 5, avg = 3}", "claves desconocidas: [demand.car_rate] avg"),
+        ("car_rate = 15", "car_rate must be a dictionary"),
+        ("car_rate = {min = 1, max = 20, mean = 15}", "missing required key [demand.car_rate] std"),
+        ('car_rate = {min = 1, max = "20", mean = 15, std = 5}', "[demand.car_rate] max must be"),
+        ("car_rate = {min = 1, max = 20, mean = 15, std = 5, avg = 3}", "unknown keys: [demand.car_rate] avg"),
         ("car_rate = {min = 10, max = 20, mean = 25, std = 5}", "0 ≤ min ≤ mean ≤ max"),
-        ("car_rate = {min = 1, max = 20, mean = 15, std = -1}", "std no puede ser negativa"),
-        ("rate_interval = 0.05", "rate_interval debe ser"),
-        ("rate_interval = 30.05", "rate_interval debe ser múltiplo"),
+        ("car_rate = {min = 1, max = 20, mean = 15, std = -1}", "std cannot be negative"),
+        ("rate_interval = 0.05", "rate_interval must be"),
+        ("rate_interval = 30.05", "rate_interval must be a multiple"),
     ],
 )
 def test_invalid_rates(demand, message):
@@ -776,7 +776,7 @@ def test_fuel_notices():
     base = "[vehicles.car]\naccel = 2.5\ndecel = 4.5\n"
     assert not _parse(base + "[fuel]\nprice = {gasolina = 24}\n").notices
     notices = _parse(base).notices
-    assert any("sin precio en [fuel] price para gasolina" in n for n in notices)
+    assert any("no price in [fuel] price for gasolina" in n for n in notices)
     # Sin participar, no hay aviso.
     assert not _parse(base + "[demand]\ncar_rate = {min = 0, max = 0, mean = 0, std = 0}\n").notices
 
@@ -784,15 +784,15 @@ def test_fuel_notices():
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ('[vehicles.car.emissions]\nsource = "copert"\n', "no existe el conjunto 'copert'; hay int_panis_2006, sedema_cdmx_2018"),
-        ('[vehicles.bike.emissions]\nsource = "sedema_cdmx_2018"\n', "el conjunto 'sedema_cdmx_2018' no tiene el tipo 'bike'"),
-        ('[vehicles.car.emissions]\nsource = "int_panis_2006"\nsource_type = "taxi"\n', "no tiene el tipo 'taxi' (source_type)"),
-        ('[vehicles.car.emissions]\nsource_type = "taxi"\n', "source_type requiere source"),
-        ('[vehicles.car]\nfuel = "hidrogeno"\n', "fuel debe ser uno de gasolina, diesel, glp"),
-        ("[vehicles.car]\nmass_kg = 0\n", "mass_kg debe ser mayor que 0"),
-        ("[fuel]\nprice = {gasolina = -1}\n", "el precio de gasolina no puede ser negativo"),
-        ("[fuel]\nprice = 24\n", "[fuel] price debe ser un diccionario"),
-        ("[fuel]\nprice = {electricidad = 3}\n", "claves desconocidas: [fuel.price] electricidad"),
+        ('[vehicles.car.emissions]\nsource = "copert"\n', "there is no set 'copert'; the sets are int_panis_2006, sedema_cdmx_2018"),
+        ('[vehicles.bike.emissions]\nsource = "sedema_cdmx_2018"\n', "the set 'sedema_cdmx_2018' has no type 'bike'"),
+        ('[vehicles.car.emissions]\nsource = "int_panis_2006"\nsource_type = "taxi"\n', "has no type 'taxi' (source_type)"),
+        ('[vehicles.car.emissions]\nsource_type = "taxi"\n', "source_type requires source"),
+        ('[vehicles.car]\nfuel = "hidrogeno"\n', "fuel must be one of gasolina, diesel, glp"),
+        ("[vehicles.car]\nmass_kg = 0\n", "mass_kg must be greater than 0"),
+        ("[fuel]\nprice = {gasolina = -1}\n", "the price of gasolina cannot be negative"),
+        ("[fuel]\nprice = 24\n", "[fuel] price must be a dictionary"),
+        ("[fuel]\nprice = {electricidad = 3}\n", "unknown keys: [fuel.price] electricidad"),
     ],
 )
 def test_invalid_fuel_and_sets_are_rejected(text, message):
@@ -858,17 +858,17 @@ def test_traffic_light_free_lanes_are_per_light():
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("[[traffic_light]]\nposition = 50\n[[traffic_light]]\nposition = 50\n", "hay semáforos en la misma posición"),
-        ("[[traffic_light]]\nposition = 250\n", "cada semáforo intermedio debe estar entre 0 y 200 m"),
-        ("[[traffic_light]]\nposition = 0\n", "cada semáforo intermedio debe estar entre 0 y 200 m"),
-        ("[[traffic_light]]\nred = 10\n[[traffic_light]]\nposition = 200\n", "hay 2 semáforos en el final del tramo"),
-        ("[[traffic_light]]\nposition = 50\nfoo = 1\n", "claves desconocidas en el semáforo 1 de [[traffic_light]]: foo"),
-        ("[[traffic_light]]\nposition = 50\ngreen = 0\n", "[traffic_light] a 50 m green debe ser mayor que 0"),
-        ("[[traffic_light]]\nposition = 50\nstart_phase = \"azul\"\n", 'a 50 m start_phase debe ser "red" o "green"'),
-        ("[[traffic_light]]\nposition = 50\nred = 10.05\n", "a 50 m red debe ser múltiplo de 0.1 s"),
-        ("[[traffic_light]]\nposition = 50\nfree_lanes = [0]\n", "a 50 m free_lanes: el carril 0 no es exclusivo"),
-        ("[[traffic_light]]\nposition = 50\nfree_lanes = [5]\n", "a 50 m free_lanes: cada carril debe estar entre 0 y"),
-        ("traffic_light = 3\n", "[traffic_light] debe ser una sección o una lista de secciones"),
+        ("[[traffic_light]]\nposition = 50\n[[traffic_light]]\nposition = 50\n", "there are lights at the same position"),
+        ("[[traffic_light]]\nposition = 250\n", "each intermediate light must be between 0 and 200 m"),
+        ("[[traffic_light]]\nposition = 0\n", "each intermediate light must be between 0 and 200 m"),
+        ("[[traffic_light]]\nred = 10\n[[traffic_light]]\nposition = 200\n", "there are 2 lights at the end of the segment"),
+        ("[[traffic_light]]\nposition = 50\nfoo = 1\n", "unknown keys in traffic light 1 of [[traffic_light]]: foo"),
+        ("[[traffic_light]]\nposition = 50\ngreen = 0\n", "[traffic_light] at 50 m green must be greater than 0"),
+        ("[[traffic_light]]\nposition = 50\nstart_phase = \"azul\"\n", 'at 50 m start_phase must be "red" or "green"'),
+        ("[[traffic_light]]\nposition = 50\nred = 10.05\n", "at 50 m red must be a multiple of 0.1 s"),
+        ("[[traffic_light]]\nposition = 50\nfree_lanes = [0]\n", "at 50 m free_lanes: lane 0 is not exclusive"),
+        ("[[traffic_light]]\nposition = 50\nfree_lanes = [5]\n", "at 50 m free_lanes: each lane must be between 0 and"),
+        ("traffic_light = 3\n", "[traffic_light] must be a section or a list of sections"),
     ],
 )
 def test_invalid_several_traffic_lights_are_rejected(text, message):
@@ -880,18 +880,18 @@ def test_plot_options_in_output(root):
     """mobility_plot, passengers_plot y emissions_plot: por defecto se dibujan las tres; en false no se escribe su PNG
     (el CSV de emisiones y el resto de las salidas sí)."""
     assert _parse("").run.mobility_plot and _parse("").run.emissions_plot and _parse("").run.passengers_plot
-    with pytest.raises(ConfigError, match="mobility_plot debe ser true o false"):
+    with pytest.raises(ConfigError, match="mobility_plot must be true or false"):
         _parse("[output]\nmobility_plot = 1\n")
     emits = "[vehicles.car]\naccel = 2.5\ndecel = 4.5\n"
     (root / CONFIG_NAME).write_text(FAST + emits, encoding="utf-8")
     names = {p.name for p in run([]).iterdir()}
-    assert {"movilidad_pasajeros.png", "emisiones_posicion.png", "emisiones_posicion.csv",
-            "distribucion_pasajeros.png"} <= names  # fmt: skip
+    assert {"passenger_mobility.png", "emissions_by_position.png", "emissions_by_position.csv",
+            "passenger_distribution.png"} <= names  # fmt: skip
     off = FAST + "mobility_plot = false\nemissions_plot = false\npassengers_plot = false\n" + emits  # en [output]
     (root / CONFIG_NAME).write_text(off, encoding="utf-8")
     names = {p.name for p in run([]).iterdir()}
-    assert not {"movilidad_pasajeros.png", "emisiones_posicion.png", "distribucion_pasajeros.png"} & names
-    assert {"resumen.txt", "emisiones_posicion.csv", "series.csv"} <= names
+    assert not {"passenger_mobility.png", "emissions_by_position.png", "passenger_distribution.png"} & names
+    assert {"summary.txt", "emissions_by_position.csv", "series.csv"} <= names
 
 
 def test_csv_options_in_output(root):
@@ -899,15 +899,15 @@ def test_csv_options_in_output(root):
     `csv`, el nombre anterior de series_csv, sigue valiendo en las copias viejas, con un aviso."""
     assert _parse("").run.series_csv and _parse("").run.emisiones_csv and not hasattr(_parse("").run, "csv")
     s = _parse("[output]\ncsv = false\n")
-    assert not s.run.series_csv and any("[output] csv se renombró series_csv" in n for n in s.notices)
+    assert not s.run.series_csv and any("[output] csv was renamed series_csv" in n for n in s.notices)
     assert _parse("[output]\nseries_csv = false\n").run.series_csv is False and not _parse("").notices
     emits = "[vehicles.car]\naccel = 2.5\ndecel = 4.5\n"
     (root / CONFIG_NAME).write_text(FAST + emits, encoding="utf-8")
-    assert {"series.csv", "emisiones_posicion.csv", "emisiones_posicion.png"} <= {p.name for p in run([]).iterdir()}
+    assert {"series.csv", "emissions_by_position.csv", "emissions_by_position.png"} <= {p.name for p in run([]).iterdir()}
     off = FAST + "series_csv = false\nemisiones_csv = false\n" + emits
     (root / CONFIG_NAME).write_text(off, encoding="utf-8")
     names = {p.name for p in run([]).iterdir()}
-    assert not {"series.csv", "emisiones_posicion.csv"} & names and "emisiones_posicion.png" in names
+    assert not {"series.csv", "emissions_by_position.csv"} & names and "emissions_by_position.png" in names
     (root / CONFIG_NAME).write_text(FAST + "csv = false\n" + emits, encoding="utf-8")  # copia anterior
     assert "series.csv" not in {p.name for p in run([]).iterdir()}
 
@@ -970,19 +970,19 @@ red = 10
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("[speed_bump]\npedestrian = true\n", "[speed_bump]: pedestrian requiere position"),
-        ("[speed_bump]\nposition = 60\npedestrian = 1\n", "[speed_bump] pedestrian debe ser true o false"),
-        ("[speed_bump]\nposition = 60\npedestrian = true\npedestrian_time = 0.05\n", "pedestrian_time debe ser un múltiplo"),
+        ("[speed_bump]\npedestrian = true\n", "[speed_bump]: pedestrian requires position"),
+        ("[speed_bump]\nposition = 60\npedestrian = 1\n", "[speed_bump] pedestrian must be true or false"),
+        ("[speed_bump]\nposition = 60\npedestrian = true\npedestrian_time = 0.05\n", "pedestrian_time must be a multiple"),
         ("[speed_bump]\nposition = 60\npedestrian = true\npedestrian_crossing = {min = 3, max = 1, mean = 2, std = 1}\n",
-         "[speed_bump] a 60 m pedestrian_crossing: debe cumplirse 0 ≤ min ≤ mean ≤ max"),
+         "[speed_bump] at 60 m pedestrian_crossing: 0 ≤ min ≤ mean ≤ max must hold"),
         ("[speed_bump]\nposition = 60\npedestrian = true\npedestrian_crossing = {min = 1}\n",
-         "falta la clave obligatoria [speed_bump.pedestrian_crossing] max"),
+         "missing required key [speed_bump.pedestrian_crossing] max"),
         ("[speed_bump]\nposition = 60\npedestrian = true\npedestrian_crossing = 2\n",
-         "[speed_bump] pedestrian_crossing debe ser un diccionario"),
-        ("[traffic_light]\npedestrian = true\nstart_phase = \"green\"\n", "start_phase no aplica a un semáforo con pedestrian"),
-        ("[traffic_light]\npedestrian = true\nred = 0\n", "red debe ser mayor que 0 con pedestrian = true"),
+         "[speed_bump] pedestrian_crossing must be a dictionary"),
+        ("[traffic_light]\npedestrian = true\nstart_phase = \"green\"\n", "start_phase does not apply to a light with pedestrian"),
+        ("[traffic_light]\npedestrian = true\nred = 0\n", "red must be greater than 0 with pedestrian = true"),
         ("[traffic_light]\npedestrian = true\nred = 10\npedestrian_crossing = {min = 1, max = 2, mean = 5, std = 1}\n",
-         "[traffic_light] pedestrian_crossing: debe cumplirse 0 ≤ min ≤ mean ≤ max"),
+         "[traffic_light] pedestrian_crossing: 0 ≤ min ≤ mean ≤ max must hold"),
     ],
 )
 def test_invalid_pedestrian_options_are_rejected(text, message):
@@ -999,9 +999,9 @@ def test_disabled_intermediate_lights_skip_the_position_check():
     assert sim.has_light and sim.inner_lights == () and len(sim.extra_lights) == 2
     assert _parse(head + "[[traffic_light]]\nposition = 300\nred = 0\ngreen = 0\nyellow = 0\n").sim.inner_lights == ()
     # Uno activado en esa posición sigue rechazándose, y una repetida entre dos activados también.
-    with pytest.raises(ConfigError, match="cada semáforo intermedio debe estar entre 0 y 200 m"):
+    with pytest.raises(ConfigError, match="each intermediate light must be between 0 and 200 m"):
         _parse(head + off + "[[traffic_light]]\nposition = 250\n")
-    with pytest.raises(ConfigError, match="hay semáforos en la misma posición"):
+    with pytest.raises(ConfigError, match="there are lights at the same position"):
         _parse(head + "[[traffic_light]]\nposition = 50\nenabled = false\n[[traffic_light]]\nposition = 50\n"
                "[[traffic_light]]\nposition = 50\n")  # fmt: skip
     # Desactivado y activado en la misma posición no chocan.

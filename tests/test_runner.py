@@ -47,9 +47,9 @@ def test_rate_label():
     assert _rate_label(20) == "20/min"
     assert _rate_label(1) == "1/min"
     assert _rate_label(21.1482) == "21.1/min"  # media real de una tasa variable
-    assert _rate_label(0.15) == "1 cada 7 min"
-    assert _rate_label(0.2) == "1 cada 5 min"
-    assert _rate_label(0.9) == "1 cada 1 min"
+    assert _rate_label(0.15) == "1 every 7 min"
+    assert _rate_label(0.2) == "1 every 5 min"
+    assert _rate_label(0.9) == "1 every 1 min"
 
 
 def test_lane_label_shows_fixed_lanes():
@@ -62,12 +62,12 @@ def test_lane_label_shows_fixed_lanes():
     cfg = SimConfig(lanes=3, specs=(car, dataclasses.replace(bike, lane=0), dataclasses.replace(bus, lane=1)))
     assigned = _lane_assignments(cfg, [0, 1, 2])
     assert assigned == [["bici"], ["autobús"], []]
-    assert _lane_label(0, 3, assigned[0]) == "carril 0 (derecho, bici)"
-    assert _lane_label(1, 3, assigned[1]) == "carril 1 (autobús)"
-    assert _lane_label(2, 3, assigned[2]) == "carril 2 (izquierdo)"
+    assert _lane_label(0, 3, assigned[0]) == "lane 0 (right, bici)"
+    assert _lane_label(1, 3, assigned[1]) == "lane 1 (autobús)"
+    assert _lane_label(2, 3, assigned[2]) == "lane 2 (left)"
     assert _lane_assignments(cfg, [0, 2]) == [[], ["autobús"], []]  # la bici no participa
     cfg = dataclasses.replace(cfg, specs=(car, dataclasses.replace(bike, lane=0, exclusive=True), bus))
-    assert _lane_label(0, 3, _lane_assignments(cfg, [0, 1, 2])[0]) == "carril 0 (derecho, solo bici)"
+    assert _lane_label(0, 3, _lane_assignments(cfg, [0, 1, 2])[0]) == "lane 0 (right, only bici)"
 
 
 def test_lane_colors_are_fixed():
@@ -128,8 +128,8 @@ def test_outputs_without_traffic_light(tmp_path):
     write_csv(agg, tmp_path / "series.csv")
     plot_space_time(record(cfg, 5, 1, 0, 30), tmp_path / "espacio.png", "prueba")
     assert (tmp_path / "movilidad.png").stat().st_size > 10_000 and (tmp_path / "espacio.png").exists()
-    assert phase_handles(cfg) == [] and "ventana de 60 s" in _titles(cfg)["pax_flow"]
-    assert "semáforo" not in " ".join(_titles(cfg).values())
+    assert phase_handles(cfg) == [] and "60 s window" in _titles(cfg)["pax_flow"]
+    assert "traffic light" not in " ".join(_titles(cfg).values())
 
 
 def test_emission_outputs(tmp_path):
@@ -146,19 +146,19 @@ def test_emission_outputs(tmp_path):
                     fuel_price=(("gasolina", 24.0),))  # fmt: skip
     agg = run_parallel(cfg, 2, 1, 5)
     text = format_summary(agg)
-    assert "CO2 (g/km)" in text and "NOx exceso vs flujo libre (%)" in text and "PM" not in text
-    assert "0→20 km/h en 2.2 s" in text
+    assert "CO2 (g/km)" in text and "NOx excess vs free flow (%)" in text and "PM" not in text
+    assert "0→20 km/h in 2.2 s" in text
     # Combustible del CO2: L/100 km = g/km de CO2 ÷ g/L × 100, y su costo al precio de la gasolina.
-    assert "Combustible (L/100 km)" in text and "Costo por recorrido (MXN)" in text
-    assert "40 km/h: 7.6 L/100 km (13.1 km/L, 1.83 MXN/km) · física 4.8 L/100 km" in text
+    assert "Fuel (L/100 km)" in text and "Cost per trip (MXN)" in text
+    assert "40 km/h: 7.6 L/100 km (13.1 km/L, 1.83 MXN/km) · physical 4.8 L/100 km" in text
     assert "60 km/h:" not in text  # el auto incorporado no pasa de 50 km/h
     write_csv(agg, tmp_path / "series.csv")
     header = (tmp_path / "series.csv").read_text().splitlines()[0]
-    assert "emis_co2_g_min_auto_media" in header and "comb_l_min_auto_media" in header
-    assert "comb_l_min_bici" not in header
+    assert "emis_co2_g_min_auto_mean" in header and "fuel_l_min_auto_mean" in header
+    assert "fuel_l_min_bici" not in header
     write_emissions_csv(agg, tmp_path / "pos.csv")
     header = (tmp_path / "pos.csv").read_text().splitlines()[0]
-    assert header.startswith("x_inicio_m,x_fin_m,co2_g_m_h_carril0")
+    assert header.startswith("x_start_m,x_end_m,co2_g_m_h_lane0")
     plot_emissions_by_position(agg, tmp_path / "pos.png")
     plot_mobility(agg, tmp_path / "mov.png")
     assert (tmp_path / "pos.png").stat().st_size > 10_000

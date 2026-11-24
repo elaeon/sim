@@ -4,10 +4,10 @@
 
     run = api.simulate()                                   # como `uv run traffic`
     run.results["metricas"]["tipos"]["car"]["tiempo_recorrido_s"]
-    run = api.compare_emissions(bumps=["sin", 35, (35, 70)], replicas=4)
+    run = api.compare_emissions(bumps=["none", 35, (35, 70)], replicas=4)
     run = api.bump_spacing(distances=[20, 40, 60], chain=3)
     run = api.light_spacing(distances=[50, 100, 200], cycle=(30, 30, 3))
-    run = api.light_spacing(distances=[25, 50], chain=3, fixed=[150], offset=["verde", "rojo"])
+    run = api.light_spacing(distances=[25, 50], chain=3, fixed=[150], offset=["green", "red"])
     api.list_runs(mode="separacion", limit=5)
 
 Contrato (`API_VERSION`):
@@ -64,7 +64,7 @@ class Run:
         return list(self.results["archivos"])
 
     def path(self, name: str) -> Path:
-        """Ruta de un archivo de la carpeta (p. ej. `run.path("resumen.txt")`)."""
+        """Ruta de un archivo de la carpeta (p. ej. `run.path("summary.txt")`)."""
         return self.folder / name
 
 
@@ -76,15 +76,15 @@ def _call(command, argv: list[str]) -> tuple[Path, str]:
             folder = command(argv)
     except SystemExit as exc:
         message = err.getvalue().strip().splitlines()
-        text = re.sub(r"^.*?error: ", "", message[-1]) if message else f"el comando terminó con código {exc.code}"
+        text = re.sub(r"^.*?error: ", "", message[-1]) if message else f"the command exited with code {exc.code}"
         raise ConfigError(text) from None
     return Path(folder), out.getvalue()
 
 
 def _target(config: str | Path | None, name: str | None) -> list[str]:
     if config is not None and name is not None:
-        raise ConfigError("name solo se admite sin config (con config, la carpeta de resultados toma el nombre de la "
-                          "carpeta de la configuración)")  # fmt: skip
+        raise ConfigError("name is only accepted without config (with config, the results folder takes the name of the "
+                          "configuration folder)")  # fmt: skip
     value = config if config is not None else name
     return [] if value is None else [str(value)]
 
@@ -104,18 +104,20 @@ def _finish(command, argv: list[str], mode: str) -> Run:
 
 
 def _bump(b) -> str:
-    """Un escenario de topes de `compare_emissions` como lo pide `--topes`."""
+    """Un escenario de topes de `compare_emissions` como lo pide `--bumps`."""
     if b is None:
-        return "sin"
+        return "none"
     if isinstance(b, str):
-        return b
+        return "none" if b.lower() == "sin" else b
     if isinstance(b, (list, tuple)):
-        return ",".join(f"{x:g}" for x in b) or "sin"
+        return ",".join(f"{x:g}" for x in b) or "none"
     return f"{b:g}"
 
 
 def _light(value) -> str:
-    return "si" if value is True else "no" if value is False else "config" if value is None else str(value)
+    if value is True or value is False or value is None:
+        return {True: "yes", False: "no", None: "config"}[value]
+    return {"si": "yes", "ambos": "both"}.get(str(value), str(value))  # also the Spanish values of earlier versions
 
 
 def simulate(config: str | Path | None = None, *, name: str | None = None) -> Run:
@@ -130,18 +132,18 @@ def compare_emissions(
     lanes: list[int] | None = None, without: list[str] = (), length: float | None = None,
     bump_lanes: list[int] | None = None, replicas: int | None = None, run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`traffic-emisiones`: emisiones, consumo y tiempo de cada escenario con la misma semilla.
+    """`traffic-emissions`: emisiones, consumo y tiempo de cada escenario con la misma semilla.
 
-    `bumps`: topes de cada escenario; cada elemento es None o "sin" (sin tope), un número (posición en m) o una lista
-    de posiciones (varios topes); None = sin tope y con los de la configuración. `lights`: "config", "si", "no",
-    "ambos" (o True/False). `lanes`: carriles que se conservan; `without`: claves de tipos que no participan;
+    `bumps`: topes de cada escenario; cada elemento es None o "none" (sin tope), un número (posición en m) o una lista
+    de posiciones (varios topes); None = sin tope y con los de la configuración. `lights`: "config", "yes", "no",
+    "both" (o True/False). `lanes`: carriles que se conservan; `without`: claves de tipos que no participan;
     `length`: largo del tramo; `bump_lanes`: carriles con tope; `replicas` y `run` (s de proceso) reemplazan a los de la
     configuración."""
     from trafico.cli import emissions
 
-    argv = _target(config, name) + _opt("--topes", None if bumps is None else [_bump(b) for b in bumps])
-    argv += ["--semaforo", _light(lights)] + _opt("--carriles", lanes) + _opt("--sin", list(without))
-    argv += _opt("--largo", length) + _opt("--carriles-tope", bump_lanes) + _opt("--replicas", replicas)
+    argv = _target(config, name) + _opt("--bumps", None if bumps is None else [_bump(b) for b in bumps])
+    argv += ["--light", _light(lights)] + _opt("--lanes", lanes) + _opt("--without", list(without))
+    argv += _opt("--length", length) + _opt("--bump-lanes", bump_lanes) + _opt("--replicas", replicas)
     argv += _opt("--run", run)
     return _finish(emissions, argv, "emisiones")
 
@@ -153,17 +155,17 @@ def bump_spacing(
     length: float | None = None, bump_lanes: list[int] | None = None, replicas: int | None = None,
     run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`traffic-emisiones --separacion`: separación mínima entre topes para diluir la huella de emisiones.
+    """`traffic-emissions --spacing`: separación mínima entre topes para diluir la huella de emisiones.
 
     `distances`: separaciones en m (None = 10 15 20 25 30 40 50 60 80 100); `chain`: topes por cadena (2 = una pareja);
     `first`: posición del primer tope; `tolerance` y `threshold`: ver la documentación. Los demás argumentos, como en
-    `compare_emissions` (aquí `lights` no admite "ambos")."""
+    `compare_emissions` (aquí `lights` no admite "both")."""
     from trafico.cli import emissions
 
-    argv = _target(config, name) + ["--separacion"] + [str(d) for d in distances or ()]
-    argv += _opt("--cadena", chain) + _opt("--primer-tope", first) + _opt("--tolerancia", tolerance)
-    argv += _opt("--umbral", threshold) + ["--semaforo", _light(lights)] + _opt("--carriles", lanes)
-    argv += _opt("--sin", list(without)) + _opt("--largo", length) + _opt("--carriles-tope", bump_lanes)
+    argv = _target(config, name) + ["--spacing"] + [str(d) for d in distances or ()]
+    argv += _opt("--chain", chain) + _opt("--first-bump", first) + _opt("--tolerance", tolerance)
+    argv += _opt("--threshold", threshold) + ["--light", _light(lights)] + _opt("--lanes", lanes)
+    argv += _opt("--without", list(without)) + _opt("--length", length) + _opt("--bump-lanes", bump_lanes)
     argv += _opt("--replicas", replicas) + _opt("--run", run)
     return _finish(emissions, argv, "separacion")
 
@@ -176,25 +178,28 @@ def light_spacing(
     lanes: list[int] | None = None, without: list[str] = (), length: float | None = None,
     bump_lanes: list[int] | None = None, replicas: int | None = None, run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`traffic-emisiones --separacion-semaforos`: separación mínima entre semáforos de ciclo fijo para que la huella de
+    """`traffic-emissions --light-spacing`: separación mínima entre semáforos de ciclo fijo para que la huella de
     emisiones del primero no cambie al alejar el segundo.
 
     `distances`: separaciones en m (None = 25 50 75 100 150 200 250 300); `first`: posición del primer semáforo (None =
     100 m); `cycle`: (rojo, verde[, amarillo]) en s o un texto "30/30/3" (None = el primer semáforo de ciclo fijo de la
-    configuración o 30/30/3); `offset`: "rojo" (el siguiente en rojo al llegar el pelotón; por omisión), "verde" (onda
-    verde) o "igual", o una lista con uno por tramo de la cadena; `fixed`: separaciones fijas (m) de los tramos después
+    configuración o 30/30/3); `offset`: "red" (el siguiente en rojo al llegar el pelotón; por omisión), "green" (onda
+    verde) o "same", o una lista con uno por tramo de la cadena; `fixed`: separaciones fijas (m) de los tramos después
     del primero, con `chain` ≥ 3; `bumps`: topes fijos en todos los escenarios (m; None = sin topes). Los demás, como en
     `bump_spacing`."""
     from trafico.cli import emissions
 
     text = cycle if cycle is None or isinstance(cycle, str) else "/".join(f"{v:g}" for v in cycle)
-    argv = _target(config, name) + ["--separacion-semaforos"] + [str(d) for d in distances or ()]
-    argv += _opt("--cadena", chain) + _opt("--primer-semaforo", first) + _opt("--ciclo", text)
+    argv = _target(config, name) + ["--light-spacing"] + [str(d) for d in distances or ()]
+    argv += _opt("--chain", chain) + _opt("--first-light", first) + _opt("--cycle", text)
     offset = ",".join(offset) if isinstance(offset, (list, tuple)) else offset
-    argv += _opt("--desfase", offset) + _opt("--separaciones-fijas", fixed)
-    argv += ["--topes", ",".join(f"{b:g}" for b in bumps)] if bumps else []
-    argv += _opt("--tolerancia", tolerance) + _opt("--umbral", threshold) + _opt("--carriles", lanes)
-    argv += _opt("--sin", list(without)) + _opt("--largo", length) + _opt("--carriles-tope", bump_lanes)
+    if offset is not None:  # also the Spanish values of earlier versions (rojo, verde, igual)
+        spanish = {"rojo": "red", "verde": "green", "igual": "same"}
+        offset = ",".join(spanish.get(part.strip(), part.strip()) for part in offset.split(","))
+    argv += _opt("--offset", offset) + _opt("--fixed-spacings", fixed)
+    argv += ["--bumps", ",".join(f"{b:g}" for b in bumps)] if bumps else []
+    argv += _opt("--tolerance", tolerance) + _opt("--threshold", threshold) + _opt("--lanes", lanes)
+    argv += _opt("--without", list(without)) + _opt("--length", length) + _opt("--bump-lanes", bump_lanes)
     argv += _opt("--replicas", replicas) + _opt("--run", run)
     return _finish(emissions, argv, "separacion")
 
@@ -204,27 +209,27 @@ def compare_variants(
     lights: list | None = None, lanes: list[int] | None = None, without: list[str] = (),
     queue: list[str] | None = None, replicas: int | None = None, run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`traffic-variantes`: velocidad por carril y cola de entrada con cada largo de tramo y reparto del semáforo.
+    """`traffic-variants`: velocidad por carril y cola de entrada con cada largo de tramo y reparto del semáforo.
 
     `lights`: repartos como pares (rojo, verde) en s o textos "40/20" (None = tres repartos del ciclo de la
     configuración); `queue`: claves de los tipos que se cuentan en la cola de entrada."""
     from trafico.cli import variants
 
     split = None if lights is None else [x if isinstance(x, str) else f"{x[0]:g}/{x[1]:g}" for x in lights]
-    argv = _target(config, name) + _opt("--largos", lengths) + _opt("--semaforos", split) + _opt("--carriles", lanes)
-    argv += _opt("--sin", list(without)) + _opt("--cola", queue) + _opt("--replicas", replicas) + _opt("--run", run)
+    argv = _target(config, name) + _opt("--lengths", lengths) + _opt("--lights", split) + _opt("--lanes", lanes)
+    argv += _opt("--without", list(without)) + _opt("--queue", queue) + _opt("--replicas", replicas) + _opt("--run", run)
     return _finish(variants, argv, "variantes")
 
 
 def calibrate(
     config: str | Path | None = None, *, name: str | None = None, vehicle: str = "car", queues: int | None = None,
 ) -> Run:  # fmt: skip
-    """`traffic-calibrar`: mide el tipo `vehicle` (su clave) en situaciones estándar (descarga de una cola en verde, flujo
+    """`traffic-calibrate`: mide el tipo `vehicle` (su clave) en situaciones estándar (descarga de una cola en verde, flujo
     continuo, cola detenida) y compara con referencias publicadas para autos; `queues`: colas que se descargan (por
     omisión 30). En `results["metricas"]["medidas"]` va cada medida con su valor, su rango y su estado."""
     from trafico.cli import calibrate as command
 
-    argv = _target(config, name) + ["--tipo", vehicle] + _opt("--colas", queues)
+    argv = _target(config, name) + ["--vehicle", vehicle] + _opt("--queues", queues)
     return _finish(command, argv, "calibracion")
 
 
@@ -240,11 +245,11 @@ def redraw(folder: str | Path) -> Path:
     elif mode == "variantes":
         command = variants
     else:
-        raise ConfigError(f"{folder} no es una comparación ni un barrido: solo esas se redibujan")
-    _, log = _call(command, ["--redibujar", str(folder)])
-    match = re.search(r"Gráfica en (.+)", log)
+        raise ConfigError(f"{folder} is neither a comparison nor a sweep: only those can be redrawn")
+    _, log = _call(command, ["--redraw", str(folder)])
+    match = re.search(r"Plot in (.+)", log)
     if match is None:
-        raise ConfigError(f"no se pudo redibujar {folder}")
+        raise ConfigError(f"could not redraw {folder}")
     return Path(match.group(1).strip())
 
 

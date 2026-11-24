@@ -1474,9 +1474,9 @@ def test_lights_properties_and_labels():
     assert [lt.position for lt in cfg.inner_lights] == [40.0, 100.0]  # de la entrada a la salida
     assert [lt.position for lt in cfg.lights] == [40.0, 100.0, 150.0] and cfg.any_light
     assert cfg.ref_light.position == 150.0 and cfg.cycle == 60.0 and cfg.flow_window == 60.0
-    assert cfg.lights_label == ("a 40 m: rojo 10 s / verde 30 s / amarillo 3 s, empieza en rojo · "
-                                "a 100 m: rojo 20 s / verde 20 s, empieza en verde · "
-                                "a 150 m: rojo 25 s / verde 35 s, empieza en rojo")  # fmt: skip
+    assert cfg.lights_label == ("at 40 m: red 10 s / green 30 s / yellow 3 s, starts red · "
+                                "at 100 m: red 20 s / green 20 s, starts green · "
+                                "at 150 m: red 25 s / green 35 s, starts red")  # fmt: skip
     # Sin semáforo al final, el último intermedio marca la ventana y las fases sombreadas.
     cfg = SimConfig(length=150, traffic_light=False, extra_lights=lights)
     assert not cfg.has_light and cfg.ref_light.position == 100.0 and cfg.cycle == 40.0 and cfg.flow_window == 40.0
@@ -1517,3 +1517,10 @@ def test_time_headway_with_gradual_dynamics_keeps_order_and_gaps():
         far += (gap[moving] / (sim.v_last[occ.veh][moving] / DT)).tolist()
     # A velocidad, quien sigue de cerca va a más de 1 s (percentil 5 ≈ 1.46 s); con gap_run fijo, ≈ 0.33 s.
     assert far and np.percentile(far, 5) > 1.0
+
+
+def test_lights_short_names_a_single_intermediate_light():
+    from trafico.config import Light, SimConfig
+
+    cfg = SimConfig(length=250, traffic_light=False, extra_lights=(Light(200.0, pedestrian=True, red=5.0),))
+    assert cfg.lights_short == "1 traffic light (at 200 m)"
