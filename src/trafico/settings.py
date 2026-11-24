@@ -17,7 +17,7 @@ from trafico.config import (
 from trafico.emission_sets import EMISSION_SETS
 
 CONFIG_NAME = "config.toml"
-DEFAULT_RUN_NAME = "corrida"
+DEFAULT_RUN_NAME = "run"
 # Parámetros numéricos de un vehículo: obligatorios para los tipos nuevos.
 _SPEC_FIELDS = {
     "gap_run": float, "gap_stop": float,
@@ -51,8 +51,8 @@ _REQUIRED = object()
 FLOATS = "float_o_lista"
 """Tipo de clave que acepta un número o una lista no vacía de números (se lee como tupla)."""
 INTS = "lista_de_enteros"
-_KIND_NAMES = {float: "un número", int: "un entero", str: "un texto", bool: "true o false",
-               FLOATS: "un número o una lista de números", INTS: "una lista de enteros"}  # fmt: skip
+_KIND_NAMES = {float: "a number", int: "an integer", str: "a string", bool: "true or false",
+               FLOATS: "a number or a list of numbers", INTS: "a list of integers"}  # fmt: skip
 
 
 VIDEO_FORMATS = ("webm", "mp4", "gif")
@@ -69,7 +69,7 @@ class RunOptions:
     replicas: int = 8
     workers: int = 0  # 0 = min(réplicas, CPUs disponibles)
     seed: int | None = None  # None = aleatoria (se registra en la copia de la configuración)
-    output_dir: str = "resultados"
+    output_dir: str = "results"
     name: str = ""  # sufijo de la carpeta de resultados; el nombre dado en el comando tiene prioridad
     series_csv: bool = True  # genera series.csv
     emisiones_csv: bool = True  # genera emisiones_posicion.csv (si algún tipo emite)
@@ -138,27 +138,27 @@ class _Reader:
         for i, section in enumerate(sections):
             table = table.get(section, {})
             if not isinstance(table, dict):
-                raise ConfigError(f"[{'.'.join(sections[: i + 1])}] debe ser una sección")
+                raise ConfigError(f"[{'.'.join(sections[: i + 1])}] must be a section")
         self.used.add(keypath)
         if key not in table:
             if default is _REQUIRED:
-                raise ConfigError(f"falta la clave obligatoria {_label(keypath)}")
+                raise ConfigError(f"missing required key {_label(keypath)}")
             return default
         value = table[key]
         if kind is FLOATS:
             items = value if type(value) is list else [value]
             if not items or any(type(v) not in (int, float) for v in items):
-                raise ConfigError(f"{_label(keypath)} debe ser {_KIND_NAMES[kind]}; se leyó {value!r}")
+                raise ConfigError(f"{_label(keypath)} must be {_KIND_NAMES[kind]}; got {value!r}")
             floats = tuple(float(v) for v in items)
             return floats if type(value) is list else floats[0]
         if kind is INTS:
             if type(value) is not list or any(type(v) is not int for v in value):
-                raise ConfigError(f"{_label(keypath)} debe ser {_KIND_NAMES[kind]}; se leyó {value!r}")
+                raise ConfigError(f"{_label(keypath)} must be {_KIND_NAMES[kind]}; got {value!r}")
             return tuple(value)
         if kind is float and type(value) is int:
             value = float(value)
         if type(value) is not kind:  # type() exacto: un bool no cuenta como entero
-            raise ConfigError(f"{_label(keypath)} debe ser {_KIND_NAMES[kind]}; se leyó {value!r}")
+            raise ConfigError(f"{_label(keypath)} must be {_KIND_NAMES[kind]}; got {value!r}")
         return value
 
     def unknown(self) -> list[str]:
@@ -185,7 +185,7 @@ def parse_settings(text: str, path: Path) -> Settings:
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(f"TOML inválido: {exc}") from exc
+        raise ConfigError(f"invalid TOML: {exc}") from exc
     r = _Reader(data)
 
     specs, rates = _parse_vehicles(r)
@@ -217,25 +217,25 @@ def parse_settings(text: str, path: Path) -> Settings:
     lanes, speed_limit, notices = _lanes(r, occupancy, d.lanes, exit_capacity, exit_storage, congestion)
     notices += bump_notices
     if congestion is not None:
-        notices += ("Aviso: [behavior] congestion_factor se eliminó y se ignora (no cambia la velocidad); puedes "
-                    "quitarla del archivo",)  # fmt: skip
+        notices += ("Warning: [behavior] congestion_factor was removed and is ignored (it does not change the speed); you can "
+                    "remove it from the file",)  # fmt: skip
     # [demand] slow_lane se eliminó; las copias anteriores la traen con "right", que es lo que se hace ahora.
     slow_lane = r.get(("demand", "slow_lane"), str, None)
     if slow_lane is not None:
         if slow_lane != "right":
-            raise ConfigError('[demand] slow_lane se eliminó: los tipos que no cambian de carril ni tienen lane van por '
-                              'el carril libre más a la derecha; para otro carril usa lane en [vehicles.<clave>]')
-        notices += ("Aviso: [demand] slow_lane se eliminó y se ignora; puedes quitarla del archivo",)
+            raise ConfigError('[demand] slow_lane was removed: types that do not change lanes and have no lane use '
+                              'the rightmost free lane; for another lane use lane in [vehicles.<key>]')
+        notices += ("Warning: [demand] slow_lane was removed and is ignored; you can remove it from the file",)
     # [output] csv se renombró series_csv; las copias anteriores la traen y conservan su valor.
     legacy_csv = r.get(("output", "csv"), bool, None)
     if legacy_csv is not None:
-        notices += ("Aviso: [output] csv se renombró series_csv; se usa su valor, pero cámbiala en el archivo",)
+        notices += ("Warning: [output] csv was renamed series_csv; its value is used, but change it in the file",)
     # [output] show se eliminó (abría la ventana de matplotlib); las copias anteriores la traen.
     if r.get(("output", "show"), bool, None) is not None:
-        notices += ("Aviso: [output] show se eliminó y se ignora; puedes quitarla del archivo",)
+        notices += ("Warning: [output] show was removed and is ignored; you can remove it from the file",)
     # [output] saturation_threshold se eliminó (solo marcaba la gráfica); las copias anteriores la traen.
     if r.get(("output", "saturation_threshold"), float, None) is not None:
-        notices += ("Aviso: [output] saturation_threshold se eliminó y se ignora; puedes quitarla del archivo",)
+        notices += ("Warning: [output] saturation_threshold was removed and is ignored; you can remove it from the file",)
     length = r.get(("road", "length"), float, d.length)
     exit_light, extra_lights = _lights(r, length, d)
     sim = SimConfig(
@@ -295,35 +295,35 @@ def parse_settings(text: str, path: Path) -> Settings:
 
     unknown = r.unknown()
     if unknown:
-        msg = "claves desconocidas: " + ", ".join(unknown)
+        msg = "unknown keys: " + ", ".join(unknown)
         moved = [u for u in unknown if u in _MOVED_BOTTLENECK]
         if moved:
-            msg += ("; en [bottleneck] solo quedan stop_lanes y stop_zone: la probabilidad y la duración van en cada "
-                    "[vehicles.<clave>] como " + ", ".join(sorted({_MOVED_BOTTLENECK[u] for u in moved})))
+            msg += ("; [bottleneck] only keeps stop_lanes and stop_zone: the probability and duration go in each "
+                    "[vehicles.<key>] as " + ", ".join(sorted({_MOVED_BOTTLENECK[u] for u in moved})))
         if any(re.fullmatch(r"\[vehicles\.[^\]]+\] pax_(min|max|mean|std)", u) for u in unknown):
-            msg += "; los pasajeros van ahora en un diccionario: pax = {min = 1, max = 6, mean = 1.5, std = 0.8}"
+            msg += "; passengers now go in a dictionary: pax = {min = 1, max = 6, mean = 1.5, std = 0.8}"
         if any(re.fullmatch(r"\[vehicles\.[^\]]+\] length_(min|max|std)", u) for u in unknown):
-            msg += "; el largo va ahora en un diccionario: length = {min = 8, max = 16, mean = 10, std = 2}"
+            msg += "; length now goes in a dictionary: length = {min = 8, max = 16, mean = 10, std = 2}"
         if any(re.fullmatch(r"\[behavior\] reaction_(min|max|mean|std)", u) for u in unknown):
-            msg += "; la reacción va ahora en un diccionario: reaction = {min = 0.7, max = 3, mean = 1.5, std = 0.5}"
+            msg += "; reaction now goes in a dictionary: reaction = {min = 0.7, max = 3, mean = 1.5, std = 0.5}"
         orphan_rates = [m for u in unknown if (m := re.match(r"\[demand\.(.+)_rate\] |\[demand\] (.+)_rate$", u))]
         if orphan_rates:
             key = orphan_rates[0].group(1) or orphan_rates[0].group(2)
-            msg += f" (para un vehículo nuevo define también su sección [vehicles.{key}])"
+            msg += f" (for a new vehicle also define its [vehicles.{key}] section)"
         raise ConfigError(msg)
     validate_config(sim, opts)
     validate_animation(anim, sim, opts.replicas)
-    # Aviso solo para las emisiones escritas en el archivo (el auto y el autobús incorporados traen coeficientes).
+    # Warn only about emissions written in the file (el auto y el autobús incorporados traen coeficientes).
     written = {key for key, value in r.data.get("vehicles", {}).items() if isinstance(value, dict) and "emissions" in value}
     silent = [sp.name for k, sp in enumerate(sim.specs)
               if sp.key in written and sp.emissions and not sp.emits and sim.rates[k] > 0]  # fmt: skip
     if silent:
-        notices += (f"Aviso: sin accel y decel no se calculan las emisiones de {', '.join(silent)} (el modelo usa la "
-                    "aceleración real)",)  # fmt: skip
+        notices += (f"Warning: without accel and decel the emissions of {', '.join(silent)} are not computed (the model uses the "
+                    "real acceleration)",)  # fmt: skip
     unpriced = sorted({sp.fuel for k, sp in enumerate(sim.specs) if sp.burns and sim.rates[k] > 0
                        and sim.price(sp.fuel) is None})  # fmt: skip
     if unpriced:
-        notices += (f"Aviso: sin precio en [fuel] price para {', '.join(unpriced)}: su consumo solo se da en litros",)
+        notices += (f"Warning: no price in [fuel] price for {', '.join(unpriced)}: its consumption is only given in litres",)
     return Settings(sim=sim, run=opts, path=path, text=text, notices=notices, animation=anim)
 
 
@@ -338,36 +338,36 @@ def _emissions(r: _Reader, key: str, base: VehicleSpec | None) -> tuple[tuple, s
         return (base.emissions, base.emission_source) if base else ((), "")
     label = f"[vehicles.{key}.emissions]"
     if not isinstance(table, dict):
-        raise ConfigError(f"[vehicles.{key}] emissions debe ser una sección {label}")
+        raise ConfigError(f"[vehicles.{key}] emissions must be a section {label}")
     section = ("vehicles", key, "emissions")
     source = r.get(section + ("source",), str, None)
     entry = r.get(section + ("source_type",), str, None)
     found: dict[str, tuple] = {}
     if source is not None:
         if source not in EMISSION_SETS:
-            raise ConfigError(f"{label} source: no existe el conjunto {source!r}; hay {', '.join(EMISSION_SETS)}")
+            raise ConfigError(f"{label} source: there is no set {source!r}; the sets are {', '.join(EMISSION_SETS)}")
         entry = entry or key
         if entry not in EMISSION_SETS[source]:
-            raise ConfigError(f"{label} el conjunto {source!r} no tiene el tipo {entry!r}"
-                              f"{'' if key == entry else ' (source_type)'}; tiene {', '.join(EMISSION_SETS[source])} "
-                              "(elige uno con source_type)")  # fmt: skip
+            raise ConfigError(f"{label} the set {source!r} has no type {entry!r}"
+                              f"{'' if key == entry else ' (source_type)'}; it has {', '.join(EMISSION_SETS[source])} "
+                              "(choose one with source_type)")  # fmt: skip
         found = {pol: (acc, dec) for pol, acc, dec in EMISSION_SETS[source][entry]}
     elif entry is not None:
-        raise ConfigError(f"{label} source_type requiere source (el conjunto de coeficientes)")
+        raise ConfigError(f"{label} source_type requires source (the coefficient set)")
     out = []
     for pol in POLLUTANTS:
         coefs = {}
         for name in (pol, f"{pol}_decel"):
             value = r.get(section + (name,), FLOATS, None)
             if value is not None and (not isinstance(value, tuple) or len(value) != 6):
-                raise ConfigError(f"{label} {name} debe ser una lista de 6 números [f1, f2, f3, f4, f5, f6]")
+                raise ConfigError(f"{label} {name} must be a list of 6 numbers [f1, f2, f3, f4, f5, f6]")
             coefs[name] = value
         acc, dec = coefs[pol], coefs[f"{pol}_decel"]
         if acc is None and pol in found:  # del conjunto; el _decel escrito a mano lo reemplaza
             acc, dec = found[pol][0], dec or found[pol][1]
         if acc is None:
             if dec is not None:
-                raise ConfigError(f"{label} {pol}_decel requiere {pol} (los coeficientes para a ≥ −0.5 m/s²)")
+                raise ConfigError(f"{label} {pol}_decel requires {pol} (the coefficients for a ≥ −0.5 m/s²)")
             continue
         out.append((pol, acc, dec or acc))
     return tuple(out), source or ""
@@ -378,7 +378,7 @@ def _zone(value):
     if value is None:
         return None
     if not isinstance(value, tuple) or len(value) != 2:
-        raise ConfigError(f"[bottleneck] stop_zone debe ser una lista [inicio, fin] en m; se leyó {value!r}")
+        raise ConfigError(f"[bottleneck] stop_zone must be a list [start, end] in m; got {value!r}")
     return value
 
 
@@ -388,12 +388,12 @@ def validate_animation(anim: AnimationOptions, sim: SimConfig, replicas: int) ->
             raise ConfigError(msg)
 
     check(0 <= anim.start < sim.sim_seconds,
-          f"[animation] start debe estar entre 0 y {sim.sim_seconds:g} s simulados (la duración de la corrida)")  # fmt: skip
-    check(anim.duration is None or anim.duration > 0, "[animation] duration debe ser mayor que 0")
-    check(anim.speed > 0, "[animation] speed debe ser mayor que 0")
-    check(1 <= anim.fps <= 60, "[animation] fps debe estar entre 1 y 60")
-    check(anim.format in VIDEO_FORMATS, f"[animation] format debe ser {', '.join(map(repr, VIDEO_FORMATS))}")
-    check(1 <= anim.replica <= replicas, f"[animation] replica debe estar entre 1 y {replicas} ([execution] replicas)")
+          f"[animation] start must be between 0 and {sim.sim_seconds:g} simulated s (the run duration)")  # fmt: skip
+    check(anim.duration is None or anim.duration > 0, "[animation] duration must be greater than 0")
+    check(anim.speed > 0, "[animation] speed must be greater than 0")
+    check(1 <= anim.fps <= 60, "[animation] fps must be between 1 and 60")
+    check(anim.format in VIDEO_FORMATS, f"[animation] format must be {', '.join(map(repr, VIDEO_FORMATS))}")
+    check(1 <= anim.replica <= replicas, f"[animation] replica must be between 1 and {replicas} ([execution] replicas)")
 
 
 def _lanes(r: _Reader, occupancy, default: int, exit_capacity=0.0, exit_storage=60.0, congestion=None):
@@ -417,12 +417,12 @@ def _lanes(r: _Reader, occupancy, default: int, exit_capacity=0.0, exit_storage=
     notices: tuple[str, ...] = ()
     if legacy is not None:
         lanes = legacy
-        notices = ("Aviso: [road] lanes está obsoleto; el número de carriles sale de la longitud de "
-                   "max_line_speed (o de las demás listas por carril)",)  # fmt: skip
+        notices = ("Warning: [road] lanes is obsolete; the number of lanes comes from the length of "
+                   "max_line_speed (or of the other per-lane lists)",)  # fmt: skip
     elif lengths:
         if len(set(lengths.values())) > 1:
-            detail = ", ".join(f"{name} tiene {n}" for name, n in lengths.items())
-            raise ConfigError(f"las listas por carril deben tener el mismo largo (un valor por carril): {detail}")
+            detail = ", ".join(f"{name} has {n}" for name, n in lengths.items())
+            raise ConfigError(f"the per-lane lists must have the same length (one value per lane): {detail}")
         lanes = next(iter(lengths.values()))
     else:
         lanes = default
@@ -451,12 +451,12 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
     """
     table = r.data.get("vehicles", {})
     if not isinstance(table, dict):
-        raise ConfigError("[vehicles] debe ser una sección")
+        raise ConfigError("[vehicles] must be a section")
     for key, value in table.items():
         if not isinstance(value, dict):
-            raise ConfigError(f"[vehicles] {key} debe ser una sección [vehicles.{key}]")
+            raise ConfigError(f"[vehicles] {key} must be a section [vehicles.{key}]")
         if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
-            raise ConfigError(f"[vehicles.{key}] la clave solo admite letras, dígitos, '_' y '-'")
+            raise ConfigError(f"[vehicles.{key}] the key only accepts letters, digits, '_' and '-'")
 
     specs, rates = [], []
     for key in [*_BUILTIN, *(k for k in table if k not in _BUILTIN)]:
@@ -475,7 +475,7 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
                 elif base is not None:
                     values.update({f: getattr(base, f) for f in fields.values()})
                 else:
-                    raise ConfigError(f"falta la clave obligatoria [vehicles.{key}] {name}")
+                    raise ConfigError(f"missing required key [vehicles.{key}] {name}")
             pax = _dist(r, section + ("pax",), _PAX_KINDS, "{min = 1, max = 6, mean = 1.5, std = 0.8}")
             if pax is not None:
                 values.update({f"pax_{f}": v for f, v in pax.items()})
@@ -484,11 +484,11 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
             elif cargo_prob == 1:  # sin pasajeros, no hace falta describirlos
                 values.update(_CARGO_PAX)
             else:
-                raise ConfigError(f"falta la clave obligatoria [vehicles.{key}] pax")
+                raise ConfigError(f"missing required key [vehicles.{key}] pax")
             rate = _rate(r, key, base_rate)
         except ConfigError as exc:
-            if base is None and str(exc).startswith("falta"):
-                raise ConfigError(f"{exc} (los vehículos nuevos deben definir todos sus parámetros)") from None
+            if base is None and str(exc).startswith("missing"):
+                raise ConfigError(f"{exc} (new vehicle types must define all their parameters)") from None
             raise
         specs.append(
             VehicleSpec(
@@ -537,7 +537,7 @@ def _lights(r: _Reader, length: float, d: SimConfig) -> tuple[Light, tuple[Light
             readers.append(sub)
             checks.append((i, sub))
     else:
-        raise ConfigError("[traffic_light] debe ser una sección o una lista de secciones ([[traffic_light]])")
+        raise ConfigError("[traffic_light] must be a section or a list of sections ([[traffic_light]])")
     lights = []
     for reader in readers:
         def read(key, kind, default, reader=reader):
@@ -547,12 +547,12 @@ def _lights(r: _Reader, length: float, d: SimConfig) -> tuple[Light, tuple[Light
         pedestrian = read("pedestrian", bool, False)
         start_phase = read("start_phase", str, None)
         if pedestrian and start_phase is not None:
-            raise ConfigError("[traffic_light] start_phase no aplica a un semáforo con pedestrian = true (siempre "
-                              "empieza en verde): quítala")  # fmt: skip
+            raise ConfigError("[traffic_light] start_phase does not apply to a light with pedestrian = true (it always "
+                              "starts green): remove it")  # fmt: skip
         offset = read("offset", float, None)
         if pedestrian and offset is not None:
-            raise ConfigError("[traffic_light] offset no aplica a un semáforo con pedestrian = true (no tiene ciclo): "
-                              "quítala")  # fmt: skip
+            raise ConfigError("[traffic_light] offset does not apply to a light with pedestrian = true (it has no cycle): "
+                              "remove it")  # fmt: skip
         lights.append(Light(
             position=length if position is None else position,
             red=read("red", float, d.red), green=read("green", float, d.green),
@@ -564,12 +564,12 @@ def _lights(r: _Reader, length: float, d: SimConfig) -> tuple[Light, tuple[Light
     for i, sub in checks:
         unknown = sub.unknown()
         if unknown:
-            raise ConfigError(f"claves desconocidas en el semáforo {i} de [[traffic_light]]: "
+            raise ConfigError(f"unknown keys in traffic light {i} of [[traffic_light]]: "
                               + ", ".join(u.replace("[traffic_light] ", "") for u in unknown))  # fmt: skip
     at_exit = [lt for lt in lights if abs(lt.position - length) < 1e-9]
     if len(at_exit) > 1:
-        raise ConfigError(f"[[traffic_light]] hay {len(at_exit)} semáforos en el final del tramo ({length:g} m, o sin "
-                          "position): solo puede haber uno")  # fmt: skip
+        raise ConfigError(f"[[traffic_light]] there are {len(at_exit)} lights at the end of the segment ({length:g} m, or without "
+                          "position): there can be only one")  # fmt: skip
     extra = tuple(sorted((lt for lt in lights if lt not in at_exit), key=lambda lt: lt.position))
     return (at_exit[0] if at_exit else replace(d.exit_light, enabled=False)), extra
 
@@ -592,7 +592,7 @@ def _speed_bumps(r: _Reader) -> tuple[tuple[SpeedBump, ...], tuple[str, ...]]:
             readers.append(sub)
             checks.append((i, sub))
     else:
-        raise ConfigError("[speed_bump] debe ser una sección o una lista de secciones ([[speed_bump]])")
+        raise ConfigError("[speed_bump] must be a section or a list of sections ([[speed_bump]])")
     bumps, notices = [], ()
     for n, reader in enumerate(readers, 1):
         legacy = isinstance(table, dict)
@@ -603,25 +603,25 @@ def _speed_bumps(r: _Reader) -> tuple[tuple[SpeedBump, ...], tuple[str, ...]]:
         time = reader.get(("speed_bump", "pedestrian_time"), float, PEDESTRIAN_TIME)
         if isinstance(value, tuple):
             if not legacy:
-                raise ConfigError(f"[[speed_bump]] position del tope {n} debe ser un número (un tope por sección); "
-                                  "para varios topes, una sección [[speed_bump]] cada uno")  # fmt: skip
-            notices = ("Aviso: [speed_bump] position como lista se reemplazó por una sección [[speed_bump]] por tope; "
-                       "se usa cada posición como un tope con las mismas claves, pero cámbiala en el archivo",)
+                raise ConfigError(f"[[speed_bump]] position of bump {n} must be a number (one bump per section); "
+                                  "for several bumps, one [[speed_bump]] section each")  # fmt: skip
+            notices = ("Warning: [speed_bump] position as a list was replaced by one [[speed_bump]] section per bump; "
+                       "each position is used as a bump with the same keys, but change it in the file",)
             positions = value
         else:
             positions = () if value is None else (value,)
         if not positions:
             if lanes is not None or pedestrian:  # claves de un tope sin dónde está
-                where = "[speed_bump]" if legacy else f"[[speed_bump]] del tope {n}"
+                where = "[speed_bump]" if legacy else f"[[speed_bump]] of bump {n}"
                 key = "lanes" if lanes is not None else "pedestrian"
-                raise ConfigError(f"{where}: {key} requiere position (dónde está el tope)")
+                raise ConfigError(f"{where}: {key} requires position (where the bump is)")
             if not legacy:
-                raise ConfigError(f"[[speed_bump]] falta position en el tope {n}")
+                raise ConfigError(f"[[speed_bump]] position is missing in bump {n}")
         bumps += [SpeedBump(p, lanes, pedestrian, rate, time) for p in positions]
     for i, sub in checks:
         unknown = sub.unknown()
         if unknown:
-            raise ConfigError(f"claves desconocidas en el tope {i} de [[speed_bump]]: "
+            raise ConfigError(f"unknown keys in bump {i} of [[speed_bump]]: "
                               + ", ".join(u.replace("[speed_bump] ", "") for u in unknown))  # fmt: skip
     return tuple(sorted(bumps, key=lambda b: b.position)), notices
 
@@ -631,7 +631,7 @@ def _crossing(r: _Reader, section: tuple[str, ...]) -> Rate:
     diccionario {min, max, mean, std} en peatones/min. Sin ella, PEDESTRIAN_RATE. Se valida solo si la sección tiene
     pedestrian = true (en `validate_config`)."""
     values = _dist(r, (*section, "pedestrian_crossing"), _RATE_KINDS,
-                   "{min = 0.5, max = 3, mean = 1.5, std = 1} (peatones/min)")  # fmt: skip
+                   "{min = 0.5, max = 3, mean = 1.5, std = 1} (pedestrians/min)")  # fmt: skip
     return PEDESTRIAN_RATE if values is None else Rate(**values)
 
 
@@ -639,8 +639,8 @@ def _fuel(r: _Reader, d: SimConfig) -> dict:
     """[fuel]: precio por litro de cada combustible (`price = {gasolina = 24.0, ...}`) y su moneda."""
     table = r.data.get("fuel", {})
     if isinstance(table, dict) and "price" in table and not isinstance(table["price"], dict):
-        raise ConfigError(f"[fuel] price debe ser un diccionario por combustible, p. ej. price = {{gasolina = 24.0}}; "
-                          f"se leyó {table['price']!r}")  # fmt: skip
+        raise ConfigError(f"[fuel] price must be a dictionary per fuel, e.g. price = {{gasolina = 24.0}}; "
+                          f"got {table['price']!r}")  # fmt: skip
     prices = tuple((f, v) for f in FUELS if (v := r.get(("fuel", "price", f), float, None)) is not None)
     return {"fuel_price": prices, "currency": r.get(("fuel", "currency"), str, d.currency)}
 
@@ -650,11 +650,11 @@ def _rate(r: _Reader, key: str, default) -> Rate:
     que no la definen usan su tasa fija por defecto."""
     name = f"{key}_rate"
     if not isinstance(r.data.get("demand", {}), dict):
-        raise ConfigError("[demand] debe ser una sección")
+        raise ConfigError("[demand] must be a section")
     values = _dist(r, ("demand", name), _RATE_KINDS, "{min = 10, max = 20, mean = 15, std = 5} (veh/min)")
     if values is None:
         if default is _REQUIRED:
-            raise ConfigError(f"falta la clave obligatoria [demand] {name}")
+            raise ConfigError(f"missing required key [demand] {name}")
         return Rate.fixed(default)
     rate = Rate(**values)
     _check_rate(f"[demand] {name}", rate)
@@ -668,8 +668,8 @@ def _reaction(r: _Reader) -> dict[str, float]:
     value = behavior.get("reaction") if isinstance(behavior, dict) else None
     pair = {"mean", "std"} & set(value) if isinstance(value, dict) else set()
     if len(pair) == 1:
-        raise ConfigError("[behavior] reaction: mean y std van juntas (con ellas, normal truncada a [min, max]; "
-                          "sin ellas, uniforme en [min, max])")  # fmt: skip
+        raise ConfigError("[behavior] reaction: mean and std go together (with them, a normal truncated to [min, max]; "
+                          "without them, uniform in [min, max])")  # fmt: skip
     kinds = dict.fromkeys(("min", "max", *(("mean", "std") if pair else ())), float)
     values = _dist(r, ("behavior", "reaction"), kinds, "{min = 0.7, max = 3, mean = 1.5, std = 0.5}")
     return {} if values is None else {f"reaction_{f}": v for f, v in values.items()}
@@ -684,22 +684,22 @@ def _dist(r: _Reader, keypath: tuple[str, ...], kinds: dict[str, type], example:
     if key not in table:
         return None
     if not isinstance(table[key], dict):
-        raise ConfigError(f"{_label(keypath)} debe ser un diccionario, p. ej. {key} = {example}; se leyó {table[key]!r}")
+        raise ConfigError(f"{_label(keypath)} must be a dictionary, e.g. {key} = {example}; got {table[key]!r}")
     return {f: r.get(keypath + (f,), kind, _REQUIRED) for f, kind in kinds.items()}
 
 
 def _check_rate(label: str, rate: Rate) -> None:
     if not 0 <= rate.min <= rate.mean <= rate.max:
-        raise ConfigError(f"{label}: debe cumplirse 0 ≤ min ≤ mean ≤ max")
+        raise ConfigError(f"{label}: 0 ≤ min ≤ mean ≤ max must hold")
     if rate.std < 0:
-        raise ConfigError(f"{label}: std no puede ser negativa")
+        raise ConfigError(f"{label}: std cannot be negative")
 
 
 def load_settings(path: Path) -> Settings:
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise ConfigError(f"no existe el archivo de configuración {path}") from None
+        raise ConfigError(f"the configuration file {path} does not exist") from None
     try:
         return parse_settings(text, path)
     except ConfigError as exc:
@@ -712,182 +712,182 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
         if not ok:
             raise ConfigError(msg)
 
-    check(sim.n_types <= MAX_TYPES, f"[vehicles] se admiten hasta {MAX_TYPES} tipos de vehículo; hay {sim.n_types}")
+    check(sim.n_types <= MAX_TYPES, f"[vehicles] up to {MAX_TYPES} vehicle types are allowed; there are {sim.n_types}")
     for spec in sim.specs:
         _validate_spec(spec, f"[vehicles.{spec.key}]", check)
         if spec.lane is not None:
             label = f"[vehicles.{spec.key}] lane"
-            check(not spec.can_change_lane, f"{label} solo aplica a tipos con lane_change = false")
-            check(0 <= spec.lane < sim.lanes, f"{label} debe estar entre 0 (carril derecho) y {sim.lanes - 1}")
+            check(not spec.can_change_lane, f"{label} only applies to types with lane_change = false")
+            check(0 <= spec.lane < sim.lanes, f"{label} must be between 0 (right lane) and {sim.lanes - 1}")
         check(not spec.exclusive or spec.lane is not None,
-              f"[vehicles.{spec.key}] exclusive = true requiere un carril fijo (lane)")  # fmt: skip
-        check(1 <= spec.abreast <= 4, f"[vehicles.{spec.key}] abreast debe estar entre 1 y 4")
+              f"[vehicles.{spec.key}] exclusive = true requires a fixed lane (lane)")  # fmt: skip
+        check(1 <= spec.abreast <= 4, f"[vehicles.{spec.key}] abreast must be between 1 and 4")
         check(not spec.pass_in_lane or spec.abreast >= 2,
-              f"[vehicles.{spec.key}] pass_in_lane = true requiere abreast ≥ 2 (que quepan dos lado a lado)")  # fmt: skip
+              f"[vehicles.{spec.key}] pass_in_lane = true requires abreast ≥ 2 (room for two side by side)")  # fmt: skip
         for name in _DYNAMICS_FIELDS:
             value = getattr(spec, name)
-            check(value is None or 0 < value <= 20, f"[vehicles.{spec.key}] {name} debe estar en (0, 20] m/s²")
+            check(value is None or 0 < value <= 20, f"[vehicles.{spec.key}] {name} must be in (0, 20] m/s²")
         overrides = {f: getattr(spec, f) for f in _LANE_CHANGE_FIELDS if getattr(spec, f) is not None}
         for name in ([*overrides, "overtake"] if spec.overtake else overrides):
-            check(spec.can_change_lane, f"[vehicles.{spec.key}] {name} solo aplica a tipos con lane_change = true")
+            check(spec.can_change_lane, f"[vehicles.{spec.key}] {name} only applies to types with lane_change = true")
         for name, value in overrides.items():
-            check(value >= 0, f"[vehicles.{spec.key}] {name} no puede ser negativo")
+            check(value >= 0, f"[vehicles.{spec.key}] {name} cannot be negative")
         if spec.stop_position is not None:
             label = f"[vehicles.{spec.key}]"
             check(spec.longest <= spec.stop_position <= sim.length,
-                  f"{label} stop_position debe estar entre {spec.longest:g} (el largo máximo del vehículo, que entra con "
-                  f"la parte trasera en 0) y {sim.length:g} m (el semáforo)")  # fmt: skip
+                  f"{label} stop_position must be between {spec.longest:g} (the maximum vehicle length, which enters with "
+                  f"its rear at 0) and {sim.length:g} m (the traffic light)")  # fmt: skip
             check(spec.stop_time_mean >= 0 and spec.stop_time_std >= 0,
-                  f"{label} stop_time_mean y stop_time_std no pueden ser negativos")  # fmt: skip
+                  f"{label} stop_time_mean and stop_time_std cannot be negative")  # fmt: skip
             check(spec.stop_time_mean + 6 * spec.stop_time_std <= 3600,
-                  f"{label} la parada no puede durar más de una hora (stop_time_mean + 6·stop_time_std ≤ 3600 s)")  # fmt: skip
+                  f"{label} the stop cannot last more than an hour (stop_time_mean + 6·stop_time_std ≤ 3600 s)")  # fmt: skip
     for k, spec in enumerate(sim.specs):
         check(sim.rates[k] == 0 or bool(sim.allowed_lanes(k)),
-              f"[vehicles.{spec.key}] no le queda carril: todos son exclusivos de otros tipos "
-              f"(carriles reservados: {', '.join(map(str, sorted(sim.reserved_lanes)))})")  # fmt: skip
+              f"[vehicles.{spec.key}] has no lane left: all are exclusive to other types "
+              f"(reserved lanes: {', '.join(map(str, sorted(sim.reserved_lanes)))})")  # fmt: skip
     names = [spec.name for spec in sim.specs]
     dupes = sorted({n for n in names if names.count(n) > 1})
-    check(not dupes, f"[vehicles] los nombres deben ser distintos; se repite {', '.join(dupes)}")
+    check(not dupes, f"[vehicles] names must be different; repeated: {', '.join(dupes)}")
     b = sim.behavior
-    check(0 < b.reaction_min <= b.reaction_max <= 600, "[behavior] reaction: debe cumplirse 0 < min ≤ max ≤ 600")
-    check(b.reaction_mean is None or b.reaction_std is not None, "[behavior] reaction: mean requiere std")
-    check(b.reaction_std is None or b.reaction_std >= 0, "[behavior] reaction: std no puede ser negativa")
+    check(0 < b.reaction_min <= b.reaction_max <= 600, "[behavior] reaction: 0 < min ≤ max ≤ 600 must hold")
+    check(b.reaction_mean is None or b.reaction_std is not None, "[behavior] reaction: mean requires std")
+    check(b.reaction_std is None or b.reaction_std >= 0, "[behavior] reaction: std cannot be negative")
     check(b.reaction_mean is None or b.reaction_min <= b.reaction_mean <= b.reaction_max,
-          "[behavior] reaction: mean debe estar entre min y max")  # fmt: skip
+          "[behavior] reaction: mean must be between min and max")  # fmt: skip
     check(
         0 < b.lane_change_min <= b.lane_change_max <= 600,
-        "[behavior] requiere 0 < lane_change_min ≤ lane_change_max ≤ 600",
+        "[behavior] requires 0 < lane_change_min ≤ lane_change_max ≤ 600",
     )
-    check(0 < b.lane_change_speed_factor <= 1, "[behavior] lane_change_speed_factor debe estar en (0, 1]")
-    check(0 <= b.leader_slowdown < 1, "[behavior] leader_slowdown debe estar en [0, 1)")
-    check(0 < b.yellow_speed_factor <= 1, "[behavior] yellow_speed_factor debe estar en (0, 1]")
+    check(0 < b.lane_change_speed_factor <= 1, "[behavior] lane_change_speed_factor must be in (0, 1]")
+    check(0 <= b.leader_slowdown < 1, "[behavior] leader_slowdown must be in [0, 1)")
+    check(0 < b.yellow_speed_factor <= 1, "[behavior] yellow_speed_factor must be in (0, 1]")
     for name in ("lane_change_cooldown", "lookahead", "min_advantage", "release_space", "yellow_approach"):
-        check(getattr(b, name) >= 0, f"[behavior] {name} no puede ser negativo")
-    check(b.lane_change_interval >= DT, f"[behavior] lane_change_interval debe ser ≥ {DT} s")
+        check(getattr(b, name) >= 0, f"[behavior] {name} cannot be negative")
+    check(b.lane_change_interval >= DT, f"[behavior] lane_change_interval must be ≥ {DT} s")
 
     _validate_bottleneck(sim, check)
     _validate_speed_bump(sim, check)
     for spec in sim.specs:
         check(spec.fuel is None or spec.fuel in FUELS,
-              f"[vehicles.{spec.key}] fuel debe ser uno de {', '.join(FUELS)}; se leyó {spec.fuel!r}")  # fmt: skip
-        check(spec.mass_kg is None or spec.mass_kg > 0, f"[vehicles.{spec.key}] mass_kg debe ser mayor que 0 kg")
+              f"[vehicles.{spec.key}] fuel must be one of {', '.join(FUELS)}; got {spec.fuel!r}")  # fmt: skip
+        check(spec.mass_kg is None or spec.mass_kg > 0, f"[vehicles.{spec.key}] mass_kg must be greater than 0 kg")
     for fuel, price in sim.fuel_price:
-        check(price >= 0, f"[fuel] price: el precio de {fuel} no puede ser negativo")
-    check(bool(sim.currency.strip()), "[fuel] currency no puede estar vacía")
+        check(price >= 0, f"[fuel] price: the price of {fuel} cannot be negative")
+    check(bool(sim.currency.strip()), "[fuel] currency cannot be empty")
 
     longest = max(s.longest + s.gap_run for s in sim.specs)
-    check(sim.length >= 2 * longest, f"[road] length debe ser al menos {2 * longest:g} m (dos veces el vehículo más largo con su gap)")
-    check(1 <= sim.lanes <= 50, "se admiten entre 1 y 50 carriles (largo de las listas por carril)")
-    check(all(v > 0 for v in sim.lane_max_kmh), "[road] max_line_speed: cada valor debe ser mayor que 0")
-    for where, lt in [("[traffic_light]", sim.exit_light), *((f"[traffic_light] a {e.position:g} m", e)
+    check(sim.length >= 2 * longest, f"[road] length must be at least {2 * longest:g} m (twice the longest vehicle with its gap)")
+    check(1 <= sim.lanes <= 50, "between 1 and 50 lanes are allowed (length of the per-lane lists)")
+    check(all(v > 0 for v in sim.lane_max_kmh), "[road] max_line_speed: each value must be greater than 0")
+    for where, lt in [("[traffic_light]", sim.exit_light), *((f"[traffic_light] at {e.position:g} m", e)
                                                                 for e in sim.extra_lights)]:  # fmt: skip
-        check(lt.red >= 0, f"{where} red no puede ser negativo")
-        check(lt.yellow >= 0, f"{where} yellow no puede ser negativo")
+        check(lt.red >= 0, f"{where} red cannot be negative")
+        check(lt.yellow >= 0, f"{where} yellow cannot be negative")
         # Con los tres en 0 no hay semáforo (como enabled = false); si no, hace falta verde. El peatonal usa
         # green como verde mínimo entre dos cruces (puede ser 0) y red como lo que dura el cruce.
         check(not lt.active or lt.pedestrian or lt.green > 0,
-              f"{where} green debe ser mayor que 0 (o red, green y yellow en 0, o enabled = false, para no tener "
-              "semáforo)")  # fmt: skip
+              f"{where} green must be greater than 0 (or red, green and yellow at 0, or enabled = false, for no "
+              "traffic light)")  # fmt: skip
         if lt.pedestrian and lt.enabled:
-            check(lt.red > 0, f"{where} red debe ser mayor que 0 con pedestrian = true (es lo que dura el cruce)")
+            check(lt.red > 0, f"{where} red must be greater than 0 with pedestrian = true (it is how long the crossing lasts)")
             _check_rate(f"{where} pedestrian_crossing", lt.pedestrian_crossing)
-        check(lt.start_phase in ("red", "green"), f'{where} start_phase debe ser "red" o "green"')
+        check(lt.start_phase in ("red", "green"), f'{where} start_phase must be "red" or "green"')
         for name, value in (("red", lt.red), ("green", lt.green), ("yellow", lt.yellow), ("offset", lt.offset)):
-            check(abs(value / DT - round(value / DT)) < 1e-9, f"{where} {name} debe ser múltiplo de {DT} s")
+            check(abs(value / DT - round(value / DT)) < 1e-9, f"{where} {name} must be a multiple of {DT} s")
         check(lt.offset == 0 or 0 < lt.offset < lt.cycle,
-              f"{where} offset debe estar entre 0 y el ciclo (red + green + yellow), sin incluirlo")  # fmt: skip
+              f"{where} offset must be between 0 and the cycle (red + green + yellow), excluding it")  # fmt: skip
     # Un semáforo desactivado (enabled = false, o sus fases en 0) no está en la calle: su posición no se revisa.
     positions = [e.position for e in sim.extra_lights if e.active]
     check(all(0 < p < sim.length for p in positions),
-          f"[[traffic_light]] position: cada semáforo intermedio debe estar entre 0 y {sim.length:g} m ([road] "
-          "length), sin incluirlos (el del final del tramo va sin position)")  # fmt: skip
-    check(len(set(positions)) == len(positions), "[[traffic_light]] position: hay semáforos en la misma posición")
+          f"[[traffic_light]] position: each intermediate light must be between 0 and {sim.length:g} m ([road] "
+          "length), both excluded (the one at the end of the segment has no position)")  # fmt: skip
+    check(len(set(positions)) == len(positions), "[[traffic_light]] position: there are lights at the same position")
     for k, spec in enumerate(sim.specs):
         _check_rate(f"[demand] {spec.key}_rate", sim.rate(k))
-    check(sim.rate_interval >= DT, f"[demand] rate_interval debe ser ≥ {DT} s")
-    check(any(rate > 0 for rate in sim.rates), "[demand] al menos un tipo de vehículo debe tener tasa > 0")
-    check(all(0 <= v <= 1 for v in sim.lane_initial_occupancy), "[initial] occupancy: cada valor debe estar en [0, 1]")
-    check(all(v >= 0 for v in sim.lane_exit_capacity), "[exit] capacity: cada valor debe ser ≥ 0 veh/min (0 = sin cola de salida)")
-    check(all(v > 0 for v in sim.lane_exit_storage), "[exit] storage: cada valor debe ser > 0 m")
-    check(sim.run > 0, "[execution] run debe ser mayor que 0")
-    check(sim.time_scale > 0, "[execution] time_scale debe ser mayor que 0")
-    check(sim.sample > 0, "[execution] sample debe ser mayor que 0")
+    check(sim.rate_interval >= DT, f"[demand] rate_interval must be ≥ {DT} s")
+    check(any(rate > 0 for rate in sim.rates), "[demand] at least one vehicle type must have a rate > 0")
+    check(all(0 <= v <= 1 for v in sim.lane_initial_occupancy), "[initial] occupancy: each value must be in [0, 1]")
+    check(all(v >= 0 for v in sim.lane_exit_capacity), "[exit] capacity: each value must be ≥ 0 veh/min (0 = no exit queue)")
+    check(all(v > 0 for v in sim.lane_exit_storage), "[exit] storage: each value must be > 0 m")
+    check(sim.run > 0, "[execution] run must be greater than 0")
+    check(sim.time_scale > 0, "[execution] time_scale must be greater than 0")
+    check(sim.sample > 0, "[execution] sample must be greater than 0")
     for label, value in (
         ("[execution] sample", sim.sample),
         ("[demand] rate_interval", sim.rate_interval),
     ):
-        check(abs(value / DT - round(value / DT)) < 1e-9, f"{label} debe ser múltiplo de {DT} s")
-    check(sim.n_samples >= 2, "[execution] la corrida debe cubrir al menos dos muestras (run × time_scale ≥ 2 × sample)")
-    check(opts.replicas >= 1, "[execution] replicas debe ser al menos 1")
-    check(opts.workers >= 0, "[execution] workers no puede ser negativo (0 = automático)")
-    check(opts.seed is None or 0 <= opts.seed < 2**63, "[execution] seed debe ser un entero no negativo")
-    check(bool(opts.output_dir.strip()), "[output] dir no puede estar vacío")
+        check(abs(value / DT - round(value / DT)) < 1e-9, f"{label} must be a multiple of {DT} s")
+    check(sim.n_samples >= 2, "[execution] the run must cover at least two samples (run × time_scale ≥ 2 × sample)")
+    check(opts.replicas >= 1, "[execution] replicas must be at least 1")
+    check(opts.workers >= 0, "[execution] workers cannot be negative (0 = automatic)")
+    check(opts.seed is None or 0 <= opts.seed < 2**63, "[execution] seed must be a non-negative integer")
+    check(bool(opts.output_dir.strip()), "[output] dir cannot be empty")
 
 
 def _validate_speed_bump(sim: SimConfig, check) -> None:
     for spec in sim.specs:
         check(spec.speed_bump_kmh is None or spec.speed_bump_kmh > 0,
-              f"[vehicles.{spec.key}] speed_bump_kmh debe ser mayor que 0 km/h")  # fmt: skip
+              f"[vehicles.{spec.key}] speed_bump_kmh must be greater than 0 km/h")  # fmt: skip
     positions = [b.position for b in sim.speed_bumps]
     check(all(0 < p < sim.length for p in positions),
-          f"[speed_bump] position debe estar entre 0 y {sim.length:g} m ([road] length), sin incluirlos (cada tope)")  # fmt: skip
-    check(len(set(positions)) == len(positions), "[speed_bump] position: hay topes en la misma posición")
+          f"[speed_bump] position must be between 0 and {sim.length:g} m ([road] length), both excluded (each bump)")  # fmt: skip
+    check(len(set(positions)) == len(positions), "[speed_bump] position: there are bumps at the same position")
     for bump in sim.speed_bumps:
-        where = f"[speed_bump] a {bump.position:g} m"
+        where = f"[speed_bump] at {bump.position:g} m"
         lanes = bump.lanes or ()
         for lane in lanes:
-            check(0 <= lane < sim.lanes, f"{where} lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
-        check(len(set(lanes)) == len(lanes), f"{where} lanes: hay carriles repetidos")
-        check(bump.lanes is None or len(lanes) > 0, f"{where} lanes no puede estar vacía (sin ella, todos los carriles)")
+            check(0 <= lane < sim.lanes, f"{where} lanes: each lane must be between 0 and {sim.lanes - 1}")
+        check(len(set(lanes)) == len(lanes), f"{where} lanes: there are repeated lanes")
+        check(bump.lanes is None or len(lanes) > 0, f"{where} lanes cannot be empty (without it, all lanes)")
         if bump.pedestrian:
             check(bump.pedestrian_time >= DT and abs(bump.pedestrian_time / DT - round(bump.pedestrian_time / DT)) < 1e-9,
-                  f"{where} pedestrian_time debe ser un múltiplo de {DT} s, al menos {DT} s")  # fmt: skip
+                  f"{where} pedestrian_time must be a multiple of {DT} s, at least {DT} s")  # fmt: skip
             _check_rate(f"{where} pedestrian_crossing", bump.pedestrian_crossing)
 
 
 def _validate_bottleneck(sim: SimConfig, check) -> None:
     for spec in sim.specs:
         label = f"[vehicles.{spec.key}]"
-        check(0 <= spec.bottleneck_prob <= 1, f"{label} bottleneck_prob debe estar entre 0 y 1")
+        check(0 <= spec.bottleneck_prob <= 1, f"{label} bottleneck_prob must be between 0 and 1")
         check(spec.bottleneck_prob == 0 or spec.stop_position is None,
-              f"{label} bottleneck_prob no aplica a un tipo con parada propia (stop_position); solo se admite una")  # fmt: skip
+              f"{label} bottleneck_prob does not apply to a type with its own stop (stop_position); only one is allowed")  # fmt: skip
         mean, std = spec.bottleneck_time_mean, spec.bottleneck_time_std
-        check(mean >= 0 and std >= 0, f"{label} bottleneck_time_mean y bottleneck_time_std no pueden ser negativos")
+        check(mean >= 0 and std >= 0, f"{label} bottleneck_time_mean and bottleneck_time_std cannot be negative")
         check(mean + 6 * std <= 3600,
-              f"{label} la detención no puede durar más de una hora (media + 6·σ ≤ 3600 s)")  # fmt: skip
+              f"{label} the halt cannot last more than an hour (mean + 6·σ ≤ 3600 s)")  # fmt: skip
     for lane in sim.bottleneck.stop_lanes or ():
-        check(0 <= lane < sim.lanes, f"[bottleneck] stop_lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
-    for where, lt in [("[traffic_light]", sim.exit_light), *((f"[traffic_light] a {e.position:g} m", e)
+        check(0 <= lane < sim.lanes, f"[bottleneck] stop_lanes: each lane must be between 0 and {sim.lanes - 1}")
+    for where, lt in [("[traffic_light]", sim.exit_light), *((f"[traffic_light] at {e.position:g} m", e)
                                                                 for e in sim.extra_lights)]:  # fmt: skip
         for lane in lt.free_lanes:
-            check(0 <= lane < sim.lanes, f"{where} free_lanes: cada carril debe estar entre 0 y {sim.lanes - 1}")
-        check(len(set(lt.free_lanes)) == len(lt.free_lanes), f"{where} free_lanes: hay carriles repetidos")
+            check(0 <= lane < sim.lanes, f"{where} free_lanes: each lane must be between 0 and {sim.lanes - 1}")
+        check(len(set(lt.free_lanes)) == len(lt.free_lanes), f"{where} free_lanes: there are repeated lanes")
         for lane in lt.free_lanes:
             check(lane not in range(sim.lanes) or lane in sim.reserved_lanes,
-                  f"{where} free_lanes: el carril {lane} no es exclusivo de ningún tipo; free_lanes solo aplica a los "
-                  "tipos con carril exclusivo ([vehicles.<clave>] lane y exclusive = true)")  # fmt: skip
+                  f"{where} free_lanes: lane {lane} is not exclusive to any type; free_lanes only applies to "
+                  "types with an exclusive lane ([vehicles.<key>] lane and exclusive = true)")  # fmt: skip
     lo, hi = sim.bottleneck_zone()
-    check(0 <= lo < hi <= sim.length, f"[bottleneck] stop_zone requiere 0 ≤ inicio < fin ≤ {sim.length:g} ([road] length)")
+    check(0 <= lo < hi <= sim.length, f"[bottleneck] stop_zone requires 0 ≤ start < end ≤ {sim.length:g} ([road] length)")
 
 
 def _validate_spec(s: VehicleSpec, label: str, check) -> None:
-    check(bool(s.name.strip()), f"{label} name no puede estar vacío")
-    check(s.speed_std >= 0, f"{label} speed_kmh: std no puede ser negativa")
+    check(bool(s.name.strip()), f"{label} name cannot be empty")
+    check(s.speed_std >= 0, f"{label} speed_kmh: std cannot be negative")
     lo = s.speed_kmh if s.speed_min is None else s.speed_min
     hi = s.speed_kmh if s.speed_max is None else s.speed_max
-    check(0 < lo <= s.speed_kmh <= hi, f"{label} speed_kmh: debe cumplirse 0 < min ≤ mean ≤ max")
-    check(s.slowest_kmh > 0, f"{label} speed_kmh: la velocidad mínima (mean − 3·std sin min) debe ser mayor que 0")
-    check(0 < s.gap_stop <= s.gap_run, f"{label} requiere 0 < gap_stop ≤ gap_run")
-    check(s.time_headway is None or 0 < s.time_headway <= 5, f"{label} time_headway debe estar entre 0 y 5 s")
-    check(1 <= s.pax_min <= s.pax_max <= 255, f"{label} pax: debe cumplirse 1 ≤ min ≤ max ≤ 255")
-    check(s.pax_min <= s.pax_mean <= s.pax_max, f"{label} pax: mean debe estar entre min y max")
-    check(s.pax_std >= 0, f"{label} pax: std no puede ser negativa")
-    check(0 <= s.cargo_prob <= 1, f"{label} cargo_prob debe estar entre 0 y 1")
-    check(s.length_std >= 0, f"{label} length: std no puede ser negativa")
+    check(0 < lo <= s.speed_kmh <= hi, f"{label} speed_kmh: 0 < min ≤ mean ≤ max must hold")
+    check(s.slowest_kmh > 0, f"{label} speed_kmh: the minimum speed (mean − 3·std without min) must be greater than 0")
+    check(0 < s.gap_stop <= s.gap_run, f"{label} requires 0 < gap_stop ≤ gap_run")
+    check(s.time_headway is None or 0 < s.time_headway <= 5, f"{label} time_headway must be between 0 and 5 s")
+    check(1 <= s.pax_min <= s.pax_max <= 255, f"{label} pax: 1 ≤ min ≤ max ≤ 255 must hold")
+    check(s.pax_min <= s.pax_mean <= s.pax_max, f"{label} pax: mean must be between min and max")
+    check(s.pax_std >= 0, f"{label} pax: std cannot be negative")
+    check(0 <= s.cargo_prob <= 1, f"{label} cargo_prob must be between 0 and 1")
+    check(s.length_std >= 0, f"{label} length: std cannot be negative")
     lo = s.length if s.length_min is None else s.length_min
     hi = s.length if s.length_max is None else s.length_max
-    check(0 < lo <= s.length <= hi, f"{label} length: debe cumplirse 0 < min ≤ mean ≤ max")
-    check(s.shortest > 0, f"{label} length: el largo mínimo (mean − 3·std sin min) debe ser mayor que 0")
+    check(0 < lo <= s.length <= hi, f"{label} length: 0 < min ≤ mean ≤ max must hold")
+    check(s.shortest > 0, f"{label} length: the minimum length (mean − 3·std without min) must be greater than 0")
 
 
 # ------------------------------------------------------------ carpeta de corrida
@@ -906,7 +906,7 @@ def resolve_target(arg: str | None) -> Target:
     """Interpreta el único argumento del comando.
 
     - Sin argumento: config.toml de la raíz del proyecto.
-    - Una carpeta existente (p. ej. resultados/<ID>_<nombre>): su config.toml.
+    - Una carpeta existente (p. ej. results/<ID>_<nombre>): su config.toml.
     - Cualquier otro texto sin separadores de ruta: el nombre de la corrida, con el
       config.toml de la raíz del proyecto.
     """
@@ -917,10 +917,10 @@ def resolve_target(arg: str | None) -> Target:
         return Target(path / CONFIG_NAME, None, path.resolve().name)
     if path.is_file():
         if path.name != CONFIG_NAME:
-            raise ConfigError(f"el archivo de configuración debe llamarse {CONFIG_NAME}: {path}")
+            raise ConfigError(f"the configuration file must be called {CONFIG_NAME}: {path}")
         return Target(path, None, path.resolve().parent.name)
     if "/" in arg or "\\" in arg or arg.endswith(".toml"):
-        raise ConfigError(f"no existe la carpeta {path}")
+        raise ConfigError(f"the folder {path} does not exist")
     return Target(default_config_path(), arg, DEFAULT_RUN_NAME)
 
 

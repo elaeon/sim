@@ -130,9 +130,9 @@
 
 <section id="uso">
   <h2>Usage</h2>
-  <pre><code>uv run rail                                   # examples/route_chepe.toml → resultados/&lt;ID&gt;_chepe/
-uv run rail --realistic                       # real track + slow motion through the canyons → resultados/&lt;ID&gt;_chepe_realistic/
-uv run rail --route chihuahua-mochis           # the same trip in the opposite direction → resultados/&lt;ID&gt;_chepe_chihuahua-mochis/
+  <pre><code>uv run rail                                   # examples/route_chepe.toml → results/&lt;ID&gt;_chepe/
+uv run rail --realistic                       # real track + slow motion through the canyons → results/&lt;ID&gt;_chepe_realistic/
+uv run rail --route chihuahua-mochis           # the same trip in the opposite direction → results/&lt;ID&gt;_chepe_chihuahua-mochis/
 uv run rail my_route.toml --name test
 uv run rail --duration 90 --format mp4 --depart 07:30
 uv run rail --no-video                        # timetable, summary and route.png only</code></pre>
@@ -308,7 +308,7 @@ uv run rail --no-video                        # timetable, summary and route.png
 
 <section id="salidas">
   <h2>Outputs</h2>
-  <p>They are saved in <code>resultados/&lt;date-time&gt;_&lt;name&gt;/</code>. Nothing is ever overwritten:</p>
+  <p>They are saved in <code>results/&lt;date-time&gt;_&lt;name&gt;/</code>. Nothing is ever overwritten:</p>
   <ul>
     <li><code>summary.txt</code>: distance, departure and arrival times, total time, time dwelling at stops and mean
       speed. If the route goes through Los Mochis and Creel, the time between them (in the direction of travel) to

@@ -57,11 +57,11 @@ def test_reduce_config_keeps_the_speed_bump_of_the_chosen_lanes():
 
 
 def test_reduce_config_errors():
-    with pytest.raises(ConfigError, match="--sin: no existe el tipo 'truck'"):
+    with pytest.raises(ConfigError, match="--without: there is no vehicle type 'truck'"):
         reduce_config(_base(), None, ("truck",))
-    with pytest.raises(ConfigError, match="--carriles: cada carril debe estar entre 0 y 3"):
+    with pytest.raises(ConfigError, match="--lanes: each lane must be between 0 and 3"):
         reduce_config(_base(), (1, 7), ())
-    with pytest.raises(ConfigError, match=r"\[vehicles.bike\] lane = 0 no está en --carriles"):
+    with pytest.raises(ConfigError, match=r"\[vehicles.bike\] lane = 0 is not in --lanes"):
         reduce_config(_base(), (1, 2), ("bus",))  # las bicis participan con su carril 0
 
 
@@ -69,15 +69,15 @@ def test_scenario_is_validated():
     v = Variants(lengths=(40.0,), lights=((30.0, 30.0),), lanes=(1, 2), without=(), queue_types=("car",),
                  replicas=2, run=10.0)  # fmt: skip
     reduced = reduce_config(_base(), (1, 2, 0, 3), ())
-    with pytest.raises(ConfigError, match="tramo de 40 m, semáforo 30/30: .*stop_position"):
+    with pytest.raises(ConfigError, match="40 m segment, light 30/30: .*stop_position"):
         scenario(reduced, v, 40.0, 30.0, 30.0)  # la parada del autobús (250 m) no cabe
 
 
 def test_light_names_and_default_splits():
-    assert [light_name(r, g) for r, g in ((40, 20), (30, 30), (20, 40))] == ["rojo > verde", "rojo = verde", "verde > rojo"]
+    assert [light_name(r, g) for r, g in ((40, 20), (30, 30), (20, 40))] == ["red > green", "red = green", "green > red"]
     assert _lights(None, 30.0, 30.0) == ((40.0, 20.0), (30.0, 30.0), (20.0, 40.0))
     assert _lights(["45/15", "15.5/44.5"], 0, 0) == ((45.0, 15.0), (15.5, 44.5))
-    with pytest.raises(ConfigError, match="ROJO/VERDE"):
+    with pytest.raises(ConfigError, match="RED/GREEN"):
         _lights(["45-15"], 0, 0)
 
 
@@ -94,15 +94,15 @@ def root(tmp_path, monkeypatch):
 
 
 def test_command_writes_the_comparison(root, capsys):
-    argv = ["prueba", "--largos", "60", "100", "--semaforos", "20/10", "10/20", "--carriles", "1", "2",
-            "--sin", "bike", "bus", "--replicas", "2"]  # fmt: skip
+    argv = ["prueba", "--lengths", "60", "100", "--lights", "20/10", "10/20", "--lanes", "1", "2",
+            "--without", "bike", "bus", "--replicas", "2"]  # fmt: skip
     folder = variants(argv)
-    assert folder.parent == root / "resultados" and folder.name.endswith("_prueba")
+    assert folder.parent == root / "results" and folder.name.endswith("_prueba")
     files = {p.name for p in folder.iterdir()}
     assert {PLOT_NAME, DATA_NAME, META_NAME, SPEED_CSV, QUEUE_CSV, SUMMARY_NAME, BASE_CONFIG_NAME} <= files
     assert CONFIG_NAME not in files and latest_run_dir(folder.parent) is None  # no es una corrida de `traffic`
     meta = json.loads((folder / META_NAME).read_text())
-    assert meta["largos_m"] == [60.0, 100.0] and meta["carriles"] == ["carril 0 (30 km/h)", "carril 1 (50 km/h)"]
+    assert meta["largos_m"] == [60.0, 100.0] and meta["carriles"] == ["lane 0 (30 km/h)", "lane 1 (50 km/h)"]
     assert meta["semilla"] == 7 and meta["replicas"] == 2 and meta["cola_tipos"] == [CAR]
     with np.load(folder / DATA_NAME) as d:
         assert d["speed"].shape == (2, 2, 2, 2) and d["queue"].shape[:3] == (2, 2, 2)
@@ -116,19 +116,19 @@ def test_command_writes_the_comparison(root, capsys):
     one, _, _ = run_variant_replica(cfg, np.random.SeedSequence(7).spawn(2)[1])
     np.testing.assert_allclose(speed[1, 1, 1], one)
     out = capsys.readouterr().out
-    assert "4 escenarios × 2 réplicas" in out and "rojo > verde (20/10)" in out
+    assert "4 scenarios × 2 replicas" in out and "red > green (20/10)" in out
 
     # Redibujar no simula ni sobrescribe.
-    variants(["--redibujar", str(folder)])
-    assert (folder / "variantes_semaforo-2.png").stat().st_size > 10_000
+    variants(["--redraw", str(folder)])
+    assert (folder / "light_variants-2.png").stat().st_size > 10_000
     assert (folder / PLOT_NAME).stat().st_size > 10_000
 
 
 def test_command_errors(root):
     with pytest.raises(SystemExit):
-        variants(["--carriles", "1", "2", "--sin", "bus"])  # las bicis tienen carril 0
+        variants(["--lanes", "1", "2", "--without", "bus"])  # las bicis tienen carril 0
     with pytest.raises(SystemExit):
-        variants(["--redibujar", str(root)])  # no es una comparación
+        variants(["--redraw", str(root)])  # no es una comparación
 
 
 def test_reduce_config_keeps_the_free_lanes_of_each_light():
@@ -144,12 +144,12 @@ def test_scenario_varies_only_the_light_at_the_end():
     base = replace(reduce_config(_base(), (1, 2, 0, 3), ("bus",)), extra_lights=(Light(90.0, red=12, green=8),))
     cfg = scenario(base, v, 200.0, 20.0, 40.0)
     assert (cfg.red, cfg.green) == (20.0, 40.0) and cfg.extra_lights == (Light(90.0, red=12, green=8),)
-    with pytest.raises(ConfigError, match="tramo de 60 m, semáforo 20/40: .*cada semáforo intermedio"):
+    with pytest.raises(ConfigError, match="60 m segment, light 20/40: .*each intermediate light"):
         scenario(base, replace(v, lengths=(60.0,)), 60.0, 20.0, 40.0)  # el de 90 m ya no cabe
 
 
 def test_scenario_replaces_a_pedestrian_light_at_the_end_with_a_fixed_cycle_one():
-    """traffic-variantes varía el reparto rojo/verde del final del tramo: ahí el semáforo es de ciclo fijo, aunque en la
+    """traffic-variants varía el reparto rojo/verde del final del tramo: ahí el semáforo es de ciclo fijo, aunque en la
     configuración sea peatonal; los intermedios peatonales se conservan."""
     from trafico.config import Rate
 

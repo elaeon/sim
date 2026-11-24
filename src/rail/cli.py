@@ -19,7 +19,7 @@ from rail.theme import THEMES, get_theme
 DEFAULT_ROUTE = Path("examples") / "route_chepe.toml"
 DURATION_S = 60.0
 REALISTIC_DURATION_S = 90.0  # the slow-motion section needs more video time
-RESULTS_DIR = "resultados"  # same folder as the traffic runs
+RESULTS_DIR = "results"  # same folder as the traffic runs
 
 
 def build_parser() -> argparse.ArgumentParser:

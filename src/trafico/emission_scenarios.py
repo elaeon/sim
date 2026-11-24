@@ -1,5 +1,5 @@
 """Comparación de emisiones entre escenarios de una misma calle: con y sin tope (o con topes en distintas
-posiciones) y, opcionalmente, con y sin semáforo (`uv run traffic-emisiones`).
+posiciones) y, opcionalmente, con y sin semáforo (`uv run traffic-emissions`).
 
 Todos los escenarios corren las mismas réplicas con la misma semilla que `traffic` (SeedSequence.spawn): las
 llegadas, pasajeros y velocidades sorteadas son las mismas, así que las diferencias vienen del tope o del
@@ -24,13 +24,13 @@ from trafico.runner import run_many
 from trafico.settings import ConfigError, RunOptions, validate_config
 from trafico.variants import reduce_config
 
-PLOT_NAME = "comparacion_emisiones.png"
-DATA_NAME = "datos.npz"
-META_NAME = "escenarios.json"
-BASE_CONFIG_NAME = "config_base.toml"  # no se llama config.toml: la carpeta no es una corrida de `traffic`
-TABLE_CSV = "comparacion_emisiones.csv"
-POSITION_CSV = "emisiones_posicion.csv"
-SUMMARY_NAME = "resumen.txt"
+PLOT_NAME = "emission_comparison.png"
+DATA_NAME = "data.npz"
+META_NAME = "scenarios.json"
+BASE_CONFIG_NAME = "base_config.toml"  # no se llama config.toml: la carpeta no es una corrida de `traffic`
+TABLE_CSV = "emission_comparison.csv"
+POSITION_CSV = "emissions_by_position.csv"
+SUMMARY_NAME = "summary.txt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,9 +57,9 @@ def scenario_label(bump: float | tuple[float, ...] | None, light: bool | None) -
     """Nombre del escenario, p. ej. «tope a 100 m», «topes a 35 y 70 m» o, si se comparan semáforos, «sin tope ·
     sin semáforo»."""
     at = bump_positions(bump)
-    name = "sin tope" if not at else f"{'topes' if len(at) > 1 else 'tope'} a {' y '.join(f'{p:g}' for p in at)} m"
+    name = "no bump" if not at else f"{'bumps' if len(at) > 1 else 'bump'} at {' and '.join(f'{p:g}' for p in at)} m"
     if light is not None:
-        name += " · con semáforo" if light else " · sin semáforo"
+        name += " · with traffic light" if light else " · without traffic light"
     return name
 
 
@@ -87,10 +87,10 @@ def build_configs(base: SimConfig, s: Scenarios) -> list[tuple[str, SimConfig]]:
             try:
                 validate_config(cfg, RunOptions(replicas=s.replicas))
             except ConfigError as exc:
-                raise ConfigError(f"escenario «{name}»: {exc}") from None
+                raise ConfigError(f"scenario «{name}»: {exc}") from None
             out.append((name, cfg))
     if not emitted(out[0][1])[0]:
-        raise ConfigError("ningún tipo que participa emite: hacen falta [vehicles.<clave>.emissions], accel y decel")
+        raise ConfigError("no participating type emits: [vehicles.<key>.emissions], accel and decel are needed")
     return out
 
 
@@ -125,7 +125,7 @@ def metadata(base: SimConfig, s: Scenarios, configs: list[tuple[str, SimConfig]]
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0]
     limits = cfg.lane_max_kmh
     return {
-        "comando": "uv run traffic-emisiones " + " ".join(argv),
+        "comando": "uv run traffic-emissions " + " ".join(argv),
         "semilla": seed,
         "escenarios": [name for name, _ in configs],
         "topes_m": [[b.position for b in c.bumps] for _, c in configs],
@@ -137,7 +137,7 @@ def metadata(base: SimConfig, s: Scenarios, configs: list[tuple[str, SimConfig]]
                                for _, c in configs for b in c.crossings), None),  # fmt: skip
         "largo_m": cfg.length,
         "carriles_base": list(range(base.lanes)) if s.lanes is None else list(s.lanes),
-        "carriles": [f"carril {i} ({limits[i]:g} km/h)" if np.isfinite(limits[i]) else f"carril {i}"
+        "carriles": [f"lane {i} ({limits[i]:g} km/h)" if np.isfinite(limits[i]) else f"lane {i}"
                      for i in range(cfg.lanes)],  # fmt: skip
         "sin": list(s.without),
         "tipos": [sp.key for sp in cfg.specs],
@@ -178,10 +178,10 @@ def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
     pidx = [POLLUTANTS.index(p) for p in meta["contaminantes"]]
     with open(folder / TABLE_CSV, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        header = ["escenario", "tipo", "veh_min", "t_recorrido_s", "velocidad_media_kmh"]
+        header = ["scenario", "type", "veh_min", "travel_time_s", "mean_speed_kmh"]
         for p in pidx:
             name = f"{POLLUTANTS[p]}_{unit(POLLUTANTS[p])[0]}_km"
-            header += [name, f"{POLLUTANTS[p]}_cambio_pct", f"{POLLUTANTS[p]}_exceso_flujo_libre_pct"]
+            header += [name, f"{POLLUTANTS[p]}_change_pct", f"{POLLUTANTS[p]}_excess_free_flow_pct"]
         w.writerow(header)
         for si, scen in enumerate(meta["escenarios"]):
             for k in meta["activos"]:
@@ -196,7 +196,7 @@ def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
     pos = data["emissions_pos"].sum(axis=2) / EMIS_BIN / (meta["s_simulados"] / 3600.0)  # (escenario, contaminante, x)
     with open(folder / POSITION_CSV, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["x_inicio_m", "x_fin_m"] + [f"{POLLUTANTS[p]}_g_m_h_{i}" for p in pidx
+        w.writerow(["x_start_m", "x_end_m"] + [f"{POLLUTANTS[p]}_g_m_h_{i}" for p in pidx
                                                 for i in range(len(meta["escenarios"]))])  # fmt: skip
         for b in range(pos.shape[2]):
             w.writerow([f"{b * EMIS_BIN:g}", f"{min((b + 1) * EMIS_BIN, meta['largo_m']):g}"]
@@ -217,7 +217,7 @@ def summary_text(meta: dict, data: dict[str, np.ndarray]) -> str:
     rows: list[tuple[str, list[str]]] = []
     for k in meta["activos"]:
         rows.append((f"{names[k]}: veh/min", [f"{data['crossed_veh'][i, k] / minutes:,.2f}" for i in range(len(km))]))
-        rows.append((f"{names[k]}: recorrido (s)", [f"{data['travel_time'][i, k]:,.1f}" for i in range(len(km))]))
+        rows.append((f"{names[k]}: travel time (s)", [f"{data['travel_time'][i, k]:,.1f}" for i in range(len(km))]))
     for p in (POLLUTANTS.index(pol) for pol in meta["contaminantes"]):
         pol = POLLUTANTS[p]
         for k in meta["emisores"]:
@@ -235,8 +235,8 @@ def summary_text(meta: dict, data: dict[str, np.ndarray]) -> str:
     widths = [max(len(r[i]) for r in table) for i in range(len(head))]
     lines = ["  ".join(c.ljust(w) if i == 0 else c.rjust(w) for i, (c, w) in enumerate(zip(r, widths))) for r in table]
     return "\n".join([
-        f"Emisiones por escenario (media de {meta['replicas']} réplicas, {meta['s_simulados']:,.0f} s simulados; entre "
-        f"paréntesis, el cambio frente a «{meta['escenarios'][0]}»):", "", *lines,
+        f"Emissions per scenario (mean of {meta['replicas']} replicas, {meta['s_simulados']:,.0f} simulated s; in "
+        f"brackets, the change compared with «{meta['escenarios'][0]}»):", "", *lines,
     ])  # fmt: skip
 
 
@@ -270,9 +270,11 @@ def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
 
 def load(folder: Path) -> tuple[dict, dict[str, np.ndarray]]:
     """Parámetros y datos de una comparación ya corrida."""
-    meta_path, data_path = folder / META_NAME, folder / DATA_NAME
+    from trafico.results import existing
+
+    meta_path, data_path = existing(folder, META_NAME), existing(folder, DATA_NAME)
     if not (meta_path.is_file() and data_path.is_file()):
-        raise ConfigError(f"{folder} no es una carpeta de traffic-emisiones (faltan {META_NAME} o {DATA_NAME})")
+        raise ConfigError(f"{folder} is not a traffic-emissions folder ({META_NAME} or {DATA_NAME} is missing)")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     with np.load(data_path) as d:
         data = {k: d[k] for k in d.files}

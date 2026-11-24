@@ -15,10 +15,10 @@ dependencies = [
 
 [project.scripts]
 traffic = "trafico.cli:main"
-traffic-ver = "trafico.cli:view_main"
-traffic-variantes = "trafico.cli:variants_main"
-traffic-emisiones = "trafico.cli:emissions_main"
-traffic-calibrar = "trafico.cli:calibrate_main"
+traffic-view = "trafico.cli:view_main"
+traffic-variants = "trafico.cli:variants_main"
+traffic-emissions = "trafico.cli:emissions_main"
+traffic-calibrate = "trafico.cli:calibrate_main"
 rail = "rail.cli:main"
 
 [build-system]

@@ -1,8 +1,8 @@
-"""Separación entre topes o semáforos: cuánto deben alejarse dos topes (`uv run traffic-emisiones --separacion`) o dos
-semáforos (`--separacion-semaforos`) para que la huella de emisiones del primero se diluya antes del segundo.
+"""Separación entre topes o semáforos: cuánto deben alejarse dos topes (`uv run traffic-emissions --spacing`) o dos
+semáforos (`--light-spacing`) para que la huella de emisiones del primero se diluya antes del segundo.
 
 Corre, con la misma semilla que `traffic`, la calle sin tope, con un solo tope en `P1` y con dos topes en `P1` y
-`P1 + d` para cada separación `d` (o, con `--cadena N`, con una cadena de N topes en `P1`, `P1 + d`, …, `P1 + (N − 1)·d`).
+`P1 + d` para cada separación `d` (o, con `--chain N`, con una cadena de N topes en `P1`, `P1 + d`, …, `P1 + (N − 1)·d`).
 Del perfil de emisiones a lo largo de la calle (g/(m·h), todos los carriles) de cada
 escenario se calculan, por contaminante:
 
@@ -41,10 +41,10 @@ from trafico.emission_scenarios import DATA_NAME, META_NAME, scenario_bumps
 from trafico.emissions import EMIS_BIN, unit
 from trafico.settings import ConfigError, RunOptions, validate_config
 
-PLOT_NAME = "separacion_topes.png"
-TABLE_CSV = "separacion_topes.csv"
-PROFILE_CSV = "perfiles_separacion.csv"
-SUMMARY_NAME = "resumen.txt"
+PLOT_NAME = "bump_spacing.png"
+TABLE_CSV = "bump_spacing.csv"
+PROFILE_CSV = "spacing_profiles.csv"
+SUMMARY_NAME = "summary.txt"
 DEFAULT_DISTANCES = (10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 80.0, 100.0)
 MODE = "separacion"
 EDGE = 5.0  # m junto a cada tope que se dejan fuera del exceso medio entre topes
@@ -60,19 +60,19 @@ OFFSETS = ("rojo", "verde", "igual")
 
 @dataclass(frozen=True, slots=True)
 class Nouns:
-    one: str  # «tope»
-    many: str  # «topes»
+    one: str  # «bump»
+    many: str  # «bumps»
 
     @property
     def a(self) -> str:
-        return f"un {self.one}"
+        return f"one {self.one}"
 
     @property
     def none(self) -> str:
-        return f"sin {self.one}"
+        return f"no {self.one}"
 
 
-NOUNS = {BUMP: Nouns("tope", "topes"), LIGHT: Nouns("semáforo", "semáforos")}
+NOUNS = {BUMP: Nouns("bump", "bumps"), LIGHT: Nouns("traffic light", "traffic lights")}
 
 
 def kind_of(meta: dict) -> str:
@@ -86,11 +86,11 @@ def first_position(meta: dict) -> float:
 
 
 def plot_name(meta: dict) -> str:
-    return PLOT_NAME if kind_of(meta) == BUMP else "separacion_semaforos.png"
+    return PLOT_NAME if kind_of(meta) == BUMP else "light_spacing.png"
 
 
 def table_name(meta: dict) -> str:
-    return TABLE_CSV if kind_of(meta) == BUMP else "separacion_semaforos.csv"
+    return TABLE_CSV if kind_of(meta) == BUMP else "light_spacing.csv"
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,27 +178,28 @@ def build_configs(reduced: SimConfig, s: Spacing) -> tuple[list[tuple[str, SimCo
     del tramo."""
     base = reduced if s.length is None else replace(reduced, length=s.length)
     base = base if s.light is None else base.with_lights(s.light)
-    nn, flag = s.nouns, "--primer-tope" if s.kind == BUMP else "--primer-semaforo"
+    nn, flag = s.nouns, "--first-bump" if s.kind == BUMP else "--first-light"
     if s.kind == LIGHT:  # solo los semáforos del barrido y los topes fijos que se pidan
         base = replace(base, traffic_light=False, extra_lights=(),
                        speed_bumps=scenario_bumps(base, tuple(sorted(s.bumps)), s.bump_lanes))  # fmt: skip
     if not 0 < s.first < base.length:
-        raise ConfigError(f"{flag} debe estar entre 0 y {base.length:g} m (largo del tramo)")
+        raise ConfigError(f"{flag} must be between 0 and {base.length:g} m (the segment length)")
     if s.count < 2:
-        raise ConfigError(f"--cadena debe ser de al menos 2 {nn.many}")
+        raise ConfigError(f"--chain must be at least 2 {'bumps' if s.kind == BUMP else 'lights'}")
     if s.fixed_gaps and len(s.fixed_gaps) != s.count - 2:
-        raise ConfigError(f"--separaciones-fijas: con --cadena {s.count} hacen falta {s.count - 2} valores (los tramos "
-                          "después del que se barre)")  # fmt: skip
+        raise ConfigError(f"--fixed-spacings: with --chain {s.count}, {s.count - 2} values are needed (the segments "
+                          "after the swept one)")  # fmt: skip
     if len(s.offsets) != s.count - 1 or any(m not in OFFSETS for m in s.offsets):
-        raise ConfigError(f"--desfase: uno de {', '.join(OFFSETS)} para todos los tramos o uno por tramo separados por "
-                          f"comas ({s.count - 1} con --cadena {s.count})")  # fmt: skip
+        raise ConfigError(f"--offset: one of red, green or same for all segments, or one per segment separated by "
+                          f"commas ({s.count - 1} with --chain {s.count})")  # fmt: skip
     kept = [d for d in s.distances if s.positions(d)[-1] <= base.length - EMIS_BIN]
     skipped = [d for d in s.distances if d not in kept]
     if not kept:
-        raise ConfigError(f"ninguna separación cabe en el tramo: el primer {nn.one} está a {s.first:g} m y el tramo mide "
-                          f"{base.length:g} m (el último de {s.count} {nn.many} debe quedar a {EMIS_BIN:g} m o más del "
-                          "final)")  # fmt: skip
-    specs = [(nn.none, ()), (f"{nn.a} a {s.first:g} m", (s.first,))]
+        noun = "bump" if s.kind == BUMP else "light"
+        raise ConfigError(f"no spacing fits on the segment: the first {noun} is at {s.first:g} m and the segment is "
+                          f"{base.length:g} m long (the last of {s.count} {noun}s must be {EMIS_BIN:g} m or more from the "
+                          "end)")  # fmt: skip
+    specs = [(nn.none, ()), (f"{nn.a} at {s.first:g} m", (s.first,))]
     specs += [(chain_name(s, d), s.positions(d)) for d in kept]
     out = []
     for name, positions in specs:
@@ -209,18 +210,19 @@ def build_configs(reduced: SimConfig, s: Spacing) -> tuple[list[tuple[str, SimCo
         try:
             validate_config(cfg, RunOptions(replicas=s.replicas))
         except ConfigError as exc:
-            raise ConfigError(f"escenario «{name}»: {exc}") from None
+            raise ConfigError(f"scenario «{name}»: {exc}") from None
         out.append((name, cfg))
     return out, skipped
 
 
 def chain_name(s: Spacing, d: float) -> str:
+    many = s.nouns.many
     if s.count == 2:
-        return f"{s.nouns.many} a {s.first:g} y {s.first + d:g} m (d = {d:g} m)"
+        return f"{many} at {s.first:g} and {s.first + d:g} m (d = {d:g} m)"
     if s.fixed_gaps:
         at = [f"{p:g}" for p in s.positions(d)]
-        return f"{s.nouns.many} a {', '.join(at[:-1])} y {at[-1]} m (d = {d:g} m)"
-    return f"{s.count} {s.nouns.many} desde {s.first:g} m cada {d:g} m"
+        return f"{many} at {', '.join(at[:-1])} and {at[-1]} m (d = {d:g} m)"
+    return f"{s.count} {many} from {s.first:g} m every {d:g} m"
 
 
 def profiles(meta: dict, data: dict[str, np.ndarray]) -> np.ndarray:
@@ -366,13 +368,13 @@ def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
     (folder / META_NAME).write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     result = analyze(meta, data)
     dist = result["distancias_m"]
-    many = "topes" if kind_of(meta) == BUMP else "semaforos"
-    one = many[:-1] if kind_of(meta) == BUMP else "semaforo"
+    many = "bumps" if kind_of(meta) == BUMP else "lights"
+    one = many[:-1]
     with open(folder / table_name(meta), "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["contaminante", "separacion_m", "aditividad", "media_tramo_x_base", f"exceso_entre_{many}_pct_pico",
-                    "gradiente_tramo", "pendiente_maxima", f"costo_{one}_anadido", "costo_pct_por_m",
-                    "adicional_pct_vs_aislados", "demora_x_aislados"])  # fmt: skip
+        w.writerow(["pollutant", "spacing_m", "additivity", "segment_mean_x_base", f"excess_between_{many}_pct_peak",
+                    "segment_gradient", "max_slope", f"added_{one}_cost", "cost_pct_per_m",
+                    "extra_pct_vs_isolated", "delay_x_isolated"])  # fmt: skip
         for pol, r in result["pollutants"].items():
             for j, d in enumerate(dist):
                 add = 100 * (r["aditividad"][j] - 1)
@@ -383,7 +385,7 @@ def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
     prof = profiles(meta, data)
     with open(folder / PROFILE_CSV, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["x_inicio_m", "x_fin_m"] + [f"{pol}_g_m_h_{i}" for pol in meta["contaminantes"]
+        w.writerow(["x_start_m", "x_end_m"] + [f"{pol}_g_m_h_{i}" for pol in meta["contaminantes"]
                                                 for i in range(len(meta["escenarios"]))])  # fmt: skip
         for b in range(prof.shape[2]):
             w.writerow([f"{b * EMIS_BIN:g}", f"{min((b + 1) * EMIS_BIN, meta['largo_m']):g}"]
@@ -415,7 +417,7 @@ def _num(v: float) -> str:
 
 
 def _dist(d: float | None) -> str:
-    return "ninguna de la lista" if d is None else f"{d:g} m"
+    return "none in the list" if d is None else f"{d:g} m"
 
 
 def worst_case(meta: dict) -> bool:
@@ -425,33 +427,34 @@ def worst_case(meta: dict) -> bool:
 
 
 def equivalence_text(meta: dict, result: dict) -> str:
-    """«La cadena emite como 2.1–2.2 semáforos aislados (CO2)»: el rango de n × R entre las separaciones comparables."""
+    """«The chain emits like 2.1–2.2 isolated traffic lights (CO2)»: the range of n × R over the comparable spacings."""
     pol = "co2" if "co2" in result["pollutants"] else next(iter(result["pollutants"]))
     n = int(meta.get("topes_por_cadena", 2))
     ok = ~np.asarray(result.get("cola_entrada_d", np.zeros(len(result["distancias_m"]), bool)), bool)
     eq = n * np.asarray(result["pollutants"][pol]["aditividad"], float)[ok]
     eq = eq[np.isfinite(eq)]
     if not eq.size:
-        return "Sin separaciones comparables"
-    what = "La pareja" if n == 2 else f"La cadena de {n}"
+        return "No comparable spacings"
+    what = "The pair" if n == 2 else f"The chain of {n}"
     span = f"{eq.min():.2f}" if np.isclose(eq.min(), eq.max(), atol=0.005) else f"{eq.min():.2f}–{eq.max():.2f}"
-    return f"{what} emite como {span} semáforos aislados ({POLLUTANT_LABELS[pol]})"
+    return f"{what} emits like {span} isolated traffic lights ({POLLUTANT_LABELS[pol]})"
 
 
 def cycle_text(meta: dict) -> str:
-    """Fases y desfase de los semáforos de un barrido, p. ej. «rojo 30 s / verde 30 s / amarillo 3 s, cada uno en rojo
-    al llegar el pelotón del anterior»."""
+    """Phases and offsets of the lights of a sweep, e.g. «red 30 s / green 30 s / yellow 3 s, each one turns red when
+    the platoon from the previous one arrives»."""
     c = meta["ciclo"]
-    text = f"rojo {c['rojo_s']:g} s / verde {c['verde_s']:g} s" + (
-        f" / amarillo {c['amarillo_s']:g} s" if c["amarillo_s"] > 0 else "")
+    text = f"red {c['rojo_s']:g} s / green {c['verde_s']:g} s" + (
+        f" / yellow {c['amarillo_s']:g} s" if c["amarillo_s"] > 0 else "")
     modes = meta["desfase"].split(",")
-    words = {"rojo": "en rojo al llegar el pelotón", "verde": "en verde al llegar el pelotón (onda verde)",
-             "igual": "en la misma fase"}  # fmt: skip
+    words = {"rojo": "red when the platoon arrives", "verde": "green when the platoon arrives (green wave)",
+             "igual": "in the same phase"}  # fmt: skip
     if len(set(modes)) == 1:
-        return text + {"rojo": ", cada uno pasa a rojo al llegar el pelotón del anterior",
-                       "verde": ", onda verde: cada uno pasa a verde al llegar el pelotón del anterior",
-                       "igual": ", todos en la misma fase"}[modes[0]]  # fmt: skip
-    return text + " · " + ", ".join(f"{i + 2}.º {words[m]}" for i, m in enumerate(modes))
+        return text + {"rojo": ", each one turns red when the platoon from the previous one arrives",
+                       "verde": ", green wave: each one turns green when the platoon from the previous one arrives",
+                       "igual": ", all in the same phase"}[modes[0]]  # fmt: skip
+    ordinal = {2: "2nd", 3: "3rd"}
+    return text + " · " + ", ".join(f"{ordinal.get(i + 2, f'{i + 2}th')} {words[m]}" for i, m in enumerate(modes))
 
 
 def summary_text(meta: dict, result: dict) -> str:
@@ -460,41 +463,41 @@ def summary_text(meta: dict, result: dict) -> str:
     n = int(meta.get("topes_por_cadena", 2))
     light = kind_of(meta) == LIGHT
     nn = NOUNS[kind_of(meta)]
-    chain = f"cadena de {n} {nn.many}, " if n > 2 else ""
+    chain = f"chain of {n} {nn.many}, " if n > 2 else ""
     lines = [
-        f"Separación entre {nn.many} ({chain}primer {nn.one} a {first_position(meta):g} m; media de {meta['replicas']} "
-        f"réplicas, {meta['s_simulados']:,.0f} s simulados; tolerancia {meta['tolerancia']:g}, umbral {meta['umbral']:g} "
-        "del pico):",
+        f"Spacing between {nn.many} ({chain}first {nn.one} at {first_position(meta):g} m; mean of {meta['replicas']} "
+        f"replicas, {meta['s_simulados']:,.0f} simulated s; tolerance {meta['tolerancia']:g}, threshold {meta['umbral']:g} "
+        "of the peak):",
     ]  # fmt: skip
     if light:
         fixed = meta.get("topes_fijos_m") or []
-        lines.append(f"Semáforos de ciclo fijo: {cycle_text(meta)} · tramo {meta['largo_m']:g} m · "
-                     + (f"topes fijos a {', '.join(f'{p:g}' for p in fixed)} m" if fixed else "sin topes"))  # fmt: skip
+        lines.append(f"Fixed-cycle traffic lights: {cycle_text(meta)} · segment {meta['largo_m']:g} m · "
+                     + (f"fixed bumps at {', '.join(f'{p:g}' for p in fixed)} m" if fixed else "no bumps"))  # fmt: skip
     if meta["omitidas_m"]:
-        lines.append("Omitidas por no caber en el tramo: " + ", ".join(f"{d:g}" for d in meta["omitidas_m"]) + " m")
+        lines.append("Skipped because they do not fit on the segment: " + ", ".join(f"{d:g}" for d in meta["omitidas_m"]) + " m")
     if result.get("cola_en_entrada"):
-        lines.append(f"Aviso: la cola del primer {nn.one} llega a la entrada del tramo y corta las llegadas; usa un "
-                     "--primer-semaforo mayor")  # fmt: skip
+        lines.append("Warning: the queue of the first light reaches the entry of the segment and cuts off arrivals; use a "
+                     "larger --first-light")  # fmt: skip
     for pol, r in result["pollutants"].items():
         name, scale = unit(pol)
-        wake = (f"{r['huella_antes_m']:.0f} m antes + {r['huella_m']:.0f} m después" if light
+        wake = (f"{r['huella_antes_m']:.0f} m before + {r['huella_m']:.0f} m after" if light
                 else f"{r['huella_m']:.0f} m")  # fmt: skip
         if light:
             lines += _light_rows(pol, r, result, dist, wake, scale, name, n)
             continue
         lines += [
             "",
-            f"{POLLUTANT_LABELS[pol]}: huella de {nn.a} {wake}, pico +{r['pico'] * scale:,.1f} {name}/(m·h) · "
-            f"aditiva desde {_dist(r['d_aditiva'])} · fuera de la huella desde {_dist(r['d_huella'])}",
-            f"{'d (m)':>7}{'aditividad':>12}{'media/base':>12}{'exceso entre':>14}{'gradiente':>12}"
-            f"{f'costo {nn.one}':>{max(12, len(nn.one) + 8)}}{'% por m':>9}",
+            f"{POLLUTANT_LABELS[pol]}: footprint of one {nn.one} {wake}, peak +{r['pico'] * scale:,.1f} {name}/(m·h) · "
+            f"additive from {_dist(r['d_aditiva'])} · outside the footprint from {_dist(r['d_huella'])}",
+            f"{'d (m)':>7}{'additivity':>12}{'mean/base':>12}{'excess between':>16}{'gradient':>12}"
+            f"{f'{nn.one} cost':>{max(12, len(nn.one) + 8)}}{'% per m':>9}",
         ]  # fmt: skip
         for j, d in enumerate(dist):
             row = f"{d:>7g}{r['aditividad'][j]:>12.2f}{r['media_tramo'][j]:>12.2f}"
             if np.isfinite(r["exceso_entre"][j]):
-                row += f"{100 * r['exceso_entre'][j]:>13.0f}%"
+                row += f"{100 * r['exceso_entre'][j]:>15.0f}%"
             else:
-                row += f"{'—':>14}"
+                row += f"{'—':>16}"
             grad = r["gradiente_tramo"][j] * scale
             row += f"{grad:>12.2f}" if np.isfinite(grad) else f"{'—':>12}"
             cost, per_m = r["costo_tope"][j], r["costo_por_m"][j]
@@ -505,33 +508,33 @@ def summary_text(meta: dict, result: dict) -> str:
     huella = result["huella_m"]
     if light and not worst_case(meta):
         return "\n".join(lines + ["", legend_light(dist), equivalence_text(meta, result)
-                                   + " (con onda verde no se busca separación mínima: ver ≡ aislados)"])
+                                   + " (with a green wave there is no minimum spacing to look for: see ≡ isolated)"])
     if light and huella is not None:
-        wake = f" (huella de un semáforo ≈ {result['huella_antes_m']:.0f} m antes + {huella:.0f} m después)"
+        wake = f" (footprint of one traffic light ≈ {result['huella_antes_m']:.0f} m before + {huella:.0f} m after)"
     else:
-        wake = f" (huella de {nn.a} ≈ {huella:.0f} m)" if huella is not None else ""
+        wake = f" (footprint of one {nn.one} ≈ {huella:.0f} m)" if huella is not None else ""
     if light:
         legend = legend_light(dist)
     else:
-        legend = (f"costo {nn.one}: lo que emite de más cada {nn.one} añadido, en {nn.many} aislados (1 = como uno solo); "
-                  f"% por m: ese costo por metro de separación, en % de {nn.a} aislado.")
+        legend = (f"{nn.one} cost: what each added {nn.one} emits on top, in isolated {nn.many} (1 = like a single one); "
+                  f"% per m: that cost per metre of spacing, in % of one isolated {nn.one}.")
     lines += [
         "",
         legend,
-        f"Separación mínima entre {nn.many} para diluir la huella: {_dist(rec)}{wake}"
+        f"Minimum spacing between {nn.many} to dilute the footprint: {_dist(rec)}{wake}"
         + ("" if rec is not None else
-           f"; amplía {'--separacion-semaforos' if light else '--separacion'} con valores mayores"),
+           f"; widen {'--light-spacing' if light else '--spacing'} with larger values"),
     ]  # fmt: skip
     return "\n".join(lines)
 
 
 def legend_light(dist: list[float]) -> str:
-    return ("aditividad: emisión extra de la cadena ÷ (n × un semáforo solo); ≡ aislados: la misma emisión en semáforos "
-            f"solos (n × aditividad); ÷ lejana: la misma emisión ÷ la de la cadena más separada (d = {dist[-1]:g} m); "
-            "demora: tiempo de recorrido añadido ÷ (n × el de un semáforo solo); salen: vehículos que salen del tramo ÷ "
-            "los de la calle sin semáforo; * la cola llega a la entrada del tramo (corta las llegadas: no comparable). La "
-            "separación mínima es la menor desde la que la emisión queda a ±tolerancia de la cadena más separada y el "
-            "segundo queda fuera de la huella.")
+    return ("additivity: extra emission of the chain ÷ (n × a single light); ≡ isolated: the same emission in single "
+            f"lights (n × additivity); ÷ distant: the same emission ÷ that of the most separated chain (d = {dist[-1]:g} m); "
+            "delay: added travel time ÷ (n × that of a single light); out: vehicles leaving the segment ÷ those of the "
+            "street without a light; * the queue reaches the entry of the segment (cuts off arrivals: not comparable). The "
+            "minimum spacing is the smallest from which the emission stays within ±tolerance of the most separated chain "
+            "and the second light is outside the footprint.")
 
 
 def _light_rows(pol: str, r: dict, result: dict, dist: list[float], wake: str, scale: float, name: str,
@@ -540,11 +543,11 @@ def _light_rows(pol: str, r: dict, result: dict, dist: list[float], wake: str, s
     delay, out_ratio, blocked = result["demora"], result["salen"], result["cola_entrada_d"]
     lines = [
         "",
-        f"{POLLUTANT_LABELS[pol]}: huella de un semáforo {wake}, pico +{r['pico'] * scale:,.1f} {name}/(m·h) · "
-        f"estable desde {_dist(r['d_aditiva'])} · fuera de la huella desde {_dist(r['d_huella'])} · con la cadena más "
-        f"separada, {r['aditividad'][-1]:.2f} × semáforos aislados",
-        f"{'d (m)':>7}{'aditividad':>12}{'≡ aislados':>12}{'÷ lejana':>10}{'media/base':>12}{'exceso entre':>14}"
-        f"{'gradiente':>11}{'demora':>9}{'salen':>8}",
+        f"{POLLUTANT_LABELS[pol]}: footprint of one traffic light {wake}, peak +{r['pico'] * scale:,.1f} {name}/(m·h) · "
+        f"stable from {_dist(r['d_aditiva'])} · outside the footprint from {_dist(r['d_huella'])} · with the most "
+        f"separated chain, {r['aditividad'][-1]:.2f} × isolated lights",
+        f"{'d (m)':>7}{'additivity':>12}{'≡ isolated':>12}{'÷ distant':>11}{'mean/base':>12}{'excess between':>16}"
+        f"{'gradient':>11}{'delay':>9}{'out':>8}",
     ]  # fmt: skip
 
     def cell(v: float, width: int, fmt: str = ".2f") -> str:
@@ -553,8 +556,8 @@ def _light_rows(pol: str, r: dict, result: dict, dist: list[float], wake: str, s
     for j, d in enumerate(dist):
         ex = r["exceso_entre"][j]
         lines.append(f"{d:>7g}" + cell(r["aditividad"][j], 12) + cell(n * r["aditividad"][j], 12)
-                     + cell(r["estabilidad"][j], 10)
-                     + cell(r["media_tramo"][j], 12) + (f"{100 * ex:>13.0f}%" if np.isfinite(ex) else f"{'—':>14}")
+                     + cell(r["estabilidad"][j], 11)
+                     + cell(r["media_tramo"][j], 12) + (f"{100 * ex:>15.0f}%" if np.isfinite(ex) else f"{'—':>16}")
                      + cell(r["gradiente_tramo"][j] * scale, 11) + cell(delay[j], 9) + cell(out_ratio[j], 8)
                      + (" *" if blocked[j] else ""))  # fmt: skip
     return lines

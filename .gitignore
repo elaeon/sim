@@ -9,6 +9,7 @@ wheels/
 # Project files
 uv.lock
 config.toml
+results/
 resultados/
 
 # Virtual environments

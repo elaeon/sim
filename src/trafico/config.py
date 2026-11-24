@@ -24,7 +24,7 @@ EMISSION_DECEL = -0.5
 FUELS = ("gasolina", "diesel", "glp")
 """Combustibles que puede usar un tipo de vehículo (`fuel`)."""
 
-FUEL_LABELS = {"gasolina": "gasolina", "diesel": "diésel", "glp": "gas LP"}
+FUEL_LABELS = {"gasolina": "petrol", "diesel": "diesel", "glp": "LPG"}
 
 FUEL_CO2_G_PER_L = {"gasolina": 8887 / 3.78541, "diesel": 10180 / 3.78541, "glp": 5720 / 3.78541}
 """g de CO2 por litro de combustible quemado (EPA-420-F-18-008; el gas LP como propano, EPA, Emission Factors for
@@ -362,13 +362,13 @@ class Light:
 
     @property
     def label(self) -> str:
-        """Fases, p. ej. «rojo 25 s / verde 35 s / amarillo 3 s»; el peatonal, «peatonal: rojo 15 s con peatones…»."""
+        """Phases, e.g. «red 25 s / green 35 s / yellow 3 s»; a pedestrian light, «pedestrian: red 15 s with…»."""
         if self.pedestrian:
-            label = f"peatonal: rojo {self.red:g} s con peatones en espera, verde mínimo {self.green:g} s"
-            return label + (f", amarillo {self.yellow:g} s" if self.yellow > 0 else "")
-        label = f"rojo {self.red:g} s / verde {self.green:g} s"
-        label += f" / amarillo {self.yellow:g} s" if self.yellow > 0 else ""
-        return label + (f", desfase {self.offset:g} s" if self.offset > 0 else "")
+            label = f"pedestrian: red {self.red:g} s with pedestrians waiting, minimum green {self.green:g} s"
+            return label + (f", yellow {self.yellow:g} s" if self.yellow > 0 else "")
+        label = f"red {self.red:g} s / green {self.green:g} s"
+        label += f" / yellow {self.yellow:g} s" if self.yellow > 0 else ""
+        return label + (f", offset {self.offset:g} s" if self.offset > 0 else "")
 
     def phase(self, tick: int) -> int:
         """Fase (RED, GREEN o YELLOW) en el paso `tick`: verde → amarillo → rojo. Sin semáforo, siempre verde; el
@@ -475,10 +475,10 @@ class SimConfig:
     def __post_init__(self) -> None:
         if self.rate_dists:
             if len(self.rate_dists) != len(self.specs):
-                raise ValueError(f"se esperaban {len(self.specs)} tasas de llegada, una por tipo; hay {len(self.rate_dists)}")
+                raise ValueError(f"expected {len(self.specs)} arrival rates, one per type; there are {len(self.rate_dists)}")
             object.__setattr__(self, "rates", tuple(d.expected for d in self.rate_dists))
         if len(self.rates) != len(self.specs):
-            raise ValueError(f"se esperaban {len(self.specs)} tasas de llegada, una por tipo; hay {len(self.rates)}")
+            raise ValueError(f"expected {len(self.specs)} arrival rates, one per type; there are {len(self.rates)}")
 
     def price(self, fuel: str | None) -> float | None:
         """Precio por litro del combustible (None si no tiene)."""
@@ -689,17 +689,17 @@ class SimConfig:
 
     @property
     def light_label(self) -> str:
-        """Fases del semáforo del final del tramo, p. ej. «rojo 25 s / verde 35 s / amarillo 3 s», o «sin
-        semáforo»."""
-        return self.exit_light.label if self.has_light else "sin semáforo"
+        """Phases of the light at the end of the segment, e.g. «red 25 s / green 35 s / yellow 3 s», or «no traffic
+        light»."""
+        return self.exit_light.label if self.has_light else "no traffic light"
 
     @property
     def lights_label(self) -> str:
         """Los semáforos de la calle: con uno solo, como `light_label`; con varios, cada uno con su posición y fases."""
         if not self.inner_lights:
             return self.light_label
-        return " · ".join(f"a {lt.position:g} m: {lt.label}"
-                          + ("" if lt.pedestrian else f", empieza en {'rojo' if lt.start_phase == 'red' else 'verde'}")
+        return " · ".join(f"at {lt.position:g} m: {lt.label}"
+                          + ("" if lt.pedestrian else f", starts {'red' if lt.start_phase == 'red' else 'green'}")
                           for lt in self.lights)  # fmt: skip
 
     @property
@@ -708,12 +708,15 @@ class SimConfig:
         if not self.inner_lights:
             return self.light_label
         at = [f"{lt.position:g}" for lt in self.lights]
-        return f"{len(at)} semáforos (a {', '.join(at[:-1])} y {at[-1]} m)"
+        if len(at) == 1:
+            return f"1 traffic light (at {at[0]} m)"
+        return f"{len(at)} traffic lights (at {', '.join(at[:-1])} and {at[-1]} m)"
 
     @property
     def line_name(self) -> str:
-        """Cómo se llama la línea al final del tramo en textos: «el semáforo» o, sin él, «el final del tramo»."""
-        return "el semáforo" if self.has_light else "el final del tramo"
+        """Name of the line at the end of the segment in texts: «the traffic light» or, without one, «the end of the
+        segment»."""
+        return "the traffic light" if self.has_light else "the end of the segment"
 
     @property
     def cycle(self) -> float:
@@ -728,7 +731,7 @@ class SimConfig:
 
     @property
     def flow_window_label(self) -> str:
-        return f"ventana de un ciclo, {self.cycle:g} s" if self.ref_light else f"ventana de {NO_LIGHT_WINDOW:g} s"
+        return f"one-cycle window, {self.cycle:g} s" if self.ref_light else f"{NO_LIGHT_WINDOW:g} s window"
 
     @property
     def sample_ticks(self) -> int:

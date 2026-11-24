@@ -1,4 +1,4 @@
-"""`traffic-emisiones --separacion-semaforos` y el desfase de los semáforos (`offset`)."""
+"""`traffic-emissions --light-spacing` y el desfase de los semáforos (`offset`)."""
 
 import json
 from pathlib import Path
@@ -34,7 +34,7 @@ def test_offset_delays_the_whole_cycle():
         edges = np.flatnonzero(np.diff(np.r_[False, red, False].astype(int)))
         expected = [(a * DT, b * DT) for a, b in zip(edges[::2], edges[1::2])]
         assert light.red_intervals(300.0) == pytest.approx(expected)
-    assert "desfase 12.5 s" in late.label and "desfase" not in plain.label
+    assert "offset 12.5 s" in late.label and "offset" not in plain.label
 
 
 def _settings(light: str) -> str:
@@ -47,9 +47,9 @@ def test_offset_in_the_configuration():
     sim = parse_settings("[road]\nlength = 200.0\n[traffic_light]\nred = 20.0\ngreen = 25.0\noffset = 4.0\n", Path("x.toml")).sim
     assert sim.light_offset == 4.0 and sim.exit_light.offset == 4.0
     for text, match in [
-        ("red = 20.0\ngreen = 25.0\noffset = 45.0", "offset debe estar entre 0 y el ciclo"),
-        ("red = 20.0\ngreen = 25.0\noffset = 0.05", "offset debe ser múltiplo"),
-        ("pedestrian = true\noffset = 3.0", "offset no aplica"),
+        ("red = 20.0\ngreen = 25.0\noffset = 45.0", "offset must be between 0 and the cycle"),
+        ("red = 20.0\ngreen = 25.0\noffset = 0.05", "offset must be a multiple"),
+        ("pedestrian = true\noffset = 3.0", "offset does not apply"),
     ]:
         with pytest.raises(ConfigError, match=match):
             parse_settings(_settings(text), Path("x.toml"))
@@ -73,7 +73,7 @@ def _spacing(**kw) -> Spacing:
 def test_build_configs_puts_only_the_sweep_lights_with_red_on_arrival():
     configs, skipped = build_configs(_base(), _spacing(distances=(50.0, 150.0, 300.0)))
     assert skipped == [300.0]
-    assert [n for n, _ in configs][:3] == ["sin semáforo", "un semáforo a 100 m", "semáforos a 100 y 150 m (d = 50 m)"]
+    assert [n for n, _ in configs][:3] == ["no traffic light", "one traffic light at 100 m", "traffic lights at 100 and 150 m (d = 50 m)"]
     for _, cfg in configs:  # sin el semáforo del final ni los de la configuración, y sin topes
         assert not cfg.has_light and cfg.speed_bumps == ()
     assert configs[0][1].inner_lights == ()
@@ -101,9 +101,9 @@ def test_build_configs_chain_offsets_same_phase_and_fixed_bumps():
     assert [b.position for b in configs[2][1].bumps] == [40.0]
     same, _ = build_configs(_base(), _spacing(distances=(50.0,), offset_mode="igual"))
     assert all(lt.offset == 0.0 for lt in same[2][1].inner_lights)
-    with pytest.raises(ConfigError, match="--primer-semaforo debe estar entre 0 y 400 m"):
+    with pytest.raises(ConfigError, match="--first-light must be between 0 and 400 m"):
         build_configs(_base(), _spacing(first=400.0))
-    with pytest.raises(ConfigError, match="al menos 2 semáforos"):
+    with pytest.raises(ConfigError, match="at least 2 lights"):
         build_configs(_base(), _spacing(count=1))
 
 
@@ -118,7 +118,7 @@ def test_green_wave_and_mixed_chain():
     # Cadena mixta: A y B (d) en onda verde, C 150 m después de B en rojo al llegar.
     s = _spacing(distances=(40.0, 60.0), count=3, offset_mode="verde,rojo", fixed_gaps=(150.0,))
     configs, skipped = build_configs(_base(), s)
-    assert skipped == [] and configs[2][0] == "semáforos a 100, 140 y 290 m (d = 40 m)"
+    assert skipped == [] and configs[2][0] == "traffic lights at 100, 140 and 290 m (d = 40 m)"
     a, b, c = configs[2][1].inner_lights
     base = configs[0][1]
     expected_b = travel_time(base, 40.0)
@@ -126,7 +126,7 @@ def test_green_wave_and_mixed_chain():
     assert b.offset == pytest.approx(expected_b, abs=0.051) and c.offset == pytest.approx(expected_c % 63.0, abs=0.051)
     assert [lt.position for lt in configs[3][1].inner_lights] == [100.0, 160.0, 310.0]
     for bad in (dict(fixed_gaps=(150.0, 20.0)), dict(offset_mode="verde,rojo,rojo"), dict(offset_mode="azul")):
-        with pytest.raises(ConfigError, match="--separaciones-fijas|--desfase"):
+        with pytest.raises(ConfigError, match="--fixed-spacings|--offset"):
             build_configs(_base(), _spacing(distances=(40.0,), count=3, **{"offset_mode": "rojo", **bad}))
 
 
@@ -211,41 +211,41 @@ def root(tmp_path, monkeypatch):
 
 
 def test_command_runs_the_light_sweep_and_redraws(root, capsys):
-    folder = emissions(["--separacion-semaforos", "40", "100", "--replicas", "1", "--ciclo", "20/20/2"])
+    folder = emissions(["--light-spacing", "40", "100", "--replicas", "1", "--cycle", "20/20/2"])
     names = {p.name for p in folder.iterdir()}
-    assert {"separacion_semaforos.png", "separacion_semaforos.csv", PROFILE_CSV, DATA_NAME, META_NAME, SUMMARY_NAME,
-            "config_base.toml", "resultados.json"} <= names  # fmt: skip
+    assert {"light_spacing.png", "light_spacing.csv", PROFILE_CSV, DATA_NAME, META_NAME, SUMMARY_NAME,
+            "base_config.toml", "results.json"} <= names  # fmt: skip
     meta = json.loads((folder / META_NAME).read_text())
     assert meta["elemento"] == "semaforo" and meta["primer_semaforo_m"] == 100.0 and meta["desfase"] == "rojo"
     assert meta["ciclo"] == {"rojo_s": 20.0, "verde_s": 20.0, "amarillo_s": 2.0} and meta["topes_fijos_m"] == []
     assert meta["tipo_peloton"] and len(meta["viaje_s"]) == 2 and meta["viaje_s"][0] < meta["viaje_s"][1]
     assert meta["largo_m"] == 350.0  # 100 + 100 + 150, ampliado desde 150 m
-    assert meta["escenarios"][:2] == ["sin semáforo", "un semáforo a 100 m"]
+    assert meta["escenarios"][:2] == ["no traffic light", "one traffic light at 100 m"]
     out = capsys.readouterr().out
-    assert "el tramo se amplía de 150 a 350 m" in out and "Separación mínima entre semáforos" in out
-    header = (folder / "separacion_semaforos.csv").read_text().splitlines()[0]
-    assert "exceso_entre_semaforos_pct_pico" in header and header.endswith("demora_x_aislados")
+    assert "the segment is extended from 150 to 350 m" in out and "Minimum spacing between traffic lights" in out
+    header = (folder / "light_spacing.csv").read_text().splitlines()[0]
+    assert "excess_between_lights_pct_peak" in header and header.endswith("delay_x_isolated")
     doc = read_results(folder)
     assert doc["modo"] == "separacion" and doc["metricas"]["elemento"] == "semaforo"
     assert "huella_antes_m" in doc["metricas"] and len(doc["metricas"]["cola_hasta_la_entrada"]) == 2
-    emissions(["--redibujar", str(folder)])
-    assert (folder / "separacion_semaforos-2.png").stat().st_size > 10_000
+    emissions(["--redraw", str(folder)])
+    assert (folder / "light_spacing-2.png").stat().st_size > 10_000
 
 
 def test_command_mixed_chain(root, capsys):
-    folder = emissions(["--separacion-semaforos", "40", "--cadena", "3", "--separaciones-fijas", "120", "--desfase",
-                        "verde,rojo", "--replicas", "1", "--ciclo", "20/20/2"])  # fmt: skip
+    folder = emissions(["--light-spacing", "40", "--chain", "3", "--fixed-spacings", "120", "--offset",
+                        "green,red", "--replicas", "1", "--cycle", "20/20/2"])  # fmt: skip
     meta = json.loads((folder / META_NAME).read_text())
     assert meta["desfase"] == "verde,rojo" and meta["separaciones_fijas_m"] == [120.0]
-    assert meta["escenarios"][2] == "semáforos a 100, 140 y 260 m (d = 40 m)" and meta["largo_m"] == 410.0
+    assert meta["escenarios"][2] == "traffic lights at 100, 140 and 260 m (d = 40 m)" and meta["largo_m"] == 410.0
     summary = (folder / SUMMARY_NAME).read_text()
-    assert "2.º en verde al llegar el pelotón (onda verde), 3.º en rojo al llegar el pelotón" in summary
-    assert "≡ aislados" in summary and "La cadena de 3 emite como" in summary and "Separación mínima" not in summary
+    assert "2nd green when the platoon arrives (green wave), 3rd red when the platoon arrives" in summary
+    assert "≡ isolated" in summary and "The chain of 3 emits like" in summary and "Minimum spacing" not in summary
 
 
 def test_command_light_sweep_with_fixed_bumps_and_given_length(root):
-    folder = emissions(["--separacion-semaforos", "40", "200", "--replicas", "1", "--topes", "40", "--largo", "250",
-                        "--desfase", "igual"])  # fmt: skip
+    folder = emissions(["--light-spacing", "40", "200", "--replicas", "1", "--bumps", "40", "--length", "250",
+                        "--offset", "same"])  # fmt: skip
     meta = json.loads((folder / META_NAME).read_text())
     assert meta["topes_fijos_m"] == [40.0] and meta["largo_m"] == 250.0 and meta["omitidas_m"] == [200.0]
     assert meta["desfase"] == "igual"
@@ -255,18 +255,18 @@ def test_command_light_sweep_with_fixed_bumps_and_given_length(root):
 @pytest.mark.parametrize(
     "args",
     [
-        ["--separacion", "20", "--separacion-semaforos", "50"],
-        ["--ciclo", "30/30"],
-        ["--desfase", "rojo"],
-        ["--primer-semaforo", "50"],
-        ["--separacion-semaforos", "50", "--semaforo", "si"],
-        ["--separacion-semaforos", "50", "--ciclo", "30"],
-        ["--separacion-semaforos", "50", "--topes", "40", "sin"],
-        ["--separacion-semaforos", "0"],
-        ["--separacion-semaforos", "50", "--desfase", "azul"],
-        ["--separacion-semaforos", "50", "--separaciones-fijas", "100"],
-        ["--separacion-semaforos", "50", "--cadena", "3", "--desfase", "verde,rojo,rojo"],
-        ["--separaciones-fijas", "100"],
+        ["--spacing", "20", "--light-spacing", "50"],
+        ["--cycle", "30/30"],
+        ["--offset", "red"],
+        ["--first-light", "50"],
+        ["--light-spacing", "50", "--light", "yes"],
+        ["--light-spacing", "50", "--cycle", "30"],
+        ["--light-spacing", "50", "--bumps", "40", "none"],
+        ["--light-spacing", "0"],
+        ["--light-spacing", "50", "--offset", "azul"],
+        ["--light-spacing", "50", "--fixed-spacings", "100"],
+        ["--light-spacing", "50", "--chain", "3", "--offset", "green,red,red"],
+        ["--fixed-spacings", "100"],
     ],
 )
 def test_command_rejects_invalid_light_options(root, args):

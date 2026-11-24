@@ -1,14 +1,14 @@
 # Copia de la configuración usada en la corrida 20260930-102903_insurgentes
 # (2026-09-30 10:29:03, trafico 0.2.0). Para replicarla:
-#   uv run trafico resultados/20260930-102903_insurgentes
+#   uv run trafico results/20260930-102903_insurgentes
 
 # Configuración de la simulación de flujo vehicular (trafico).
 #
-#   uv run trafico                            # usa este archivo -> resultados/<ID>_corrida/
-#   uv run trafico regular_traffic            # usa este archivo -> resultados/<ID>_regular_traffic/
-#   uv run trafico resultados/<ID>_<nombre>   # usa el config.toml de esa carpeta (réplica)
+#   uv run trafico                            # usa este archivo -> results/<ID>_run/
+#   uv run trafico regular_traffic            # usa este archivo -> results/<ID>_regular_traffic/
+#   uv run trafico results/<ID>_<nombre>   # usa el config.toml de esa carpeta (réplica)
 #
-# Cada corrida crea resultados/<ID>_<nombre>/ con las gráficas, el resumen, las series y una
+# Cada corrida crea results/<ID>_<nombre>/ con las gráficas, el resumen, las series y una
 # copia de esta configuración (config.toml); esa copia basta para replicar la corrida.
 
 [road]
@@ -80,13 +80,13 @@ workers = 0             # procesos en paralelo; 0 = automático (min(réplicas, 
 seed = 42               # quítala para una semilla aleatoria (queda registrada en la copia)
 
 [output]
-dir = "resultados"      # relativo a la raíz del proyecto
+dir = "results"         # relativo a la raíz del proyecto
 name = "insurgentes"  # nombre usado en la corrida 20260930-102903_insurgentes
 csv = false              # exporta las series (media y σ) a series.csv
 show = false            # abre además la ventana de matplotlib
 progress = true         # barra de progreso de réplicas
 animation = false       # genera también el diagrama espacio-tiempo y el video de movimiento
-                        # (o, sin volver a correr: uv run trafico-ver resultados/<ID>_<nombre>)
+                        # (o, sin volver a correr: uv run trafico-ver results/<ID>_<nombre>)
 
 [animation]             # visualización del movimiento de una réplica (no cambia los resultados)
 start = 100.0           # s simulados donde empieza la ventana

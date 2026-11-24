@@ -106,12 +106,12 @@ def test_build_configs_orders_scenarios_and_copies_the_configured_bump():
     bump = SpeedBump(30.0, (0,), pedestrian=True, pedestrian_time=6.0)
     configs, skipped = build_configs(_base(speed_bumps=(bump,)), _spacing(distances=(20.0, 60.0, 140.0)))
     assert skipped == [140.0]  # 30 + 140 queda a menos de un intervalo del final del tramo
-    assert [n for n, _ in configs][:2] == ["sin tope", "un tope a 30 m"]
+    assert [n for n, _ in configs][:2] == ["no bump", "one bump at 30 m"]
     assert [c.speed_bumps for _, c in configs][0] == () and configs[1][1].speed_bumps == (bump,)
     second = configs[2][1].bumps
     assert [b.position for b in second] == [30.0, 50.0] and second[1] == SpeedBump(50.0, (0,), True, bump.pedestrian_crossing, 6.0)
     assert [b.position for b in configs[3][1].bumps] == [30.0, 90.0] and "d = 60 m" in configs[3][0]
-    # --carriles-tope reemplaza los carriles de todos los topes
+    # --bump-lanes reemplaza los carriles de todos los topes
     laned, _ = build_configs(_base(speed_bumps=(bump,)), _spacing(bump_lanes=(1,)))
     assert all(b.lanes == (1,) for b in laned[2][1].bumps)
 
@@ -119,21 +119,21 @@ def test_build_configs_orders_scenarios_and_copies_the_configured_bump():
 def test_build_configs_chain():
     configs, skipped = build_configs(_base(), _spacing(first=20.0, distances=(10.0, 30.0, 60.0), count=4))
     assert skipped == [60.0]  # 20 + 3 × 60 = 200 no cabe en 150 m
-    assert [n for n, _ in configs][:3] == ["sin tope", "un tope a 20 m", "4 topes desde 20 m cada 10 m"]
+    assert [n for n, _ in configs][:3] == ["no bump", "one bump at 20 m", "4 bumps from 20 m every 10 m"]
     assert [b.position for b in configs[2][1].bumps] == [20.0, 30.0, 40.0, 50.0]
     assert [b.position for b in configs[3][1].bumps] == [20.0, 50.0, 80.0, 110.0]
-    with pytest.raises(ConfigError, match="al menos 2 topes"):
+    with pytest.raises(ConfigError, match="at least 2 bumps"):
         build_configs(_base(), _spacing(count=1))
-    with pytest.raises(ConfigError, match="el último de 3 topes"):
+    with pytest.raises(ConfigError, match="the last of 3 bumps"):
         build_configs(_base(), _spacing(first=100.0, distances=(30.0,), count=3))
 
 
 def test_build_configs_errors():
-    with pytest.raises(ConfigError, match="ninguna separación cabe en el tramo"):
+    with pytest.raises(ConfigError, match="no spacing fits on the segment"):
         build_configs(_base(), _spacing(distances=(200.0,)))
-    with pytest.raises(ConfigError, match="--primer-tope debe estar entre 0 y 150 m"):
+    with pytest.raises(ConfigError, match="--first-bump must be between 0 and 150 m"):
         build_configs(_base(), _spacing(first=150.0))
-    configs, _ = build_configs(_base(), _spacing(light=True, length=100.0, distances=(20.0,)))  # --largo y --semaforo
+    configs, _ = build_configs(_base(), _spacing(light=True, length=100.0, distances=(20.0,)))  # --length y --light
     assert configs[0][1].length == 100.0 and configs[0][1].traffic_light
 
 
@@ -156,45 +156,45 @@ def root(tmp_path, monkeypatch):
 
 
 def test_command_runs_the_sweep_and_redraws(root, capsys):
-    folder = emissions(["--separacion", "20", "50", "--replicas", "1"])
+    folder = emissions(["--spacing", "20", "50", "--replicas", "1"])
     names = {p.name for p in folder.iterdir()}
-    assert {PLOT_NAME, TABLE_CSV, PROFILE_CSV, DATA_NAME, META_NAME, SUMMARY_NAME, "config_base.toml"} <= names
+    assert {PLOT_NAME, TABLE_CSV, PROFILE_CSV, DATA_NAME, META_NAME, SUMMARY_NAME, "base_config.toml"} <= names
     meta = json.loads((folder / META_NAME).read_text())
     assert meta["modo"] == "separacion" and meta["primer_tope_m"] == 40.0 and meta["distancias_m"] == [20.0, 50.0]
-    assert meta["escenarios"][:2] == ["sin tope", "un tope a 40 m"] and len(meta["escenarios"]) == 4
+    assert meta["escenarios"][:2] == ["no bump", "one bump at 40 m"] and len(meta["escenarios"]) == 4
     header = (folder / TABLE_CSV).read_text().splitlines()[0]
-    assert header.startswith("contaminante,separacion_m,aditividad") and len((folder / TABLE_CSV).read_text().splitlines()) > 4
+    assert header.startswith("pollutant,spacing_m,additivity") and len((folder / TABLE_CSV).read_text().splitlines()) > 4
     out = capsys.readouterr().out
-    assert "4 escenarios × 1 réplicas" in out and "Separación mínima entre topes" in out
+    assert "4 scenarios × 1 replicas" in out and "Minimum spacing between bumps" in out
     assert (folder / PLOT_NAME).stat().st_size > 10_000
-    emissions(["--redibujar", str(folder)])
-    assert (folder / "separacion_topes-2.png").stat().st_size > 10_000
+    emissions(["--redraw", str(folder)])
+    assert (folder / "bump_spacing-2.png").stat().st_size > 10_000
 
 
 def test_command_runs_a_chain(root, capsys):
-    folder = emissions(["--separacion", "20", "--cadena", "3", "--replicas", "1"])
+    folder = emissions(["--spacing", "20", "--chain", "3", "--replicas", "1"])
     meta = json.loads((folder / META_NAME).read_text())
-    assert meta["topes_por_cadena"] == 3 and meta["escenarios"][2] == "3 topes desde 40 m cada 20 m"
-    assert "cadena de 3 topes" in (folder / SUMMARY_NAME).read_text()
+    assert meta["topes_por_cadena"] == 3 and meta["escenarios"][2] == "3 bumps from 40 m every 20 m"
+    assert "chain of 3 bumps" in (folder / SUMMARY_NAME).read_text()
     header = (folder / TABLE_CSV).read_text().splitlines()[0]
-    assert "costo_tope_anadido" in header and "costo_pct_por_m" in header
+    assert "added_bump_cost" in header and "cost_pct_per_m" in header
     assert (folder / PLOT_NAME).stat().st_size > 10_000
-    emissions(["--redibujar", str(folder)])
-    assert (folder / "separacion_topes-2.png").stat().st_size > 10_000
+    emissions(["--redraw", str(folder)])
+    assert (folder / "bump_spacing-2.png").stat().st_size > 10_000
 
 
 @pytest.mark.parametrize(
     "args",
     [
-        ["--cadena", "3"],
-        ["--separacion", "20", "--cadena", "1"],
-        ["--separacion", "20", "--topes", "30"],
-        ["--separacion", "20", "--semaforo", "ambos"],
-        ["--separacion", "0"],
-        ["--separacion", "20", "20"],
-        ["--separacion", "20", "--primer-tope", "500"],
-        ["--separacion", "300"],
-        ["--separacion", "20", "--tolerancia", "2"],
+        ["--chain", "3"],
+        ["--spacing", "20", "--chain", "1"],
+        ["--spacing", "20", "--bumps", "30"],
+        ["--spacing", "20", "--light", "both"],
+        ["--spacing", "0"],
+        ["--spacing", "20", "20"],
+        ["--spacing", "20", "--first-bump", "500"],
+        ["--spacing", "300"],
+        ["--spacing", "20", "--tolerance", "2"],
     ],
 )
 def test_command_rejects_invalid_options(root, args):
@@ -205,6 +205,6 @@ def test_command_rejects_invalid_options(root, args):
 def test_default_first_bump_is_a_quarter_of_the_street_without_configured_bumps(root):
     text = (root / CONFIG_NAME).read_text().replace("[[speed_bump]]\nposition = 40.0\n", "")
     (root / CONFIG_NAME).write_text(text, encoding="utf-8")
-    folder = emissions(["--separacion", "30", "--replicas", "1"])
+    folder = emissions(["--spacing", "30", "--replicas", "1"])
     meta = json.loads((folder / META_NAME).read_text())
     assert meta["primer_tope_m"] == 150.0 / 4

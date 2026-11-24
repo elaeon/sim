@@ -54,9 +54,9 @@ def test_compare_flags_values_out_of_range_only_for_cars():
 
 
 def test_measure_errors():
-    with pytest.raises(ConfigError, match="no existe el tipo"):
+    with pytest.raises(ConfigError, match="there is no vehicle type"):
         measure(_cfg(), "avion", **FAST)
-    with pytest.raises(ConfigError, match="al menos 2 colas"):
+    with pytest.raises(ConfigError, match="at least 2 queues"):
         measure(_cfg(), "car", **{**FAST, "queues": 1})
 
 
@@ -75,10 +75,10 @@ def root(tmp_path, monkeypatch):
 
 def test_command_and_api(root, capsys):
     r = api.calibrate(queues=3)
-    assert r.mode == "calibracion" and r.folder.parent == root / "resultados" and r.folder.name.endswith("_calibracion")
+    assert r.mode == "calibracion" and r.folder.parent == root / "results" and r.folder.name.endswith("_calibration")
     names = set(r.files)
     assert {calibration.PLOT_NAME, calibration.TABLE_CSV, calibration.QUEUE_CSV, calibration.FLOW_CSV,
-            calibration.SUMMARY_NAME, "config_base.toml", "resultados.json"} <= names  # fmt: skip
+            calibration.SUMMARY_NAME, "base_config.toml", "results.json"} <= names  # fmt: skip
     m = r.results["metricas"]
     assert r.results["semilla"] == 7 and m["tipo"] == "car" and m["colas"] == 3
     assert [x["medida"] for x in m["medidas"]] == list(REFERENCES)
@@ -86,14 +86,14 @@ def test_command_and_api(root, capsys):
     assert m["demanda_veh_min"] == [20, 120] and len(m["flujo_veh_h"]) == 2
     json.dumps(r.results, allow_nan=False)
     assert (r.folder / calibration.PLOT_NAME).stat().st_size > 10_000
-    assert "Capacidad en flujo continuo" in (r.folder / calibration.SUMMARY_NAME).read_text()
+    assert "Capacity in continuous flow" in (r.folder / calibration.SUMMARY_NAME).read_text()
     assert api.list_runs(mode="calibracion")[0]["id"] == r.folder.name
-    with pytest.raises(api.ConfigError, match="no existe el tipo"):
+    with pytest.raises(api.ConfigError, match="there is no vehicle type"):
         api.calibrate(vehicle="avion", queues=3)
     from trafico.cli import calibrate
 
     capsys.readouterr()
-    calibrate(["--colas", "3", "--tipo", "bike", "--json"])
+    calibrate(["--queues", "3", "--vehicle", "bike", "--json"])
     doc = json.loads(capsys.readouterr().out)
     assert doc["modo"] == "calibracion" and doc["metricas"]["tipo"] == "bike"
     assert all(x["estado"] is None for x in doc["metricas"]["medidas"])  # referencias solo de autos

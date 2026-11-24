@@ -1,5 +1,5 @@
 """Calibración: mide cómo se comporta un tipo de vehículo de la configuración en situaciones estándar de ingeniería de
-tránsito y lo compara con valores de referencia publicados (`traffic-calibrar`).
+tránsito y lo compara con valores de referencia publicados (`traffic-calibrate`).
 
 Tres mediciones, cada una en un tramo de un carril con solo ese tipo (sin topes, paradas, cuellos de botella ni
 peatones), con su velocidad, largos, gaps, aceleración, frenado y la conducta ([behavior]) de la configuración:
@@ -47,16 +47,16 @@ class Reference:
 # Rangos para autos. Ver el docstring del módulo y la documentación (docs/config.html#calibracion).
 REFERENCES = {
     "flujo_saturacion_veh_h": Reference(
-        1700, 1950, "HCM 6.ª ed.: flujo de saturación base de 1,900 veh/h/carril (1,750 en ciudades de menos de "
-                    "250 mil habitantes); los aforos urbanos suelen quedar algo por debajo"),
-    "intervalo_saturacion_s": Reference(1.85, 2.1, "el inverso del flujo de saturación (≈ 1.9–2.1 s entre autos)"),
-    "tiempo_perdido_s": Reference(1.0, 3.0, "HCM: 2 s por fase por omisión"),
+        1700, 1950, "HCM 6th ed.: base saturation flow of 1,900 veh/h/lane (1,750 in cities of fewer than "
+                    "250 thousand inhabitants); urban counts usually come out somewhat lower"),
+    "intervalo_saturacion_s": Reference(1.85, 2.1, "the inverse of the saturation flow (≈ 1.9–2.1 s between cars)"),
+    "tiempo_perdido_s": Reference(1.0, 3.0, "HCM: 2 s per phase by default"),
     "capacidad_marcha_veh_h": Reference(
-        1700, 2400, "capacidad por carril en flujo continuo: ≈ 1,800–2,000 en calles urbanas, hasta 2,400 en "
-                    "autopistas (HCM)"),
-    "intervalo_marcha_s": Reference(1.5, 2.1, "intervalo entre autos a capacidad (≈ 1.5–2 s en la literatura)"),
+        1700, 2400, "capacity per lane in continuous flow: ≈ 1,800–2,000 on urban streets, up to 2,400 on "
+                    "motorways (HCM)"),
+    "intervalo_marcha_s": Reference(1.5, 2.1, "headway between cars at capacity (≈ 1.5–2 s in the literature)"),
     "densidad_embotellamiento_veh_km": Reference(
-        115, 160, "120–160 veh/km/carril en colas detenidas (≈ 6.5–8 m entre frentes)"),
+        115, 160, "120–160 veh/km/lane in stopped queues (≈ 6.5–8 m between fronts)"),
 }  # fmt: skip
 
 
@@ -147,13 +147,13 @@ def measure(
     flow_seconds = FLOW_SECONDS if flow_seconds is None else flow_seconds
     keys = [s.key for s in base.specs]
     if vehicle not in keys:
-        raise ConfigError(f"no existe el tipo {vehicle!r} (claves: {', '.join(keys)})")
+        raise ConfigError(f"there is no vehicle type {vehicle!r} (keys: {', '.join(keys)})")
     if queues < 2:
-        raise ConfigError("se necesitan al menos 2 colas")
+        raise ConfigError("at least 2 queues are needed")
     k = keys.index(vehicle)
     spec = base.specs[k]
     if spec.speed_kmh <= 0:
-        raise ConfigError(f"el tipo {vehicle!r} no tiene velocidad")
+        raise ConfigError(f"the vehicle type {vehicle!r} has no speed")
     seeds = np.random.SeedSequence(seed).spawn(queues + len(rates))
     dcfg = discharge_config(base, k)
     tasks = [(discharge_replica, dcfg, seeds[i]) for i in range(queues)]
@@ -162,7 +162,7 @@ def measure(
     results = _run(tasks, workers)
     heads = [h for h in results[:queues] if h is not None]
     if len(heads) < 2:
-        raise ConfigError(f"no se formó una cola de {QUEUE} {spec.name}s detenidos: revisa su velocidad y su largo")
+        raise ConfigError(f"no queue of {QUEUE} stopped {spec.name} vehicles was formed: check their speed and length")
     H = np.array(heads)
     by_pos = H.mean(axis=0)
     sat = float(by_pos[SATURATION_FROM - 1:].mean())
@@ -193,7 +193,7 @@ def _reaction_text(cfg: SimConfig) -> str:
     if b.reaction_std is None:
         return f"U[{b.reaction_min:g}, {b.reaction_max:g}]"
     mean = b.reaction_mean if b.reaction_mean is not None else (b.reaction_min + b.reaction_max) / 2
-    return f"N({mean:g}, {b.reaction_std:g}) en [{b.reaction_min:g}, {b.reaction_max:g}]"
+    return f"N({mean:g}, {b.reaction_std:g}) in [{b.reaction_min:g}, {b.reaction_max:g}]"
 
 
 def compare(m: dict) -> list[dict]:
@@ -211,12 +211,12 @@ def compare(m: dict) -> list[dict]:
 
 
 LABELS = {
-    "flujo_saturacion_veh_h": ("Flujo de saturación en verde", "veh/h/carril", "{:,.0f}"),
-    "intervalo_saturacion_s": ("Intervalo de saturación", "s", "{:.2f}"),
-    "tiempo_perdido_s": ("Tiempo perdido al arrancar", "s", "{:.1f}"),
-    "capacidad_marcha_veh_h": ("Capacidad en flujo continuo", "veh/h/carril", "{:,.0f}"),
-    "intervalo_marcha_s": ("Intervalo entre vehículos a capacidad", "s", "{:.2f}"),
-    "densidad_embotellamiento_veh_km": ("Densidad de embotellamiento", "veh/km/carril", "{:,.0f}"),
+    "flujo_saturacion_veh_h": ("Saturation flow on green", "veh/h/lane", "{:,.0f}"),
+    "intervalo_saturacion_s": ("Saturation headway", "s", "{:.2f}"),
+    "tiempo_perdido_s": ("Start-up lost time", "s", "{:.1f}"),
+    "capacidad_marcha_veh_h": ("Capacity in continuous flow", "veh/h/lane", "{:,.0f}"),
+    "intervalo_marcha_s": ("Headway between vehicles at capacity", "s", "{:.2f}"),
+    "densidad_embotellamiento_veh_km": ("Jam density", "veh/km/lane", "{:,.0f}"),
 }
 
 
@@ -227,35 +227,35 @@ def _value(v: float | None, unit_: str, none: str) -> str:
 def summary_text(m: dict, rows: list[dict]) -> str:
     p = m["parametros"]
     lines = [
-        f"Calibración de {m['nombre']} ({m['tipo']}): velocidad {p['speed_kmh']:g} km/h (carril a {p['limite_kmh']:g} km/h), "
-        f"largo {p['largo_m']:g} m, gap_run {p['gap_run_m']:g} m, gap_stop {p['gap_stop_m']:g} m, "
-        f"accel {_value(p['accel'], 'm/s²', 'instantánea')}, decel {_value(p['decel'], 'm/s²', 'en seco')}, "
-        f"reacción {p['reaccion_s']} s",
+        f"Calibration of {m['nombre']} ({m['tipo']}): speed {p['speed_kmh']:g} km/h (lane at {p['limite_kmh']:g} km/h), "
+        f"length {p['largo_m']:g} m, gap_run {p['gap_run_m']:g} m, gap_stop {p['gap_stop_m']:g} m, "
+        f"accel {_value(p['accel'], 'm/s²', 'instantaneous')}, decel {_value(p['decel'], 'm/s²', 'dead stop')}, "
+        f"reaction {p['reaccion_s']} s",
         "",
-        f"{'medida':<40}{'simulador':>14}{'referencia':>20}  ",
+        f"{'measurement':<40}{'simulator':>14}{'reference':>20}  ",
     ]  # fmt: skip
     for r in rows:
         label, unit_, fmt = LABELS[r["medida"]]
         value = "—" if r["valor"] is None else fmt.format(r["valor"])
         ref = f"{fmt.format(r['referencia'][0])}–{fmt.format(r['referencia'][1])}"
-        mark = {"dentro": "ok", "abajo": "BAJO", "arriba": "ALTO", None: ""}[r["estado"]]
+        mark = {"dentro": "ok", "abajo": "LOW", "arriba": "HIGH", None: ""}[r["estado"]]
         lines.append(f"{label + ' (' + unit_ + ')':<40}{value:>14}{ref:>20}  {mark}")
-    lines += ["", "Intervalo por posición en la cola (s, media de " + f"{m['colas']} colas): "
+    lines += ["", "Headway per queue position (s, mean of " + f"{m['colas']} queues): "
               + " ".join(f"{v:.2f}" for v in m["intervalo_por_posicion_s"])]  # fmt: skip
-    lines.append("Flujo continuo, demanda → flujo, densidad, velocidad: " + " · ".join(
+    lines.append("Continuous flow, demand → flow, density, speed: " + " · ".join(
         f"{d} veh/min → {q:,.0f} veh/h, {k:,.0f} veh/km, {v:,.0f} km/h"
         for d, q, k, v in zip(m["demanda_veh_min"], m["flujo_veh_h"], m["densidad_veh_km"], m["velocidad_kmh"])))  # fmt: skip
     if m["tipo"] != "car":
-        lines.append("Las referencias son de autos: para este tipo solo se informan los valores.")
-    lines += ["", "Fuentes de las referencias:"] + [f"  {LABELS[r['medida']][0]}: {r['fuente']}" for r in rows]
+        lines.append("The references are for cars: for this type the values are only reported.")
+    lines += ["", "Sources of the references:"] + [f"  {LABELS[r['medida']][0]}: {r['fuente']}" for r in rows]
     return "\n".join(lines)
 
 
-PLOT_NAME = "calibracion.png"
-TABLE_CSV = "calibracion.csv"
-QUEUE_CSV = "intervalos_cola.csv"
-FLOW_CSV = "flujo_continuo.csv"
-SUMMARY_NAME = "resumen.txt"
+PLOT_NAME = "calibration.png"
+TABLE_CSV = "calibration.csv"
+QUEUE_CSV = "queue_headways.csv"
+FLOW_CSV = "continuous_flow.csv"
+SUMMARY_NAME = "summary.txt"
 
 
 def results_metrics(m: dict, rows: list[dict]) -> dict:
@@ -269,18 +269,18 @@ def write_outputs(folder, m: dict, rows: list[dict]) -> str:
 
     with open(folder / TABLE_CSV, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["medida", "valor", "referencia_min", "referencia_max", "estado", "fuente"])
+        w.writerow(["measurement", "value", "reference_min", "reference_max", "status", "source"])
         for r in rows:
             w.writerow([r["medida"], "" if r["valor"] is None else f"{r['valor']:.6g}", r["referencia"][0],
                         r["referencia"][1], r["estado"] or "", r["fuente"]])  # fmt: skip
     with open(folder / QUEUE_CSV, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["posicion", "intervalo_s_media", "intervalo_s_sd"])
+        w.writerow(["position", "headway_s_mean", "headway_s_sd"])
         for i, (mean, sd) in enumerate(zip(m["intervalo_por_posicion_s"], m["intervalo_por_posicion_sd_s"]), 1):
             w.writerow([i, f"{mean:.4f}", f"{sd:.4f}"])
     with open(folder / FLOW_CSV, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["demanda_veh_min", "flujo_veh_h", "densidad_veh_km", "velocidad_kmh", "cola_entrada_final"])
+        w.writerow(["demand_veh_min", "flow_veh_h", "density_veh_km", "speed_kmh", "final_entry_queue"])
         for row in zip(m["demanda_veh_min"], m["flujo_veh_h"], m["densidad_veh_km"], m["velocidad_kmh"],
                        m["cola_entrada"]):  # fmt: skip
             w.writerow([row[0], f"{row[1]:.1f}", f"{row[2]:.2f}", f"{row[3]:.2f}", row[4]])
