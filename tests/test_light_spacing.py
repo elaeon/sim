@@ -1,4 +1,4 @@
-"""`trafico-emisiones --separacion-semaforos` y el desfase de los semáforos (`offset`)."""
+"""`traffic-emisiones --separacion-semaforos` y el desfase de los semáforos (`offset`)."""
 
 import json
 from pathlib import Path

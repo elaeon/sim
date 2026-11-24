@@ -1,0 +1,1824 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration parameters</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --line: #e1e0d9;
+    --accent: #2a78d6;
+    --code-bg: #f0efec;
+    --note-bg: #eef4fc;
+    --warn-bg: #fdf3e1;
+    --warn-line: #eda100;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --line: #2c2c2a;
+      --accent: #3987e5;
+      --code-bg: #262624;
+      --note-bg: #16243a;
+      --warn-bg: #2e2412;
+      --warn-line: #c98500;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --line: #2c2c2a;
+    --accent: #3987e5;
+    --code-bg: #262624;
+    --note-bg: #16243a;
+    --warn-bg: #2e2412;
+    --warn-line: #c98500;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+  header h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 8px; }
+  header p { color: var(--ink-2); margin: 0; }
+  nav {
+    margin: 24px 0 8px; display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  nav a {
+    color: var(--ink-2); text-decoration: none; font-size: 0.9rem;
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+    background: var(--surface);
+  }
+  nav a:hover { color: var(--accent); border-color: var(--accent); }
+  section {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px 20px 8px; margin-top: 24px;
+  }
+  h2 { font-size: 1.3rem; margin: 0 0 4px; }
+  h2 code { font-size: 1.1rem; }
+  h3 { font-size: 1.05rem; margin: 20px 0 6px; }
+  .lead { color: var(--ink-2); margin: 0 0 12px; }
+  code {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 0.88em; background: var(--code-bg); border-radius: 4px; padding: 1px 5px;
+  }
+  pre {
+    background: var(--code-bg); border-radius: 8px; padding: 12px 14px; overflow-x: auto;
+    font-size: 0.85rem; line-height: 1.5; margin: 8px 0 16px;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .table-scroll { overflow-x: auto; margin: 8px 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  td:first-child { white-space: nowrap; }
+  td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .note, .warn {
+    border-left: 3px solid var(--accent); background: var(--note-bg);
+    border-radius: 0 8px 8px 0; padding: 10px 14px; margin: 12px 0 16px;
+  }
+  .warn { border-left-color: var(--warn-line); background: var(--warn-bg); }
+  .note p, .warn p { margin: 0 0 6px; }
+  .note p:last-child, .warn p:last-child { margin-bottom: 0; }
+  ul { padding-left: 1.2rem; }
+  li { margin: 4px 0; }
+  footer { color: var(--muted); font-size: 0.85rem; margin-top: 32px; }
+  @media (max-width: 600px) {
+    header h1 { font-size: 1.5rem; }
+    section { padding: 16px 12px 4px; }
+    th, td { padding: 6px 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Configuration parameters</h1>
+  <p>Reference of <code>config.toml</code> for <strong>traffic</strong> (the <code>traffic</code> commands; Python package <code>trafico</code>), the simulation of vehicle flow on a road
+    segment with a traffic light. Every parameter of a run is read from this file.
+    The train simulation (<code>rail</code>) is documented separately, in <a href="rail.html">rail.html</a>.</p>
+</header>
+
+<nav>
+  <a href="#uso">Usage</a>
+  <a href="#api">API and JSON</a>
+  <a href="#calibracion">Calibration</a>
+  <a href="#road">[road]</a>
+  <a href="#traffic_light">[traffic_light]</a>
+  <a href="#demand">[demand]</a>
+  <a href="#initial">[initial]</a>
+  <a href="#exit">[exit]</a>
+  <a href="#speed_bump">[speed_bump]</a>
+  <a href="#pedestrians">Pedestrians</a>
+  <a href="#bottleneck">[bottleneck]</a>
+  <a href="#execution">[execution]</a>
+  <a href="#output">[output]</a>
+  <a href="#vehicles">[vehicles.*]</a>
+  <a href="#emissions">Emissions</a>
+  <a href="#fuel">[fuel]</a>
+  <a href="#behavior">[behavior]</a>
+  <a href="#animation">[animation]</a>
+  <a href="#sample">About sample</a>
+  <a href="#replicas">About replicas</a>
+</nav>
+
+<section id="uso">
+  <h2>Usage and general rules</h2>
+  <pre><code>uv run traffic                              # root config.toml → resultados/&lt;ID&gt;_corrida/
+uv run traffic hora_pico                    # root config.toml → resultados/&lt;ID&gt;_hora_pico/
+uv run traffic resultados/&lt;ID&gt;_hora_pico    # config.toml of that folder (replica of the run)
+uv run traffic-ver                          # movement of the latest run (see [animation])
+uv run traffic-ver resultados/&lt;ID&gt;_hora_pico --inicio 300 --duracion 60
+uv run traffic-variantes --largos 50 150 300 --semaforos 40/20 30/30 20/40 --carriles 1 2 --sin bike bus
+uv run traffic-emisiones --topes sin 100 --semaforo no --largo 200 --carriles 1 2 --sin bike motorbike carga</code></pre>
+  <ul>
+    <li>The file is always called <code>config.toml</code>. The command's only argument is optional: if it is an
+      existing folder, its <code>config.toml</code> is read; otherwise it is the <strong>name</strong> of the run and
+      the <code>config.toml</code> at the project root is used. Text containing <code>/</code> that does not exist as
+      a folder is an error, not a name.</li>
+    <li>Missing keys take the default value given in the tables.</li>
+    <li>An unknown key (for example, a typo), a wrong type or an out-of-range value stops the run with a message that
+      names the key.</li>
+    <li>Each run creates <code>resultados/&lt;YYYYMMDD-HHMMSS&gt;_&lt;name&gt;/</code> with the plot, the summary, the
+      series and a copy of the configuration used. That copy records the seed and the name, so it is enough to
+      replicate the run with identical results.</li>
+    <li>The plot has six rows of panels: two per vehicle type (cumulative passengers and passenger flow; passengers per
+      metre of occupied lane are no longer plotted, but remain in <code>series.csv</code> as <code>pax_per_m</code>)
+      and four per lane: saturation over time, the vehicles crossing the light against the capacity of their exit
+      queue (see <a href="#exit">[exit]</a>), the entry queue to the segment next to the exit queue (two panels side by
+      side, each with its own scale) and the mean speed as a <strong>violin</strong>. Each violin shows the
+      distribution of the lane's mean speed (distance over time of its vehicles, including stopped ones) across all
+      samples of all replicas in which the lane had vehicles. Inside it carries the interquartile range (bar) and the
+      median (dot), and the lane label gives the median, the interquartile range and the fraction of time with
+      vehicles. That way a lane with few vehicles, like the bus lane, does not oscillate: it only counts when someone
+      is there. The time series, smoothed over 10 s, remains in <code>series.csv</code>. Pax·km/h are no longer
+      plotted, but remain in <code>series.csv</code>.</li>
+    <li><code>resumen.txt</code> includes the row «Velocidad media (km/h)» (mean speed) for each type: the distance
+      travelled inside the segment divided by the time its vehicles spent in it during the whole run, counting the
+      time stopped (light, stop, bottleneck, exit queue) and not counting the wait in the entry queue. It includes
+      those carrying goods. Compare it with the type's maximum speed to see how much the segment slows it down.</li>
+    <li><code>[vehicles.&lt;key&gt;] speed_kmh</code> is now a dictionary <code>{min, max, mean, std}</code>, like
+      <code>length</code>: each vehicle draws its maximum speed. With variable speed, the run header shows the line
+      «Velocidad máxima variable» (variable maximum speed) and the violin reference lines give the mean and the range
+      (e.g. «auto 75 (60–90)»). With <code>std = 0</code> the results are the same as with a plain number.</li>
+    <li>Bikes can overtake within their lane: with <code>[vehicles.bike] pass_in_lane = true</code> (requires
+      <code>abreast</code> ≥ 2) and variable speeds, the faster one passes the slower one on one side. Without
+      <code>pass_in_lane</code>, or with all at the same speed, the results do not change.</li>
+    <li><code>[vehicles.&lt;key&gt;] accel</code> and <code>decel</code> (m/s²): gradual acceleration and braking with
+      anticipation. Without them, speed changes are still instantaneous and the results do not change. With them the
+      queue starts more slowly (in the six-car test, ~1.7 s between cars instead of 1.5 s, and the first one loses
+      ~1.5 s more) and the run header says so.</li>
+    <li>New section <a href="#exit"><code>[exit]</code></a>: exit queue per lane after the light, with a capacity
+      (veh/min) and a length (<code>storage</code>, in m); if the next vehicle does not fit, it closes the line of that
+      lane and saturates it. By default <code>capacity = 0</code> (no exit queue, same results). The plot adds a panel
+      per lane with the vehicles crossing the line against the capacity of their exit queue, and another row with the
+      entry queue to the segment next to the exit queue. The video shows, to the right of each lane with an exit
+      queue, the metres occupied against its length.</li>
+    <li><code>[output] csv</code> is now called <code>series_csv</code>, and the new <code>emisiones_csv</code> decides
+      whether <code>emisiones_posicion.csv</code> is written (before, always). Older copies with <code>csv</code> still
+      work: its value is used, with a warning.</li>
+    <li><code>[output] show</code> was removed (it opened the matplotlib window in addition to saving the plot). Older
+      copies have it: it is ignored with a warning. Instead, <code>mobility_plot</code>, <code>passengers_plot</code>
+      and <code>emissions_plot</code> decide which plots are drawn.</li>
+    <li><code>[behavior] congestion_factor</code> was removed. It slowed down moving vehicles in proportion to the
+      queue of stopped vehicles in the whole lane, even those ahead of it, and depended on <code>length</code>. In
+      practice it barely changed the results (in the Insurgentes configuration, 661 cars with the factor against 661
+      without it; the queue discharge, identical), and what it meant to represent is already covered by the gradual
+      dynamics (<code>accel</code>/<code>decel</code>), the chain reaction and <code>queue_reaction</code>. Older copies
+      have it: it is ignored with a warning, and if it is a list it still counts for the number of lanes. The
+      saturation panel no longer shows the factor, and overtaking compares only real speeds.</li>
+    <li>New key <a href="#traffic_light"><code>[traffic_light] free_lanes</code></a>: lanes without a light (e.g. a
+      continuous turn). It only applies to the types with an exclusive lane in them: they keep going on red and do not
+      slow down on yellow. The run header lists those types. <code>traffic-variantes --carriles</code> also keeps the
+      exit queue and the light-free lanes of the chosen lanes.</li>
+    <li>New key <a href="#traffic_light"><code>[traffic_light] enabled</code></a>: with <code>false</code> the street
+      has no traffic light, the same as with <code>red</code>, <code>green</code> and <code>yellow</code> at 0.</li>
+    <li>New command <a href="#traffic-emisiones"><code>traffic-emisiones</code></a>: compares the emissions of a street
+      without a speed bump, with bumps at different positions and with or without a traffic light, with the same
+      seed.</li>
+    <li><a href="#several_lights">Several traffic lights</a>: a street can have more than one
+      (<code>[[traffic_light]]</code>, one section per light), each with its <code>position</code>, its
+      <code>red</code>, <code>green</code> and <code>yellow</code> phases, its <code>start_phase</code> and its
+      <code>free_lanes</code>. The one without <code>position</code> is the one at the end of the segment, where flows
+      and queues are measured.</li>
+    <li>New option <a href="#pedestrians"><code>pedestrian</code></a> in <code>[speed_bump]</code> and in each
+      <code>[[traffic_light]]</code>. With it a speed bump is also a pedestrian crossing (vehicles stop completely
+      while someone is crossing) and a light is a pedestrian light (green for vehicles except when pedestrians are
+      waiting, and only when the previous light is red). The arrival of pedestrians is the random variable
+      <code>pedestrian_crossing</code> (pedestrians/min). Without <code>pedestrian</code> the results do not
+      change.</li>
+    <li>New named <a href="#emission-sets">coefficient sets</a>, chosen with
+      <code>[vehicles.&lt;key&gt;.emissions] source</code>: <code>int_panis_2006</code> (the original ones) and
+      <code>sedema_cdmx_2018</code> (recalibrated with Mexico City's vehicle inspection program: car, taxi, pickup and
+      LPG minibus). <code>config.toml</code> now uses the SEDEMA ones for the car and includes the types
+      <code>taxi</code>, <code>carga_ligera</code> and <code>colectivo</code> with no demand.</li>
+    <li>New <a href="#fuel">fuel consumption and cost</a>: <code>[vehicles.&lt;key&gt;] fuel</code> and
+      <code>mass_kg</code>, section <code>[fuel]</code> with the price per litre. The summary gives L/100 km, mL and
+      cost per trip, the extra spent compared with free flow, the run total and the efficiency at constant speed;
+      <code>series.csv</code>, the L/min per type.</li>
+    <li>New <a href="#emissions">emissions</a> (model by Int Panis et al., 2006): CO2, NOx, VOC and PM per type, in
+      <code>resumen.txt</code> (per km, per trip, excess compared with free flow and a table accelerating from 0 to
+      80 km/h), in the plot and in <code>emisiones_posicion.png</code>/<code>.csv</code>. They require
+      <code>accel</code> and <code>decel</code>.</li>
+    <li>New option <a href="#light-spacing"><code>traffic-emisiones --separacion-semaforos</code></a>: the sweep of the
+      spacing between two fixed-cycle lights (the second one red when the platoon from the first arrives), with the
+      footprint on both sides of the light (queue and acceleration), the delay and the warning of a queue reaching
+      the entry. New key <code>[[traffic_light]] offset</code> (offset in s) to coordinate lights. Offsets
+      <code>rojo</code> (red), <code>verde</code> (green wave) and <code>igual</code> (equal), one per segment, and
+      mixed chains with <code>--separaciones-fijas</code>.</li>
+    <li>New key <code>[vehicles.&lt;key&gt;] time_headway</code> (s): following headway while moving; behind a moving
+      leader the vehicle keeps <code>gap_stop + time_headway · v</code> (like IDM's <code>s0 + v·T</code>) instead of
+      a fixed <code>gap_run</code>, which with gradual dynamics gave about 0.9 s between cars at 50 km/h and a
+      capacity twice the real one. Without it, everything stays the same. See
+      <a href="#calibracion">calibration</a>.</li>
+    <li>New command <a href="#calibracion"><code>traffic-calibrar</code></a>: measures a vehicle type (the car by
+      default) in standard situations (discharge of a queue on green, continuous flow, stopped queue) and compares it
+      with reference values (saturation flow, start-up lost time, capacity, jam density).</li>
+    <li>Faster: <code>traffic-emisiones</code> (also with <code>--separacion</code>) spreads the replicas of all
+      scenarios over a single process pool and honours <code>[execution] workers = 0</code> (as many as CPUs; before
+      it ran in a single process), and each engine step is ~20 % faster with gradual acceleration and braking. The
+      results are identical to the previous ones with the same seed.</li>
+    <li>Compiled engine: the simulation step (<code>src/trafico/kernel.py</code>) is compiled with
+      <a href="https://numba.pydata.org/">numba</a> and runs ~40 times faster (one replica of 9,000 simulated s with
+      two lanes, a pedestrian light and two speed bumps: from 24 s to 0.6 s; 4 replicas in parallel: from 49 s to
+      1.8 s). The results are bit-for-bit identical to the previous ones with the same seed. The first run after
+      installing or after changing <code>kernel.py</code> compiles the engine (~1 min) and saves it in
+      <code>src/trafico/__pycache__</code>; later runs load it in under 1 s. See
+      <a href="#execution">[execution]</a>.</li>
+    <li>New <a href="#api">Python API (<code>trafico.api</code>) and <code>resultados.json</code></a>: each run writes
+      a JSON summary with a stable format and the commands accept <code>--json</code> (prints that JSON to stdout);
+      the API runs the same as the commands with named arguments and returns the result already parsed.</li>
+    <li>New option <a href="#spacing"><code>traffic-emisiones --separacion</code></a>: sweep of the distance between
+      two speed bumps that computes the additivity of their emissions, the mean over the segment, the excess between
+      them, the gradient along the segment, the cost of each added bump, the footprint of a bump and the minimum
+      spacing to dilute it, with a figure and tables.</li>
+    <li><a href="#speed_bump">Several independent speed bumps</a>: a street can have more than one
+      (<code>[[speed_bump]]</code>, one section per bump), each with its <code>position</code> (now a number, not a
+      list), its <code>lanes</code> and its <a href="#pedestrians">pedestrians</a>. Older copies with
+      <code>position = [35, 70]</code> still load: each position is a bump with the other keys of the section, with a
+      warning. In <code>traffic-emisiones</code>, <code>--topes 35,70</code> is a scenario with two bumps.</li>
+    <li>New section <a href="#speed_bump"><code>[speed_bump]</code></a> (bump at <code>position</code> m, in the lanes
+      <code>lanes</code>) and key <code>[vehicles.&lt;key&gt;] speed_bump_kmh</code>: the maximum speed at which each
+      type goes over the bump. <code>traffic-variantes --carriles</code> keeps the bump in the chosen lanes.</li>
+    <li><code>[behavior] queue_reaction = true</code>: the stopped entry queue starts with a reaction time, like the
+      rest of the queue, instead of entering already moving. It corrects the excess flow on segments shorter than the
+      queue. Default <code>false</code> (previous results do not change); the run header says when it is active.</li>
+    <li><code>distribucion_pasajeros.png</code> shows, for each participating type, the percentage of vehicles with
+      each number of passengers: all those that arrived during the simulation, adding up the replicas, with their
+      observed mean. A step line marks the expected distribution according to the configured <code>pax</code> (the
+      rounded normal truncated to the range used by the draw), to tell the noise of a small sample from a real
+      problem. If the range has more than 30 values, the bars are grouped in bins (of 5 passengers for a range from 1
+      to 120).</li>
+  </ul>
+
+  <h3>Comparing variants: <code>traffic-variantes</code></h3>
+  <p>Runs the same configuration with each combination of segment length and light split, and plots, for each length,
+    the mean speed of each lane (bars per split) and the vehicles in the entry queue over time (one line per split).
+    All scenarios use the same seeds, so the differences come from the variant and not from chance.</p>
+  <pre><code>uv run traffic-variantes [name | folder] [options]
+uv run traffic-variantes hora_pico --largos 50 150 300 --semaforos 40/20 30/30 20/40 --carriles 1 2 --sin bike bus
+uv run traffic-variantes --redibujar resultados/&lt;ID&gt;_variantes_semaforo</code></pre>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead>
+    <tbody>
+      <tr><td><code>nombre | carpeta</code></td><td>As in <code>traffic</code>: a folder whose
+        <code>config.toml</code> is read, or the name of the comparison (suffix of the results folder). It goes before
+        the options.</td><td><code>variantes_semaforo</code> with the root <code>config.toml</code></td></tr>
+      <tr><td><code>--largos M …</code></td><td>Segment lengths in m.</td><td><code>[road] length</code></td></tr>
+      <tr><td><code>--semaforos ROJO/VERDE …</code></td><td>Light splits in s (red/green); yellow is the one in the
+        configuration. Up to 8.</td><td>Red 2/3, 1/2 and 1/3 of the red + green cycle (with 30/30: 40/20, 30/30,
+        20/40)</td></tr>
+      <tr><td><code>--carriles N …</code></td><td>Lanes of the configuration that are kept, renumbered from 0 in that
+        order. Each one takes its speed limit, its initial occupancy, its exit queue and, if it is in
+        <code>[bottleneck] stop_lanes</code>, its stops.</td><td>All</td></tr>
+      <tr><td><code>--sin CLAVE …</code></td><td>Vehicle types that do not take part (rate 0). They lose their fixed
+        lane, their exclusivity, their stop and their halts, so they do not get in the way when lanes are removed. A
+        participating type with a fixed lane outside <code>--carriles</code> is an error.</td><td>None</td></tr>
+      <tr><td><code>--cola CLAVE …</code></td><td>Types counted in the entry queue.</td><td><code>car</code>; if it
+        does not take part, all</td></tr>
+      <tr><td><code>--replicas N</code>, <code>--run S</code></td><td>Replicas per scenario and process seconds of each
+        one (× <code>time_scale</code> = simulated s).</td><td><code>[execution] replicas</code> and
+        <code>run</code></td></tr>
+      <tr><td><code>--redibujar CARPETA</code></td><td>Does not simulate: redraws the plot of a comparison already run
+        from its data, in a new file (does not overwrite).</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+  <p>The folder <code>resultados/&lt;YYYYMMDD-HHMMSS&gt;_&lt;name&gt;/</code> contains
+    <code>variantes_semaforo.png</code>, <code>resumen.txt</code> (table of speeds and queues),
+    <code>velocidad_por_carril.csv</code> (mean speed and σ of each lane, final and maximum queue, and crossing
+    vehicles, per scenario), <code>cola_entrada.csv</code> (mean queue over time), <code>datos.npz</code> (data of
+    each replica), <code>variantes.json</code> (parameters, seed and command) and <code>config_base.toml</code> (the
+    starting configuration). It has no <code>config.toml</code>, so it is not a <code>traffic</code> run and
+    <code>traffic-ver</code> does not pick it up.</p>
+
+  <h3 id="traffic-emisiones">Comparing emissions: <code>traffic-emisiones</code></h3>
+  <p>Runs the same street without a speed bump and with bumps at the requested positions (and, optionally, with and
+    without a traffic light) and compares the <a href="#emissions">emissions</a>. All scenarios use the same seed: the
+    same vehicles arrive, with the same passengers and speeds, so the differences come from the bump or the light. It
+    plots the flow leaving the segment over time, the vehicles per minute of each type, the emissions per km of each
+    type and pollutant (with the change compared with the first scenario) and the emissions along the street.</p>
+  <pre><code>uv run traffic-emisiones [name | folder] [options]
+uv run traffic-emisiones calle200 --topes sin 100 --semaforo no --largo 200 --carriles 1 2 --sin bike motorbike carga
+uv run traffic-emisiones --topes sin 50 100 150            # where the bump is best placed
+uv run traffic-emisiones --topes sin 100 50,100 25,50,75   # one, two or three bumps on the same street
+uv run traffic-emisiones --semaforo ambos                  # each bump with and without a light
+uv run traffic-emisiones --separacion                      # how far apart must two bumps be to dilute the footprint?
+uv run traffic-emisiones --separacion 30 50 70 --primer-tope 35
+uv run traffic-emisiones --separacion 10 20 30 40 --cadena 4   # chain of 4 bumps: cost of each added bump
+uv run traffic-emisiones --separacion-semaforos                # how far apart must two lights be?
+uv run traffic-emisiones --separacion-semaforos 50 100 200 --ciclo 40/20/3 --primer-semaforo 120
+uv run traffic-emisiones --separacion-semaforos 25 50 75 --desfase verde   # green wave
+uv run traffic-emisiones --separacion-semaforos 25 50 75 --cadena 3 --separaciones-fijas 150 --desfase verde,rojo
+uv run traffic-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes</code></pre>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead>
+    <tbody>
+      <tr><td><code>nombre | carpeta</code></td><td>As in <code>traffic</code>: a folder whose <code>config.toml</code>
+        is read, or the name of the comparison. It goes before the options.</td>
+        <td><code>emisiones_topes</code> with the root <code>config.toml</code></td></tr>
+      <tr><td><code>--topes M|M,M|sin …</code></td><td>One scenario per value: the position of the bump in m from the
+        entry, several separated by commas (<code>35,70</code>: two bumps in the same scenario) or <code>sin</code>
+        (none). The first one is the reference for the changes in %.</td>
+        <td><code>sin</code> and those of <code>[[speed_bump]] position</code> (if there are none, one at the middle of
+        the segment)</td></tr>
+      <tr><td><code>--carriles-tope N …</code></td><td>Lanes with a bump, numbered after <code>--carriles</code>.</td>
+        <td><code>lanes</code> of each bump; without it, all</td></tr>
+      <tr><td><code>--semaforo config|si|no|ambos</code></td><td>Traffic light of every scenario: as in the
+        configuration, on (<code>si</code>), off (<code>no</code>) or both (<code>ambos</code>: each bump with and
+        without a light; up to 8 scenarios).</td><td><code>config</code></td></tr>
+      <tr><td><code>--largo M</code></td><td>Segment length in m.</td><td><code>[road] length</code></td></tr>
+      <tr><td><code>--carriles N …</code>, <code>--sin CLAVE …</code></td><td>As in <code>traffic-variantes</code>:
+        lanes that are kept and types that do not take part.</td><td>All</td></tr>
+      <tr><td><code>--replicas N</code>, <code>--run S</code></td><td>Replicas per scenario and process seconds of each
+        one (× <code>time_scale</code> = simulated s).</td><td><code>[execution] replicas</code> and
+        <code>run</code></td></tr>
+      <tr><td><code>--separacion [D …]</code></td><td>Replaces the comparison with the <a href="#spacing">sweep of the
+        spacing between two bumps</a>: runs without a bump, with one bump and with two bumps <code>D</code> m apart.
+        Without values it uses <code>10 15 20 25 30 40 50 60 80 100</code>. It cannot be combined with
+        <code>--topes</code> or <code>--semaforo ambos</code>.</td><td>—</td></tr>
+      <tr><td><code>--primer-tope M</code></td><td>With <code>--separacion</code>, position of the first bump in m.</td>
+        <td>The first <code>[[speed_bump]]</code>; if there is none, a quarter of the segment</td></tr>
+      <tr><td><code>--cadena N</code></td><td>With <code>--separacion</code>, bumps in each chain: <code>N</code> bumps
+        at <code>P1</code>, <code>P1 + d</code>, …, <code>P1 + (N − 1)·d</code>. With 2 it is the usual pair; with more
+        it measures the cost of each bump added to a zone of close bumps.</td><td><code>2</code></td></tr>
+      <tr><td><code>--tolerancia T</code>, <code>--umbral U</code></td><td>With <code>--separacion</code>: how far the
+        chain may deviate from <code>N</code> isolated bumps to be called additive, and which fraction of the peak of a
+        single bump counts as a diluted footprint.</td><td><code>0.05</code> and <code>0.10</code></td></tr>
+      <tr><td><code>--separacion-semaforos [D …]</code></td><td>The <a href="#light-spacing">sweep of the spacing
+        between two fixed-cycle lights</a>: runs without a light, with one and with two <code>D</code> m apart, without
+        the lights or bumps of the configuration. Without values it uses <code>25 50 75 100 150 200 250 300</code>. It
+        accepts <code>--cadena</code>, <code>--tolerancia</code>, <code>--umbral</code> and <code>--topes M,M</code>
+        (fixed bumps in all scenarios); it cannot be combined with <code>--separacion</code> or
+        <code>--semaforo</code>.</td><td>—</td></tr>
+      <tr><td><code>--primer-semaforo M</code></td><td>With <code>--separacion-semaforos</code>, position of the first
+        light in m. It must leave room for its queue.</td><td><code>100</code></td></tr>
+      <tr><td><code>--ciclo ROJO/VERDE[/AMARILLO]</code></td><td>With <code>--separacion-semaforos</code>, phases of
+        all the lights in s (red/green/yellow).</td><td>Those of the first fixed-cycle light in the configuration; if
+        there is none, <code>30/30/3</code></td></tr>
+      <tr><td><code>--desfase rojo|verde|igual[,…]</code></td><td>With <code>--separacion-semaforos</code>:
+        <code>rojo</code> turns each light red just as the head of the platoon that left the previous one arrives (it
+        finds it red at any spacing); <code>verde</code>, green just as it arrives (green wave); <code>igual</code>,
+        all in the same phase. With <code>--cadena N</code>, one for all segments or one per segment separated by
+        commas (<code>N − 1</code>), e.g. <code>verde,rojo</code>.</td><td><code>rojo</code></td></tr>
+      <tr><td><code>--separaciones-fijas M …</code></td><td>With <code>--separacion-semaforos</code> and <code>--cadena
+        N</code> (<code>N ≥ 3</code>): fixed spacings of the segments after the first one (<code>N − 2</code> values);
+        only the first one is swept. With <code>--cadena 3 --separaciones-fijas 150 --desfase verde,rojo</code>: A and
+        B at <code>d</code> in a green wave and C 150 m after B, red when the platoon arrives.</td><td>All
+        <code>d</code></td></tr>
+      <tr><td><code>--redibujar CARPETA</code></td><td>Does not simulate: redraws the plot in a new file (also that of a
+        <code>--separacion</code> or <code>--separacion-semaforos</code> sweep).</td>
+        <td>—</td></tr>
+    </tbody>
+  </table></div>
+  <p>At least one participating type with <code>[vehicles.&lt;key&gt;.emissions]</code>, <code>accel</code> and
+    <code>decel</code> is needed; those that brake at the bump need <code>speed_bump_kmh</code>. The folder
+    <code>resultados/&lt;YYYYMMDD-HHMMSS&gt;_&lt;name&gt;/</code> contains <code>comparacion_emisiones.png</code>,
+    <code>resumen.txt</code> (vehicles per minute, travel time and emissions per km of each type, with the change
+    compared with the first scenario), <code>comparacion_emisiones.csv</code> (the same per scenario and type, with
+    the excess compared with free flow), <code>emisiones_posicion.csv</code> (g/(m·h) per scenario and pollutant along
+    the street), <code>datos.npz</code>, <code>escenarios.json</code> (parameters, seed and command) and
+    <code>config_base.toml</code>.</p>
+
+  <h3 id="spacing">Spacing between speed bumps: <code>--separacion</code></h3>
+  <p>A speed bump leaves a <strong>footprint</strong> on the emission profile: just before it, emissions drop (the car
+    brakes and emits less than when cruising), just after it they spike (it accelerates) and the wake decays until the
+    vehicle recovers its speed. If the second bump falls inside that wake, the footprints overlap.
+    <code>--separacion</code> looks for the smallest distance that keeps them apart. It runs, with the same seed, the
+    street without a bump, with one bump at <code>--primer-tope</code> (<code>P1</code>) and with two bumps at
+    <code>P1</code> and <code>P1 + d</code> for each <code>d</code> (with <code>--cadena N</code>, with <code>N</code>
+    bumps at <code>P1</code>, <code>P1 + d</code>, …). Each bump is the <code>[[speed_bump]]</code> at that position
+    or, if there is none, a copy of the first one (lanes and pedestrians). A <code>d</code> that does not fit in the
+    segment (the last bump must be 5 m or more from the end) is skipped with a warning.</p>
+  <p>With the emission profile of each scenario (g/(m·h), all lanes), <code>E</code>, and that of the street without a
+    bump, <code>base</code>, for each pollutant:</p>
+  <ul>
+    <li><strong>Additivity</strong> <code>R(d) = N(d) / (n·N1)</code>, with <code>n</code> the bumps in the chain (2 by
+      default), <code>N</code> the net excess <code>∫ (E − base) dx</code> of the chain and <code>N1</code> that of a
+      single bump. 1 = the chain emits like <code>n</code> isolated bumps; less than 1, the wakes overlap (the car does
+      not manage to recover its speed).</li>
+    <li><strong>Cost of each added bump</strong> <code>(N − N1) / ((n − 1)·N1)</code>, in isolated bumps, and per metre
+      of spacing (<code>100 · cost / d</code>, in % of an isolated bump). It is the extra emitted by a bump right next
+      to the previous ones: 1 = as much as a single one. For the pair it equals <code>2R − 1</code>. It grows with
+      <code>d</code> and reaches 1 where the chain is additive; the cost per metre measures the penalty of the slow
+      zone that each spacing adds.</li>
+    <li><strong>Footprint</strong>: distance, after a single bump, until its excess falls below the threshold (10 % by
+      default) of its peak. It is of the order of the distance over which the vehicle accelerates from the bump speed
+      to cruising speed.</li>
+    <li><strong>Mean over the segment</strong>: the mean of <code>E</code> over <code>[P1, Pn + footprint]</code>
+      (<code>Pn</code>, the last bump) divided by that of the street without a bump over the same segment.</li>
+    <li><strong>Excess between bumps</strong>: the mean of <code>E − base</code> between the first and the second bump
+      (leaving out 5 m next to each one) as % of the peak of a single bump.</li>
+    <li><strong>Gradient</strong>: the mean of <code>|dE/dx|</code> (5 m intervals) over the whole segment
+      <code>[P1, Pn + footprint]</code>, the same as the mean. It does not use inner windows, so it does not jump when
+      the edge of a window falls on the braking ramp or the wake of a bump; it is also defined when the bumps are
+      right next to each other. It is the <em>mean variation</em> of the profile: rises and falls count the same, and
+      it decreases with the spacing because the same peaks are spread over a longer segment. That is why it has no
+      minimum of its own and does not enter the minimum spacing. In the figure it is shown as % of the maximum slope
+      of a single bump.</li>
+  </ul>
+  <p>The <strong>minimum spacing</strong> is the smallest one in the list where the pair is additive (<code>|R − 1| ≤
+    tolerance</code>) <em>and</em> the second bump is outside the footprint of the first one (<code>d ≥
+    footprint</code>); the largest across pollutants is taken. Additivity demands somewhat more than the footprint (in
+    the example, 60 against 48 m) because the second bump starts slowing the car down some 15–20 m before reaching
+    it. There is no interpolation: if none in the list qualifies, it says so and you should widen
+    <code>--separacion</code>. Smaller spacings usually emit <em>less in total</em> (the car accelerates only once)
+    but leave a high plateau with no recovery between the bumps.</p>
+  <p>The folder contains <code>separacion_topes.png</code> (additivity, mean over the segment, excess between bumps,
+    gradient over the segment and cost of each added bump, total and per metre, against the spacing, one line per
+    pollutant, and the CO₂ profile of some spacings), <code>resumen.txt</code>, <code>separacion_topes.csv</code>
+    (metrics per spacing and pollutant), <code>perfiles_separacion.csv</code>, <code>datos.npz</code>,
+    <code>escenarios.json</code> (with <code>"modo": "separacion"</code>) and <code>config_base.toml</code>. There are
+    2 + (number of spacings) scenarios times the replicas: <code>--replicas</code> and <code>--run</code> make it
+    shorter. The values hold for the cruising speed, <code>accel</code> and <code>speed_bump_kmh</code> of the
+    configuration.</p>
+
+  <h3 id="light-spacing">Spacing between traffic lights: <code>--separacion-semaforos</code></h3>
+  <p>The same for traffic lights: at what distance can a second red light be placed without changing the footprint of
+    the first? It runs, with the same seed, the street without a light, with one at <code>--primer-semaforo</code>
+    (<code>P1</code>) and with two at <code>P1</code> and <code>P1 + d</code> (or <code>N</code> with
+    <code>--cadena</code>). Only the lights of the sweep are present, all fixed-cycle with the phases of
+    <code>--ciclo</code>: the light at the end of the segment, the intermediate ones and the bumps of the configuration
+    are removed (with <code>--topes 35,100</code> fixed bumps are kept in all scenarios). With the <code>rojo</code>
+    offset, the <code>i</code>-th light gets <code>offset = i · (red + τ(d))</code> (modulo the cycle), with
+    <code>τ(d)</code> the time the head of the platoon takes to cover <code>d</code> from a standstill: it accelerates
+    with its <code>accel</code> up to its free-flow speed and keeps that speed. That way it turns red just as the
+    platoon that left the previous light on green arrives, at any spacing: the worst case. With <code>verde</code> the
+    delay is just <code>τ(d)</code>: it turns green just as the platoon arrives (green wave). The head is the type with
+    the highest rate (<code>tipo_peloton</code> and <code>viaje_s</code> in <code>escenarios.json</code>). A fixed
+    offset of <code>red</code> does not work: the platoon takes longer to arrive the farther away the second light is,
+    and with a large <code>d</code> it already finds it green (a green wave). Without <code>--largo</code>, the segment
+    is extended if needed to <code>P1 + (N − 1)·d<sub>max</sub> + 150 m</code>.</p>
+  <p>The same metrics as with the bumps are computed, with these differences:</p>
+  <ul>
+    <li><strong>Two-sided footprint</strong>: before the light, the queue and the braking (<code>L_antes</code>, up to
+      the farthest point before <code>P1</code> where the excess of a single light exceeds the threshold of the peak);
+      after it, the acceleration (<code>L_después</code>). The second light is outside the footprint of the first if
+      <code>d ≥ L_antes + L_después</code>, and the mean and the gradient are computed over <code>[P1 − L_antes, Pn +
+      L_después]</code>.</li>
+    <li><strong>Stable, not additive</strong>: at an isolated light only those arriving on red stop; with the red
+      offset the <em>whole</em> platoon stops at the second one. That is why the pair does not tend to two isolated
+      lights (<code>R</code> stays above 1 even far apart) but to the distant pair. The minimum spacing is the smallest
+      from which the pair's emission stays within ±tolerance of that of the most separated pair in the list
+      (<em>÷ lejana</em> in the summary), at that <code>d</code> and all larger ones, and also <code>d ≥ L_antes +
+      L_después</code>. The most separated pair alone does not count as a plateau: if only it qualifies, you are asked
+      to widen the list. <code>R</code> of the most separated pair is the cost of the red coordination compared with
+      isolated lights.</li>
+    <li><strong>Queue up to the entry</strong>: with a short <code>d</code> the queue of the second light reaches the
+      first one and that of both can reach the entry of the segment. Then arrivals are cut off and fewer vehicles get
+      through: those spacings are marked with <code>*</code> in the summary and with a hollow dot in the figure, and
+      they do not count for the minimum spacing.</li>
+    <li><strong>≡ isolated</strong> (<code>n · R</code>): the extra emission of the chain counted in single lights. In
+      a perfect green wave the pair is ≈ 1 (the second light stops nobody); with the mixed chain
+      <code>verde,rojo</code> it is compared with the red pair spaced the same as the first and last lights.</li>
+    <li><strong>Delay</strong>: the travel time added by the chain ÷ (<code>n</code> × that of a single light), with
+      the mean weighted by the crossing vehicles. <strong>Out</strong>: the vehicles leaving the segment ÷ those of the
+      street without a light.</li>
+  </ul>
+  <p>The folder (<code>separacion_semaforos</code> by default) contains <code>separacion_semaforos.png</code>,
+    <code>separacion_semaforos.csv</code>, <code>perfiles_separacion.csv</code>, <code>resumen.txt</code>,
+    <code>datos.npz</code>, <code>escenarios.json</code> (with <code>"elemento": "semaforo"</code>, the cycle and the
+    offset), <code>config_base.toml</code> and <code>resultados.json</code>. The footprint of the single light is
+    shaded in the CO₂ profile of the figure.</p>
+</section>
+
+<section id="api">
+  <h2>Python API and <code>resultados.json</code></h2>
+  <p>To use the simulator from a program (a script, a notebook, an agent) without parsing text or opening CSV files,
+    there are two things that do not change between versions as long as their number does not go up: the
+    <code>resultados.json</code> file in each results folder and the <code>trafico.api</code> module.</p>
+
+  <h3 id="results-json"><code>resultados.json</code> and <code>--json</code></h3>
+  <p>Each command (<code>traffic</code>, <code>traffic-variantes</code>, <code>traffic-emisiones</code>, with or without
+    <code>--separacion</code>) writes <code>resultados.json</code> when it finishes. With <code>--json</code>, the
+    command prints that same JSON to stdout and sends everything else (summary, progress, warnings) to stderr:</p>
+  <pre><code>uv run traffic-emisiones --separacion 20 40 60 --cadena 3 --json 2&gt;/dev/null | python -c "import json,sys; print(json.load(sys.stdin)['metricas']['recomendada_m'])"
+uv run traffic-emisiones --redibujar resultados/&lt;ID&gt;_emisiones_topes --json    # also with comparisons already run</code></pre>
+  <p>The header is the same in every mode:</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td><code>schema</code></td><td>Format version (currently 1).</td></tr>
+      <tr><td><code>modo</code></td><td><code>"corrida"</code> (<code>traffic</code>), <code>"variantes"</code>,
+        <code>"emisiones"</code>, <code>"separacion"</code> or <code>"calibracion"</code>.</td></tr>
+      <tr><td><code>id</code>, <code>carpeta</code>, <code>creado</code></td><td>Folder name, its absolute path and the
+        date and time (ISO 8601).</td></tr>
+      <tr><td><code>comando</code>, <code>semilla</code>, <code>replicas</code>, <code>s_simulados</code></td>
+        <td>How it was run (the seed used, even if it was random).</td></tr>
+      <tr><td><code>archivos</code></td><td>Files in the folder (relative names).</td></tr>
+      <tr><td><code>metricas</code></td><td>What is specific to each mode (below).</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong><code>corrida</code></strong>: <code>tipos</code> (by type key, <code>car</code>, <code>bus</code>…: the
+      statistics of the summary table, mean across replicas, with keys such as <code>vehiculos_cruzan</code>,
+      <code>pasajeros_min</code>, <code>tiempo_recorrido_s</code>, <code>velocidad_media_kmh</code>,
+      <code>co2_g_km</code>, <code>co2_exceso_flujo_libre_pct</code>, <code>combustible_l_100km</code>),
+      <code>carriles</code> (<code>cruzan_veh_min</code>, <code>linea_cerrada_pct</code>), <code>peatones</code>
+      (crossings of each pedestrian bump and light), <code>cambios_carril_por_replica</code> and
+      <code>ejecucion</code>.</li>
+    <li><strong><code>emisiones</code></strong>: <code>escenarios</code>, each with <code>nombre</code>,
+      <code>topes_m</code>, <code>semaforo</code> and, per type, <code>veh_min</code>, <code>tiempo_recorrido_s</code>,
+      <code>velocidad_media_kmh</code> and per pollutant <code>por_km</code>, <code>cambio_pct</code> (compared with the
+      <code>referencia</code> scenario) and <code>exceso_flujo_libre_pct</code>; <code>parametros</code> is the
+      <code>escenarios.json</code>.</li>
+    <li><strong><code>separacion</code></strong>: <code>distancias_m</code>, <code>recomendada_m</code>,
+      <code>huella_m</code>, <code>topes_por_cadena</code> and, per pollutant, one value per spacing of
+      <code>aditividad</code>, <code>media_tramo</code>, <code>exceso_entre</code>, <code>gradiente_tramo</code>,
+      <code>costo_tope</code> and <code>costo_por_m</code> (see <a href="#spacing">spacing between bumps</a>), plus
+      <code>d_aditiva</code>, <code>d_huella</code> and <code>d_minima</code>.</li>
+    <li><strong><code>variantes</code></strong>: <code>escenarios</code> per segment and light, with
+      <code>velocidad_kmh_por_carril</code>, <code>cola_final</code>, <code>cola_maxima</code> and
+      <code>cruzan</code>.</li>
+  </ul>
+  <p>Format rules: keys are lowercase ASCII with the unit at the end (<code>_s</code>, <code>_m</code>,
+    <code>_kmh</code>, <code>_pct</code>); NaN and infinities are written as <code>null</code> (strict JSON); a key
+    never changes its meaning or unit, and new keys can be added without changing <code>schema</code>. Folders of
+    comparisons and sweeps made before this version do not have it: the API rebuilds it from their raw data without
+    writing anything; old <code>traffic</code> runs have to be run again.</p>
+
+  <h3 id="python-api"><code>trafico.api</code></h3>
+  <pre><code>from trafico import api
+
+run = api.simulate()                                                   # like `uv run traffic`
+run.results["metricas"]["tipos"]["car"]["tiempo_recorrido_s"]
+run = api.compare_emissions(bumps=["sin", 35, (35, 70)], replicas=4)   # traffic-emisiones
+run = api.bump_spacing(distances=[20, 40, 60], chain=3)                # traffic-emisiones --separacion
+run = api.compare_variants(lengths=[100, 200], lights=[(40, 20), "30/30"])
+api.list_runs(mode="separacion", limit=5)                              # folders, most recent first
+api.read_results("resultados/&lt;ID&gt;_separacion_topes")                    # its resultados.json
+api.redraw("resultados/&lt;ID&gt;_separacion_topes")                          # new plot, without simulating
+api.describe_config()                                                  # the configuration as read and validated</code></pre>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Function</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>simulate(config=None, *, name=None)</code></td><td>One <code>traffic</code> run.</td></tr>
+      <tr><td><code>compare_emissions(config=None, *, name, bumps, lights, lanes, without, length, bump_lanes, replicas,
+        run)</code></td><td><code>traffic-emisiones</code>. <code>bumps</code>: per scenario,
+        <code>None</code>/<code>"sin"</code>, a position or a list of positions.</td></tr>
+      <tr><td><code>bump_spacing(config=None, *, name, distances, chain, first, tolerance, threshold, lights, lanes,
+        without, length, bump_lanes, replicas, run)</code></td><td><code>traffic-emisiones --separacion</code>.</td></tr>
+      <tr><td><code>light_spacing(config=None, *, name, distances, chain, first, cycle, offset, fixed, bumps, tolerance,
+        threshold, lanes, without, length, bump_lanes, replicas, run)</code></td><td><code>traffic-emisiones
+        --separacion-semaforos</code>. <code>cycle</code>: <code>(red, green[, yellow])</code> or
+        <code>"30/30/3"</code>; <code>offset</code>: <code>"rojo"</code>, <code>"verde"</code> or <code>"igual"</code>,
+        or a list per segment; <code>fixed</code>: fixed spacings after the first segment; <code>bumps</code>: fixed
+        bumps in m.</td></tr>
+      <tr><td><code>compare_variants(config=None, *, name, lengths, lights, lanes, without, queue, replicas,
+        run)</code></td><td><code>traffic-variantes</code>. <code>lights</code>: <code>(red, green)</code> pairs or
+        strings like <code>"40/20"</code>.</td></tr>
+      <tr><td><code>calibrate(config=None, *, name, vehicle="car", queues)</code></td><td><code>traffic-calibrar</code>;
+        in <code>results["metricas"]["medidas"]</code>, each measurement with its value, its range and its
+        status.</td></tr>
+      <tr><td><code>redraw(folder)</code>, <code>read_results(folder)</code>, <code>list_runs(output_dir=None, mode=None,
+        limit=None)</code>, <code>describe_config(config=None)</code></td><td>Queries and redrawing, without
+        simulating.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The run functions return a <code>Run</code> with <code>folder</code>, <code>mode</code>, <code>results</code>
+    (the <code>resultados.json</code>), <code>files</code>, <code>path(name)</code> and <code>log</code> (what the
+    command would have printed). <code>config</code> is <code>None</code> (the root <code>config.toml</code>), a folder
+    with its <code>config.toml</code> (e.g. a results folder, to repeat the run) or the path of a
+    <code>config.toml</code>; <code>name</code> is only accepted without <code>config</code>. Configuration or argument
+    errors are <code>ConfigError</code> (a subclass of <code>ValueError</code>); a missing folder,
+    <code>FileNotFoundError</code>. The functions do not print or read <code>sys.argv</code>; they capture stdout and
+    stderr while they run, so they must not be called from several threads at once (several processes are fine). Each
+    one accepts the same arguments as its command-line option, with the same meaning; the names and the JSON keys do
+    not change as long as <code>api.API_VERSION</code> is 1.</p>
+</section>
+
+<section id="calibracion">
+  <h2>Calibration: <code>traffic-calibrar</code></h2>
+  <p>Measures how a vehicle type of the configuration behaves in three standard traffic engineering situations and
+    compares it with reference values. Each measurement uses a one-lane segment with only that type (no bumps, stops,
+    bottlenecks or pedestrians), with its speed, length, gaps, <code>accel</code>, <code>decel</code> and the behaviour
+    of <code>[behavior]</code>, and the limit of its lane.</p>
+  <pre><code>uv run traffic-calibrar                     # the car with config.toml
+uv run traffic-calibrar --tipo motorbike --colas 50
+uv run traffic-calibrar resultados/&lt;ID&gt;_corrida --json</code></pre>
+  <ul>
+    <li><strong>Discharge of a queue on green</strong>: after a 120 s red, the headway between line crossings (vehicle
+      front) of the first 15 in the queue is measured, over <code>--colas</code> queues with different seeds. The
+      <strong>saturation headway</strong> is the mean from the 5th position on; the <strong>saturation flow</strong>,
+      3600 divided by that headway; the <strong>start-up lost time</strong> (HCM), the sum of the extra time taken by
+      the first 4 positions.</li>
+    <li><strong>Continuous flow</strong> without a light, 600 m, with demands from 10 to 120 veh/min for 900 s (the
+      first quarter does not count): flow at the exit and density in the middle third. The
+      <strong>capacity</strong> is the highest flow and the <strong>headway at capacity</strong>, 3600 divided by
+      it.</li>
+    <li><strong>Jam density</strong>: <code>1000 / (length + gap_stop)</code> vehicles per lane-km in a stopped
+      queue.</li>
+  </ul>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Measurement</th><th>Reference (cars)</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td>Saturation flow</td><td>1,700–1,950 veh/h/lane</td><td>HCM 6th ed.: base of 1,900 (1,750 in cities of
+        fewer than 250 thousand inhabitants); urban counts usually come out somewhat lower.</td></tr>
+      <tr><td>Saturation headway</td><td>1.85–2.10 s</td><td>The inverse of the saturation flow.</td></tr>
+      <tr><td>Start-up lost time</td><td>1–3 s</td><td>HCM: 2 s per phase by default.</td></tr>
+      <tr><td>Capacity in continuous flow</td><td>1,700–2,400 veh/h/lane</td><td>≈ 1,800–2,000 on urban streets, up
+        to 2,400 on motorways (HCM).</td></tr>
+      <tr><td>Headway at capacity</td><td>1.5–2.1 s</td><td>Car-following literature.</td></tr>
+      <tr><td>Jam density</td><td>115–160 veh/km/lane</td><td>≈ 6.5–8 m between stopped fronts.</td></tr>
+    </tbody>
+  </table></div>
+  <p>These are published values for cars, not local data: if there are counts for the street being studied, they are
+    worth more. For other types the values are reported without comparing them.</p>
+  <p>Example (the car in the project configuration): with <code>gap_stop = 1</code>, without
+    <code>time_headway</code> and a reaction N(2, 1) in [0.7, 3] s, 5 of 6 measurements were out of range (saturation
+    ≈ 1,480 veh/h, capacity ≈ 4,100 veh/h, jam 182 veh/km). With <code>gap_stop = 2</code>,
+    <code>time_headway = 1.1</code> and <code>[behavior] reaction = {min = 0.5, max = 2.5, mean = 1.2, std = 0.4}</code>
+    all are within range: saturation ≈ 1,910 veh/h (1.88 s), lost time 1.8 s, capacity ≈ 1,850 veh/h (1.95 s) and
+    154 veh/km. The moving headway also lengthens the queue discharge, so the reaction and <code>time_headway</code>
+    are tuned together. The folder <code>&lt;output.dir&gt;/&lt;date-time&gt;_calibracion</code> contains
+    <code>calibracion.png</code> (headway per queue position against the reference saturation headway, and flow
+    against density against the reference capacity and jam density), <code>resumen.txt</code>,
+    <code>calibracion.csv</code> (each measurement with its range, its status and its source),
+    <code>intervalos_cola.csv</code>, <code>flujo_continuo.csv</code>, <code>config_base.toml</code> and
+    <code>resultados.json</code> (<code>"modo": "calibracion"</code>). The seed is that of <code>[execution]
+    seed</code>; with <code>[execution] workers</code> the queues and demands are spread over processes.</p>
+</section>
+
+<section id="road">
+  <h2><code>[road]</code> Road segment</h2>
+  <p class="lead">Geometry of the segment. The traffic light is at the end, at <code>x = length</code>.</p>
+  <div class="note"><p><strong>Number of lanes.</strong> It is the length of the per-lane lists:
+    <code>max_line_speed</code>, <code>[initial] occupancy</code> and <code>[exit] capacity</code> and
+    <code>storage</code>. Those that are lists must have the same length; a plain number applies to all lanes, and with
+    no list 2 lanes are used. With 1 lane there are no lane changes. The old key <code>lanes</code> is no longer used;
+    it is only accepted, with a warning, to replicate older copies.</p></div>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>length</code></td><td>number</td><td class="num">200.0</td>
+        <td>Length of the segment in metres.</td>
+        <td>At least twice the longest vehicle with its moving gap (32 m with the built-in types).</td></tr>
+      <tr><td><code>max_line_speed</code></td><td>number or list</td><td class="num">(no limit)</td>
+        <td>Speed limit in km/h of each lane, starting from the right one (lane 0), like <code>[40, 50, 40]</code>; a
+          number applies to all. No vehicle exceeds it, and a vehicle changing lanes respects the lower of its two
+          limits. A vehicle stuck behind a slower or stopped one only moves to a lane with a lower limit if that
+          improves its speed; if it cannot overtake, it moves up to an adjacent lane with a higher limit when there is
+          room (<code>gap_run</code> ahead and behind) and there a nearby leader does not slow it down. Every lane
+          change requires a slow leader (see <code>leader_slowdown</code> in
+          <a href="#behavior">[behavior]</a>).</td>
+        <td>Each value &gt; 0.</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Example: three lanes</h3>
+  <pre><code>[road]
+length = 500.0
+max_line_speed = [40, 50, 40]         # lane 0 (right), 1 and 2 (left)
+
+[initial]
+occupancy = [0.0, 0.2, 0.3]           # same length as max_line_speed → 3 lanes
+
+[vehicles.bike]
+lane = 0                              # bikes in the right lane
+exclusive = true                      # … and only bikes
+[vehicles.bus]
+lane = 1                              # buses in the next one
+exclusive = true                      # cars and motorbikes use only lane 2
+stop_position = 400.0                 # stop 100 m before the light …
+stop_time_mean = 20.0                 # … of 20 ± 5 s
+stop_time_std = 5.0</code></pre>
+  <p>The header of each run and <code>resumen.txt</code> show the limit and the exclusive lanes of each lane.</p>
+</section>
+
+<section id="traffic_light">
+  <h2><code>[traffic_light]</code> Traffic light</h2>
+  <p class="lead">Fixed cycle green → yellow → red. On yellow the line stays open, but vehicles approaching the light
+    slow down (see <code>yellow_approach</code> and <code>yellow_speed_factor</code> in
+    <a href="#behavior">[behavior]</a>). On red, no vehicle whose front has not crossed can pass the line, except the
+    types with an exclusive lane in a lane without a light (<code>free_lanes</code>). With <code>enabled =
+    false</code>, or with <code>red</code>, <code>green</code> and <code>yellow</code> at 0, the street has no traffic
+    light. The plots shade red and yellow, and the video paints the light in the colour of the phase.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>enabled</code></td><td>true/false</td><td class="num">true</td>
+        <td>Whether the street has a traffic light. With <code>false</code> it has none: the line at the end of the
+          segment is always open and the other keys of the section are ignored. Setting <code>red</code>,
+          <code>green</code> and <code>yellow</code> to 0 is equivalent (same run). Without a light, the flow at the
+          line is measured over a 60 s window instead of a cycle, the plots do not shade phases, the texts say «el
+          final del tramo» (the end of the segment) instead of «el semáforo» (the light), the video does not draw the
+          light and, if <code>[animation] duration</code> is not given, it records 120 s.</td>
+        <td>true/false.</td></tr>
+      <tr><td><code>red</code></td><td>number</td><td class="num">30.0</td>
+        <td>Duration of the red light in simulated seconds. With 0, the light is always green.</td>
+        <td>≥ 0, multiple of 0.1.</td></tr>
+      <tr><td><code>green</code></td><td>number</td><td class="num">30.0</td>
+        <td>Duration of the green light in simulated seconds.</td>
+        <td>&gt; 0 (except with all three at 0: no light), multiple of 0.1.</td></tr>
+      <tr><td><code>yellow</code></td><td>number</td><td class="num">0.0</td>
+        <td>Duration of the yellow light in simulated seconds, between green and red. The cycle lasts
+          <code>red + green + yellow</code>. With 0 there is no yellow: green goes straight to red.</td>
+        <td>≥ 0, multiple of 0.1.</td></tr>
+      <tr><td><code>start_phase</code></td><td>text</td><td class="num">"red"</td>
+        <td>Phase the run starts with. Starting on green, yellow and red follow.</td>
+        <td><code>"red"</code> or <code>"green"</code>.</td></tr>
+      <tr><td><code>offset</code></td><td>number</td><td class="num">0.0</td>
+        <td>Offset in s: the whole cycle is delayed by <code>offset</code> s (at <code>t = 0</code> the light is where it
+          would be at <code>t = −offset</code>). It is used to coordinate lights: e.g. with <code>red = 30</code>, a
+          second light with <code>offset = 30</code> turns red just as the first one turns green.</td>
+        <td>0 ≤ <code>offset</code> &lt; <code>red + green + yellow</code>, multiple of 0.1; not on a pedestrian
+          light.</td></tr>
+      <tr><td><code>free_lanes</code></td><td>list of integers</td><td class="num">[]</td>
+        <td>Lanes without a light, starting from the right one (lane 0), e.g. <code>[0]</code> for a continuous right
+          turn. <strong>It only applies to the types with an exclusive lane</strong> in one of them (<code>lane</code>
+          and <code>exclusive = true</code> in <a href="#vehicles">[vehicles.&lt;key&gt;]</a>): those vehicles cross the
+          line even on red and do not slow down on yellow. They still respect the vehicle ahead, the stops, the halts
+          and their <a href="#exit">exit queue</a>. Another type with the same <code>lane</code> but without
+          <code>exclusive</code> does obey the light, and whoever is behind it waits for it. Since nobody else enters an
+          exclusive lane, those waiting on red in the other lanes cannot move into it. The lane name says «sin semáforo»
+          (no light) in the plots and the video; in the video its light is always green, and the space-time diagram
+          does not shade its phases.</td>
+        <td>Each lane between 0 and the number of lanes − 1, without repeats, and exclusive to some type.</td></tr>
+      <tr><td><code>position</code></td><td>number</td><td class="num">(the end of the segment)</td>
+        <td>Where the light is, in metres from the start of the segment. Without it (or equal to <code>[road]
+          length</code>) it is the light at the end of the segment; with it, an <a href="#several_lights">intermediate
+          light</a>.</td>
+        <td>Between 0 and <code>[road] length</code>, both excluded, if it is intermediate (and without repeats). A
+          light with <code>enabled = false</code> is not checked: its position can be anything.</td></tr>
+      <tr><td><code>pedestrian</code></td><td>true/false</td><td class="num">false</td>
+        <td>Pedestrian light: green for vehicles while no pedestrians are waiting, and red (<code>red</code>) only for
+          them to cross. It has no cycle or <code>start_phase</code>. See <a href="#pedestrians">Pedestrians</a>.</td>
+        <td>With <code>pedestrian = true</code>, <code>red</code> &gt; 0 and no <code>start_phase</code>.</td></tr>
+      <tr><td><code>pedestrian_crossing</code></td><td>dictionary</td><td class="num">{0.5, 3, 1.5, 1}</td>
+        <td>Pedestrians per minute arriving at the light's queue: <code>{min, max, mean, std}</code>, truncated normal,
+          like the rates of <a href="#demand">[demand]</a>. Only used with <code>pedestrian = true</code>.</td>
+        <td>0 ≤ <code>min</code> ≤ <code>mean</code> ≤ <code>max</code>, <code>std</code> ≥ 0.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="several_lights">Several traffic lights: <code>[[traffic_light]]</code></h3>
+  <p>A street can have more than one traffic light. Instead of the <code>[traffic_light]</code> section, write one
+    <code>[[traffic_light]]</code> section (with double brackets) per light, each with the keys of the table above: its
+    own <code>red</code>, <code>green</code> and <code>yellow</code> phases, its initial phase
+    <code>start_phase</code>, its <code>free_lanes</code>, its <code>enabled</code> and its <code>position</code>.</p>
+  <pre><code>[[traffic_light]]
+position = 70.0          # intermediate light at 70 m
+red = 20.0
+green = 20.0
+yellow = 3.0
+start_phase = "green"    # starts on green
+
+[[traffic_light]]
+position = 140.0
+red = 25.0
+green = 15.0
+start_phase = "red"
+
+[[traffic_light]]         # no position: the one at the end of the segment
+red = 30.0
+green = 30.0
+yellow = 3.0</code></pre>
+  <ul>
+    <li><strong>The one at the end of the segment</strong> is the one without <code>position</code> (or with it equal to
+      <code>length</code>). It is the line where the crossing vehicles and passengers, the flow and the entry and exit
+      queues are measured: the exit queue continues after that point. If no section is at the end, the end of the
+      segment has no light and the line is always open; there can be only one at the end.</li>
+    <li><strong>The intermediate ones</strong> work the same as the one at the end: on red they stop at their line
+      whoever has not crossed it with their front (with <code>decel</code>, they brake earlier), and on yellow vehicles
+      stop if they still can or slow down near it. Each one has its own cycle, and their phases do not have to match
+      (a «green wave» is achieved by tuning <code>start_phase</code> and the durations). The vehicles of the initial
+      condition also respect an intermediate red.</li>
+    <li><code>free_lanes</code> belong to each light: a lane can be free at one and obey another.</li>
+    <li>With <code>[traffic_light]</code> alone (one section), nothing changes. With a single section that has a
+      <code>position</code> smaller than the length, that is the only light and the end of the segment has none.</li>
+    <li>The time plots (flow, queues, emissions) shade the phases of the <strong>last</strong> light, the one at the
+      end or, if there is none, the intermediate one closest to it, and the flow window is one cycle of that light. The
+      space-time diagram marks the phases of each light on its line (yellow and red), and the video draws each light at
+      its position. The header and <code>resumen.txt</code> list the positions, phases and initial phase of all of
+      them.</li>
+    <li><code>traffic-variantes</code> only changes the red/green split of the light at the end of the segment; the
+      intermediate ones keep their phases and position (and if <code>--largos</code> leaves one outside the segment,
+      the scenario is rejected). <code>traffic-emisiones --semaforo si|no|ambos</code> switches all lights on or off
+      at once.</li>
+  </ul>
+</section>
+
+<section id="demand">
+  <h2><code>[demand]</code> Demand</h2>
+  <p class="lead">Arrivals at the start of the segment follow a Poisson process, continuously during the whole run. If
+    there is no room at the entry, vehicles wait in a queue per lane.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>&lt;key&gt;_rate</code></td><td>dictionary</td>
+        <td class="num">car 15<br>bike 4<br>bus 1<br>(fixed)</td>
+        <td>Arrival rate in vehicles per minute of each type defined in <code>[vehicles.&lt;key&gt;]</code>, with the four
+          keys <code>{min, max, mean, std}</code>. The rate is a normal(<code>mean</code>, <code>std</code>) truncated to
+          [<code>min</code>, <code>max</code>] and is drawn again every <code>rate_interval</code> s; within each
+          interval arrivals follow a Poisson process with that rate. With <code>std = 0</code> or <code>min = max</code>
+          the rate is fixed. With everything at 0, that type does not take part. It is mandatory for new types; a plain
+          number (<code>car_rate = 15</code>) is an error.</td>
+        <td>0 ≤ <code>min</code> ≤ <code>mean</code> ≤ <code>max</code>; <code>std</code> ≥ 0; at least one type with a
+          rate &gt; 0.</td></tr>
+      <tr><td><code>rate_interval</code></td><td>number</td><td class="num">60</td>
+        <td>Simulated seconds between draws of the variable rates. Each type draws with its own generator, so changing
+          the rate of one type does not change the arrivals of the others.</td>
+        <td>≥ 0.1 and a multiple of 0.1.</td></tr>
+    </tbody>
+  </table></div>
+  <pre><code>[demand]
+rate_interval = 60.0
+car_rate = {min = 1, max = 20, mean = 15, std = 5}     # between 1 and 20 veh/min, new rate every minute
+bus_rate = {min = 0.25, max = 0.25, mean = 0.25, std = 0}  # fixed: 1 every 4 min</code></pre>
+  <p>In TOML the dictionary is written with <code>=</code> and unquoted numbers: <code>{min = 1, max = 20, mean = 15,
+    std = 5}</code>. Truncation shifts the real mean when <code>mean</code> is close to one end (in the example,
+    13.6 veh/min instead of 15). The run header and <code>resumen.txt</code> show that real mean in the line «Demanda
+    variable» (variable demand), and the plot legend uses it as the type's rate. «Llegadas (veh/min)» (arrivals) in the
+    summary is the observed rate.</p>
+  <div class="note"><p>If the total demand exceeds the capacity of the light, the entry queue grows during the whole
+    run. The summary shows it in «En cola de entrada al final» (vehicles waiting at the end) and in «T. medio en cola de
+    entrada (s)»: the mean wait, from when the vehicle arrives until it enters the segment, of those that have already
+    entered. It does not count those still waiting at the end, so with a queue that keeps growing it underestimates the
+    wait. The travel time starts when entering the segment and does not include this wait.</p></div>
+</section>
+
+<section id="initial">
+  <h2><code>[initial]</code> Initial condition</h2>
+  <p class="lead">By default the segment starts empty and fills up with the demand. With <code>occupancy</code> the
+    lanes already have vehicles at t = 0, so the behaviour with a loaded road can be observed from the start, without
+    waiting for it to fill.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>occupancy</code></td><td>number or list</td><td class="num">0.0</td>
+        <td>Fraction of each lane occupied at the start: the sum of length + <code>gap_stop</code> of its vehicles
+          divided by <code>[road] length</code>. With 1, the lane is a compact queue, with each vehicle at its
+          <code>gap_stop</code> from the one ahead (the model's minimum distance); with 0, empty. A number applies to
+          all lanes; a list gives one value per lane, starting from the right one, and its length must match the other
+          per-lane lists (see <a href="#road">[road]</a>).</td>
+        <td>Each value in [0, 1].</td></tr>
+    </tbody>
+  </table></div>
+  <p>How each lane is filled:</p>
+  <ul>
+    <li>Vehicles are placed until the occupancy is reached. If one does not fit, another one is drawn (e.g. a shorter
+      one), so the lane is as full as requested.</li>
+    <li>The free space is first shared so that each vehicle has its <code>gap_run</code> and starts
+      <strong>moving</strong>; what is left is shared at random. If it is not enough (high occupancy), all are
+      compressed equally and start <strong>stopped</strong>, like a traffic jam: they start with their reaction time
+      when room opens up ahead, and the queue stretches out. As a reference, a lane of cars (4.5 m,
+      <code>gap_stop</code> 1, <code>gap_run</code> 4) starts moving up to an occupancy of ~0.65.</li>
+    <li>If the light starts on red, the first ones form the queue at the stop line.</li>
+    <li>The type of each vehicle is drawn in proportion to its rate in <a href="#demand">[demand]</a>, among the types
+      that can use that lane. Exclusive and fixed lanes are respected, so an exclusive bus lane fills up only with
+      buses. It is best to give it a low occupancy with a list, e.g. <code>[0.2, 0.6, 0.6, 0.05]</code>.</li>
+    <li>Passengers, goods (<code>cargo_prob</code>) and length are drawn as for arrivals. Buses that start past their
+      stop do not stop there.</li>
+    <li>They use their own random generator: the demand arrivals are the same with or without an initial condition, and
+      with 0 the run is identical to that of an empty segment.</li>
+  </ul>
+  <div class="note"><p>Initial vehicles count in the traffic, in the crossings and in the crossing passengers, but not as
+    demand arrivals («Llegadas (veh/min)»). They do not count in the mean travel time either, because they did not
+    travel the whole segment. <code>resumen.txt</code> shows them in the row «En el tramo al inicio» (in the segment at
+    the start), and the header gives the occupancy of each lane.</p></div>
+</section>
+
+<section id="exit">
+  <h2><code>[exit]</code> Exit queue</h2>
+  <p class="lead">After the light each lane flows into an exit queue (the street ahead) that accepts a limited number of
+    vehicles per minute and is <code>storage</code> m long. If more cross the line than it accepts, the queue fills up,
+    the line of that lane closes even on green and the lane saturates: the queue of stopped vehicles grows backwards
+    and fewer vehicles cross.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>capacity</code></td><td>number or list</td><td class="num">0</td>
+        <td>Vehicles per minute accepted by the exit queue of each lane; 0 = no exit queue (crossing the line is enough,
+          as before). A number applies to all lanes; a list gives one value per lane, starting from the right one, and
+          its length must match the other per-lane lists (see <a href="#road">[road]</a>), e.g.
+          <code>[0, 12, 15, 0]</code>.</td>
+        <td>Each value ≥ 0.</td></tr>
+      <tr><td><code>storage</code></td><td>number or list</td><td class="num">60</td>
+        <td>Length in metres of the exit queue of each lane. Each vehicle takes up its length plus its
+          <code>gap_stop</code> in it (a 4.5 m car, 5.5 m; a 1.8 m bike, 2.3 m), so 60 m are ~11 cars. Whoever crosses
+          the line enters it and leaves at a rate of <code>capacity</code>, in order of arrival. If the next vehicle
+          does not fit in the free metres, the line of that lane closes for it as on red; a bike may fit where a car no
+          longer does. An empty queue accepts anyone, even if it is shorter than the vehicle.</td>
+        <td>Each value &gt; 0 m.</td></tr>
+    </tbody>
+  </table></div>
+  <p>How it works:</p>
+  <ul>
+    <li>What counts is the lane in which the vehicle crosses the line (the origin lane, if it is changing lanes). A
+      vehicle changing towards a lane whose exit queue has no room for it cannot cross either.</li>
+    <li>Those waiting at the closed line stop at it and, when there is room for them, start with their reaction time,
+      as when the light turns green. With <code>decel</code>, the closed line is respected in advance just like
+      red.</li>
+    <li>The exit queue empties continuously: at 12 veh/min one vehicle leaves every 5 s. With no vehicles waiting it
+      does not store up departures for later.</li>
+    <li>The plot has the panel «Vehículos que cruzan el semáforo por carril (ventana de un ciclo) contra la capacidad de
+      su cola de salida» (vehicles crossing the light per lane against the capacity of their exit queue): the demand at
+      the line of each lane and its exit capacity as a dotted line. If the demand touches the capacity, the exit is the
+      limiting factor.</li>
+    <li>Below, the row «Cola de entrada al tramo por carril» | «Cola de salida después del semáforo por carril» (entry queue | exit queue, per lane) compares
+      what is waiting to enter the segment (in vehicles) with what has already crossed and is waiting to leave (in
+      occupied m); the exit length is a dotted line. They are two panels with their own scale because the entry queue
+      can grow without limit and the exit queue cannot exceed <code>storage</code>. With the exit saturated, the exit
+      queue stays stuck at its limit and the entry queue grows: saturation propagates backwards to the entry of the
+      segment. Without an exit queue, the right panel says so.</li>
+    <li><code>resumen.txt</code> shows the line «Cruzan el semáforo por carril (veh/min)» (crossing the light per lane)
+      and, with an exit queue, «Línea cerrada por la cola de salida (% del tiempo)» (line closed by the exit queue): the
+      fraction of time in which the next vehicle of the lane did not fit. <code>series.csv</code> adds the columns
+      <code>cruzan_veh_min_carril&lt;N&gt;</code>, <code>cola_entrada_veh_carril&lt;N&gt;</code> and, with an exit
+      queue, <code>cola_salida_m_carril&lt;N&gt;</code> (occupied m).</li>
+    <li>In the video, the «salida» (exit) column to the right of the light shows the exit queue of each lane that has
+      one as «occupied m/length» (e.g. <code>33/55 m</code>), in red when the next vehicle does not fit and the line of
+      that lane is closed even though the light is green.</li>
+  </ul>
+  <p>Example (with the Insurgentes configuration on a 100 m segment): with <code>capacity = [0, 6, 8, 0]</code> and
+    <code>storage = 55</code> (10 cars) lanes 1 and 2 let through 6.1 and 8.1 veh/min, stuck at their capacity, their
+    line is closed by the exit queue 23 % and 16 % of the time, and the crossing cars drop from 667 to 496. With
+    <code>[0, 12, 15, 0]</code> the exit never fills up: only 8.3 and 10.6 veh/min go through those lanes, so the light
+    is still the limiting factor.</p>
+</section>
+
+<section id="speed_bump">
+  <h2><code>[speed_bump]</code> Speed bump</h2>
+  <p class="lead">One or more speed bumps across one or more lanes. While a vehicle is on one (from when its front
+    reaches the bump until its rear has passed it) it does not exceed the <code>speed_bump_kmh</code> of its type (see
+    <a href="#vehicles">[vehicles.&lt;key&gt;]</a>); types without it go over without braking. With a single bump the
+    <code>[speed_bump]</code> section is enough; for several, one <code>[[speed_bump]]</code> section (double
+    brackets) per bump, each with the keys of the table and independent of the others.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>position</code></td><td>number</td><td class="num">(no bump)</td>
+        <td>Where the bump is, in metres from the start of the segment (the light is at <code>length</code>). One number
+          per bump; for several, one <code>[[speed_bump]]</code> section each. Without the section there is no bump; in
+          <code>[[speed_bump]]</code> it is mandatory.</td>
+        <td>Between 0 and <code>[road] length</code>, both excluded, and without repeats between bumps.</td></tr>
+      <tr><td><code>lanes</code></td><td>list of integers</td><td class="num">(all)</td>
+        <td>Lanes where it is installed, starting from the right one (lane 0), e.g. <code>[1, 2]</code>. Without it, in
+          all lanes.</td>
+        <td>Each lane between 0 and the number of lanes − 1, without repeats; requires <code>position</code>.</td></tr>
+      <tr><td><code>pedestrian</code></td><td>true/false</td><td class="num">false</td>
+        <td>Each bump is also a pedestrian crossing: pedestrians appear and cross, and the vehicles in its
+          <code>lanes</code> stop completely while one is crossing. See <a href="#pedestrians">Pedestrians</a>.</td>
+        <td>Requires <code>position</code>.</td></tr>
+      <tr><td><code>pedestrian_crossing</code></td><td>dictionary</td><td class="num">{0.5, 3, 1.5, 1}</td>
+        <td>Pedestrians per minute arriving at each crossing: <code>{min, max, mean, std}</code>, truncated normal drawn
+          again every <code>[demand] rate_interval</code>. Each bump draws its own pedestrians.</td>
+        <td>0 ≤ <code>min</code> ≤ <code>mean</code> ≤ <code>max</code>, <code>std</code> ≥ 0.</td></tr>
+      <tr><td><code>pedestrian_time</code></td><td>number</td><td class="num">10.0</td>
+        <td>Seconds each pedestrian takes to cross.</td>
+        <td>≥ 0.1, multiple of 0.1.</td></tr>
+    </tbody>
+  </table></div>
+  <p>How it works:</p>
+  <ul>
+    <li>Without <code>decel</code>, the vehicle drops at once to the bump speed in the step in which it would reach it
+      and returns to its speed as soon as it has fully passed it, like the other instantaneous changes of the
+      model.</li>
+    <li>With <code>decel</code> it brakes earlier, without exceeding <code>decel</code>, to reach the bump at its speed,
+      and then accelerates at most at <code>accel</code>. Whoever comes behind treats it like any slower leader.</li>
+    <li>A vehicle changing lanes respects the bump if it is in its origin or destination lane. Whoever is behind one
+      braking for the bump can move to a lane without a bump if it pays off.</li>
+    <li>With several bumps, each one is handled separately: the vehicle brakes before each, recovers speed between
+      them (if the distance allows; with very close bumps it barely accelerates) and goes over each at most at its
+      <code>speed_bump_kmh</code>. Each bump adds its own braking and start-up to the
+      <a href="#emissions">emissions</a> and the fuel.</li>
+    <li>Bumps are independent: each has its own <code>lanes</code> and, if it is a pedestrian crossing, its
+      <code>pedestrian_crossing</code> and <code>pedestrian_time</code> and its own pedestrians.</li>
+    <li>The run header gives the positions, the lanes and the speed of each type; in the video each bump is a striped
+      band and in the space-time diagram, a «tope» line on its lanes.</li>
+    <li><code>position = [35, 70]</code> (the old format) still loads with a warning: each position is a bump with the
+      same other keys. Change it to one <code>[[speed_bump]]</code> section per bump.</li>
+  </ul>
+  <pre><code>[[speed_bump]]
+position = 35.0      # m from the start of the segment (a number)
+lanes = [1, 2]       # without it, all lanes
+
+[[speed_bump]]
+position = 70.0      # another bump, with its own configuration
+pedestrian = true    # pedestrian crossing (see Pedestrians)
+
+[vehicles.car]
+speed_bump_kmh = 10.0
+[vehicles.motorbike]
+speed_bump_kmh = 15.0</code></pre>
+</section>
+
+<section id="pedestrians">
+  <h2>Pedestrians: <code>pedestrian</code></h2>
+  <p class="lead">A speed bump (<a href="#speed_bump">[[speed_bump]]</a>) or a traffic light (<a href="#traffic_light">[[traffic_light]]</a>)
+    with <code>pedestrian = true</code> lets pedestrians cross. Pedestrians appear at random and do not depend on the
+    vehicles: <code>pedestrian_crossing</code> is their random variable, in pedestrians per minute, with the same format
+    as the rates of <a href="#demand">[demand]</a> (normal(<code>mean</code>, <code>std</code>) truncated to
+    [<code>min</code>, <code>max</code>], drawn again every <code>rate_interval</code>; within the interval arrivals are
+    Poisson). The whole schedule of a replica is computed when it is created, with its own generators: enabling
+    pedestrians does not change the vehicle arrivals or their draws, so the comparison with the same seed still
+    holds.</p>
+
+  <h3>Pedestrian crossing at a speed bump</h3>
+  <ul>
+    <li>Each pedestrian waits 3 s at the kerb (yellow phase: vehicles see them) and crosses in
+      <code>pedestrian_time</code> s (red phase). The crossing is closed <strong>while someone is crossing</strong>:
+      whoever arrives during the crossing extends it, so several pedestrians in a row keep it closed for longer.</li>
+    <li>On yellow, whoever can still brake at their <code>decel</code> stops with the front at the bump; whoever can no
+      longer do so goes through (the same rule as a light's yellow). Types without <code>decel</code> stop
+      dead.</li>
+    <li>On red <strong>all</strong> types with their front before the bump stop, even those without
+      <code>speed_bump_kmh</code>, and only in the bump's <code>lanes</code>. When the crossing ends they start with
+      their usual reaction time ([behavior] <code>reaction</code>).</li>
+    <li>With several bumps, each one ([[speed_bump]]) has its own configuration and its own pedestrians.</li>
+  </ul>
+
+  <h3>Pedestrian light</h3>
+  <ul>
+    <li>It is green for vehicles while nobody is waiting. Arriving pedestrians queue; with someone in the queue the
+      light turns yellow (<code>yellow</code>), then red (<code>red</code>: the time it takes everyone waiting at the
+      start of the red to cross) and back to green. Those arriving during the red wait for the next crossing.</li>
+    <li><strong>It does not trigger immediately.</strong> Before turning yellow, the minimum green <code>green</code>
+      must have passed since the previous crossing (with <code>green = 0</code>, none), and, if there is another
+      fixed-cycle light before it (towards the entry of the segment), that one must be <strong>red</strong>. Without a
+      previous light it only waits for the yellow. Other pedestrian lights do not count as previous, because they have
+      no cycle.</li>
+    <li>It can be intermediate or the one at the end of the segment. It has no <code>start_phase</code> (it always
+      starts green) and it is not the reference light of the plots: it defines neither the flow window nor the phase
+      shading, which follow the last fixed-cycle light.</li>
+    <li><code>free_lanes</code> works the same as on a normal light.</li>
+  </ul>
+  <pre><code>[[traffic_light]]
+position = 150.0          # fixed-cycle light
+red = 30.0
+green = 30.0
+yellow = 3.0
+start_phase = "red"
+
+[[traffic_light]]
+position = 400.0          # pedestrian: waits for the red of the one at 150 m
+pedestrian = true
+pedestrian_crossing = {min = 1, max = 4, mean = 2, std = 1}   # pedestrians/min
+red = 15.0                # s the crossing lasts (red for vehicles)
+green = 20.0              # minimum green between two crossings
+yellow = 3.0
+
+[speed_bump]
+position = 60.0           # pedestrian crossing at the bump
+pedestrian = true
+pedestrian_time = 8.0     # s per pedestrian</code></pre>
+
+  <h3>What the run shows</h3>
+  <ul>
+    <li>The header describes the pedestrian crossing or the pedestrian light and which light it coordinates with.
+      <code>resumen.txt</code> has a «Peatones» (pedestrians) block per point: how many crossed, how many closures, the
+      mean wait, and the seconds and percentage of time it was red for vehicles (mean across replicas).</li>
+    <li>The space-time diagram marks the yellow and red of each pedestrian crossing and light on its line, with the
+      phases of the recorded replica (they change with the pedestrians of each replica). The video paints the crossing
+      in the colour of its phase.</li>
+    <li>Crossings add stops and starts, so they raise the travel time, the <a href="#emissions">emissions</a> and the
+      <a href="#fuel">fuel</a>. <code>traffic-emisiones</code> keeps the bump's pedestrians in every scenario with a
+      bump and has none in the «sin tope» (no bump) scenario. <code>traffic-variantes</code> replaces the light at the
+      end of the segment with a fixed-cycle one, even if it is a pedestrian light.</li>
+  </ul>
+
+  <div class="note"><p><strong>Limitations.</strong> The pedestrian is exogenous: they cross even if a vehicle is
+    already on the crossing (the model does not make them wait), and whoever goes through during the yellow does not
+    see them. All pedestrians take the same time to cross. There is no lane or sidewalk: only the time the crossing is
+    closed.</p></div>
+</section>
+
+<section id="bottleneck">
+  <h2><code>[bottleneck]</code> Bottlenecks</h2>
+  <p class="lead">Situations that reduce the capacity of the road. The first option is <strong>halts</strong>: some
+    vehicles stop for a while in their lane (a breakdown, someone getting on or off, a delivery). Those coming behind
+    treat them like any stopped vehicle: they compress behind it or, if the lane next to it allows, change lanes to
+    overtake it (see <code>leader_slowdown</code> in <a href="#behavior">[behavior]</a>). Nothing else needs to be
+    configured for that effect.</p>
+  <p>This section defines <strong>where</strong> the halts happen. <strong>Who</strong> stops, with what probability and
+    for how long is defined in each vehicle type, with <code>bottleneck_prob</code>, <code>bottleneck_time_mean</code>
+    and <code>bottleneck_time_std</code> in <a href="#vehicles">[vehicles.&lt;key&gt;]</a>. A type without
+    <code>bottleneck_prob</code> does not stop. With no type with a probability &gt; 0 there are no halts and the run is
+    identical to one without this section.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>stop_lanes</code></td><td>list of integers</td><td class="num">(all)</td>
+        <td>Lanes where the halts happen (0 = right). A vehicle only stops if, when it reaches its point, it is in one of
+          these lanes and not changing lanes; otherwise it keeps going without stopping.</td>
+        <td>Between 0 and the number of lanes − 1.</td></tr>
+      <tr><td><code>stop_zone</code></td><td>list</td><td class="num">(the whole segment)</td>
+        <td>[start, end] in m from the start of the segment: zone where the front of the vehicle can be when it stops.
+          The point of each halt is drawn uniformly in it when the vehicle enters. Without it, the whole segment.</td>
+        <td>0 ≤ start &lt; end ≤ <code>[road] length</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <pre><code>[bottleneck]
+stop_lanes = [1, 2]               # halts happen in lanes 1 and 2 …
+stop_zone = [100.0, 400.0]        # … between 100 and 400 m along the segment
+
+[vehicles.car]
+bottleneck_prob = 0.05            # 5 % of cars stop once …
+bottleneck_time_mean = 30.0       # … for about 30 ± 10 s
+bottleneck_time_std = 10.0
+
+[vehicles.carga]                  # goods vehicles stop more often …
+bottleneck_prob = 0.6
+bottleneck_time_mean = 120.0      # … and for longer
+bottleneck_time_std = 30.0</code></pre>
+  <p>Vehicles of the initial condition (<a href="#initial">[initial]</a>) can also stop. <code>resumen.txt</code> adds
+    the rows «Detenciones (bottleneck)», with the halts per replica of each type, and «T. medio detenido (s)» (mean
+    time halted), and the header describes the configuration of each type. In the video, a vehicle halted by a
+    bottleneck is painted black while the halt lasts and then gets its colour back. The effect on the others shows in
+    «Cambios de carril/veh» (lane changes per vehicle) and in the travel time.</p>
+  <div class="note"><p>In earlier versions, <code>stop_prob</code>, <code>stop_time_mean</code>,
+    <code>stop_time_std</code> and <code>stop_types</code> went in this section. They are no longer accepted: the run
+    stops saying that they go in each <code>[vehicles.&lt;key&gt;]</code> as <code>bottleneck_prob</code>,
+    <code>bottleneck_time_mean</code> and <code>bottleneck_time_std</code>.</p></div>
+</section>
+
+<section id="execution">
+  <h2><code>[execution]</code> Execution</h2>
+  <p class="lead">Duration, resolution of the series and parallelism. The engine always advances in steps of 0.1
+    simulated s.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>run</code></td><td>number</td><td class="num">10.0</td>
+        <td>Process time in seconds. The simulated duration is <code>run × time_scale</code>.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>time_scale</code></td><td>number</td><td class="num">10.0</td>
+        <td>Simulated seconds per process second. With 10, <code>run = 10</code> is 100 simulated s (1000 steps). The
+          program runs as fast as it can; it is not synchronised with the clock.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>sample</code></td><td>number</td><td class="num">1.0</td>
+        <td>Simulated seconds between samples of the plot and CSV series. <a href="#sample">See details</a>.</td>
+        <td>&gt; 0, multiple of 0.1; the run must cover at least 2 samples.</td></tr>
+      <tr><td><code>replicas</code></td><td>integer</td><td class="num">8</td>
+        <td>Number of independent Monte Carlo replicas. <a href="#replicas">See details</a>.</td><td>≥ 1.</td></tr>
+      <tr><td><code>workers</code></td><td>integer</td><td class="num">0</td>
+        <td>Parallel processes. With 0 it is automatic: the smaller of replicas and available CPUs. It does not change
+          the results, only the speed.</td><td>≥ 0.</td></tr>
+      <tr><td><code>seed</code></td><td>integer</td><td class="num">(random)</td>
+        <td>Base seed. If missing, one is generated, printed and written into the copy of the configuration. From it
+          come the seeds of the replicas and, in each replica, one random generator per process and per type
+          (arrivals, passengers, reactions, entry lane, stop) plus one for lane changes: with the same seed, changing
+          one type does not alter the draws of the others. Copies made before version 0.2.0 give different numbers when
+          replicated.</td>
+        <td>≥ 0.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The simulation step is compiled with numba (<code>src/trafico/kernel.py</code>). The first run after installing or
+    after changing that file compiles it, ~1 min without showing progress; numba saves it in
+    <code>src/trafico/__pycache__</code> and later runs load it in under 1 s. With several processes, the main one
+    compiles (or loads) it before spreading the replicas, so each process only loads it. To debug the step with
+    <code>pdb</code> or <code>print</code>, <code>NUMBA_DISABLE_JIT=1 uv run traffic …</code> runs the same code as
+    pure Python: it gives the same results, about 100 times slower.</p>
+</section>
+
+<section id="output">
+  <h2><code>[output]</code> Output</h2>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>dir</code></td><td>text</td><td class="num">"resultados"</td>
+        <td>Folder where the folders of each run are created. A relative path is taken from the project root.</td></tr>
+      <tr><td><code>name</code></td><td>text</td><td class="num">""</td>
+        <td>Suffix of the run folder. Priority: the name given on the command line, then this key, then the name of the
+          folder read (or <code>corrida</code>). Only letters, digits, <code>.</code>, <code>_</code> and
+          <code>-</code> are kept.</td></tr>
+      <tr><td><code>series_csv</code></td><td>boolean</td><td class="num">true</td>
+        <td>Exports the series (mean and σ) to <code>series.csv</code>: those of each vehicle type and those of each
+          lane (saturation and mean speed). It used to be called <code>csv</code>.</td></tr>
+      <tr><td><code>emisiones_csv</code></td><td>boolean</td><td class="num">true</td>
+        <td>Exports the emissions along the segment (g/(m·h) per pollutant, lane and 5 m interval) to
+          <code>emisiones_posicion.csv</code>, if some participating type emits. It is independent of
+          <code>emissions_plot</code>: the figure can be drawn without the CSV or the other way round.</td></tr>
+      <tr><td><code>mobility_plot</code></td><td>boolean</td><td class="num">true</td>
+        <td>Generates <code>movilidad_pasajeros.png</code>, the main plot of the run. With <code>false</code> it is not
+          drawn; the summary, the CSV and the other outputs do not change.</td></tr>
+      <tr><td><code>passengers_plot</code></td><td>boolean</td><td class="num">true</td>
+        <td>Generates <code>distribucion_pasajeros.png</code>, the percentage of vehicles with each number of passengers
+          (only if some participating type carries passengers). With <code>false</code> it is not drawn; the rest does
+          not change.</td></tr>
+      <tr><td><code>emissions_plot</code></td><td>boolean</td><td class="num">true</td>
+        <td>Generates <code>emisiones_posicion.png</code>, the emissions along the segment (only if some participating
+          type emits). With <code>false</code> the figure is not drawn (the CSV is decided by
+          <code>emisiones_csv</code>).</td></tr>
+      <tr><td><code>progress</code></td><td>boolean</td><td class="num">true</td>
+        <td>Shows the replica progress bar.</td></tr>
+      <tr><td><code>animation</code></td><td>boolean</td><td class="num">false</td>
+        <td>When the run finishes, also generates the space-time diagram and the movement video with the window of
+          <a href="#animation">[animation]</a>. Without running again, the same is obtained with
+          <code>uv run traffic-ver &lt;folder&gt;</code>.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="vehicles">
+  <h2><code>[vehicles.&lt;key&gt;]</code> Vehicle types</h2>
+  <p class="lead">Each section defines a type. <code>car</code>, <code>bike</code> and <code>bus</code> always exist and
+    take default values for whatever is not given. Any other key creates a new type without touching the code. Up to 8
+    types in total are allowed.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>speed_kmh</code></td><td>dictionary</td><td>Maximum speed the vehicle can reach, in km/h:
+          <code>{min, max, mean, std}</code>. Each vehicle draws its own when it arrives, from a normal(<code>mean</code>,
+          <code>std</code>) truncated to [<code>min</code>, <code>max</code>]. With <code>std = 0</code>, all go at
+          <code>mean</code>. It drives at that speed unless limited by the lane (<code>max_line_speed</code>), a lane
+          change or the vehicle ahead. A car slower than the limit is a slow leader for those behind, who can overtake
+          it. The four keys are mandatory. Examples: <code>speed_kmh = {min = 80, max = 80, mean = 80, std = 0}</code>
+          (fixed) and <code>speed_kmh = {min = 60, max = 90, mean = 75, std = 8}</code>.</td>
+        <td>0 &lt; min ≤ mean ≤ max; std ≥ 0.</td></tr>
+      <tr><td><code>length</code></td><td>dictionary</td><td>Length of the vehicle in metres:
+          <code>{min, max, mean, std}</code>. Each vehicle draws its length from a normal(<code>mean</code>,
+          <code>std</code>) truncated to [<code>min</code>, <code>max</code>]. With <code>std = 0</code>, all measure
+          <code>mean</code>. The cut shifts the observed mean: with mean 10, σ 2 and minimum 8, the mean length is
+          ~10.6 m. The maximum is what counts to validate <code>[road] length</code> and <code>stop_position</code>. The
+          four keys are mandatory. Examples: <code>length = {min = 4.5, max = 4.5, mean = 4.5, std = 0}</code> (fixed)
+          and <code>length = {min = 8, max = 16, mean = 10, std = 2}</code>.</td>
+        <td>0 &lt; min ≤ mean ≤ max; std ≥ 0.</td></tr>
+      <tr><td><code>gap_run</code></td><td>number</td><td>Distance to the vehicle ahead when it is moving (m).</td>
+        <td>≥ <code>gap_stop</code>.</td></tr>
+      <tr><td><code>gap_stop</code></td><td>number</td><td>Distance to the vehicle ahead when it is stopped (m). Being
+          smaller than <code>gap_run</code> produces the <strong>compression</strong> of the queue.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>pax</code></td><td>dictionary</td><td>Passengers per vehicle: <code>{min, max, mean, std}</code>, with
+          integer <code>min</code> and <code>max</code>. Each vehicle draws a normal(<code>mean</code>,
+          <code>std</code>) rounded and truncated to [<code>min</code>, <code>max</code>]. Truncation can shift the
+          observed mean: for cars, μ = 1.5 with minimum 1 gives ~1.8. The four keys are mandatory. With
+          <code>cargo_prob = 1</code>, <code>pax</code> is optional because the type never carries passengers. Example:
+          <code>pax = {min = 1, max = 6, mean = 1.5, std = 0.8}</code>.</td>
+        <td>1 ≤ min ≤ max ≤ 255; min ≤ mean ≤ max; std ≥ 0.</td></tr>
+      <tr><td><code>name</code></td><td>text</td><td>Label in the plot, the summary and the CSV. Optional; by default, the
+          key.</td><td>Not empty and different between types.</td></tr>
+      <tr><td><code>lane_change</code></td><td>boolean</td><td>Whether the type can change lanes. Optional; default
+          <code>true</code> for new types.</td><td>—</td></tr>
+      <tr><td><code>lane</code></td><td>integer</td><td>Fixed lane of a type that does not change lanes: 0 = right, 1 = the
+          next one to the left, … Optional; without it, the type uses the rightmost lane that is not exclusive to another
+          type. It is used, for example, to separate bikes (<code>lane = 0</code>) and buses
+          (<code>lane = 1</code>).</td>
+        <td>Only with <code>lane_change = false</code>; between 0 and the number of lanes − 1.</td></tr>
+      <tr><td><code>exclusive</code></td><td>boolean</td><td>Reserves the lane <code>lane</code> for the types that have
+          it as fixed: the others (cars, motorbikes, types without <code>lane</code>) neither enter through it nor move
+          into it. Without <code>exclusive</code>, the fixed lane is shared with those that change lanes. Optional;
+          default <code>false</code>. The plot marks these lanes as "solo &lt;type&gt;" (only &lt;type&gt;).</td>
+        <td>Requires <code>lane</code>; each participating type without a fixed lane must still have at least one free
+          lane.</td></tr>
+      <tr><td><code>abreast</code></td><td>integer</td><td>When stopped, how many vehicles of this type fit side by side in
+          a lane (e.g. <code>2</code> for bikes). Whoever arrives moving behind a stopped one of the same type stops next
+          to it, with the fronts aligned, while the row has room; the next one queues behind. When starting they leave
+          one after the other, with their reaction and their moving gap. A row counts as a single place in the lane
+          saturation and in passengers per metre; in the video they are drawn next to each other. Optional; default
+          <code>1</code> (single file).</td>
+        <td>Between 1 and 4.</td></tr>
+      <tr><td><code>pass_in_lane</code></td><td>true/false</td><td>Overtaking within the lane (e.g. bikes): while moving,
+          a vehicle with a higher maximum speed than the one ahead of the same type (both capped by the lane limit)
+          passes it on one side without changing lanes. While overtaking it only respects the vehicle ahead of the one
+          being overtaken. The overtaken one does not brake for the one passing it while they are side by side or while
+          it pulls away, and cannot overtake it back. Never more than two go side by side: a vehicle that already has
+          another one beside it, that is overtaking, or that is about to stop next to another, is not overtaken. If the
+          vehicle ahead slows both down, they stay side by side like a stopped row. There is only overtaking if
+          <code>speed_kmh</code> varies (<code>std &gt; 0</code>). <code>resumen.txt</code> shows the row «Rebases en el
+          carril/veh» (in-lane overtakes per vehicle) and in the video they appear side by side while overtaking. It
+          costs about a quarter more process time. Optional; default <code>false</code>.</td>
+        <td>Requires <code>abreast</code> ≥ 2.</td></tr>
+      <tr><td><code>stop_position</code></td><td>number</td><td>Stop before the light for passengers to get off and on:
+          position, in m from the start of the segment, where the vehicle stops with its front. Optional; without it
+          there is no stop. Whoever comes behind in the same lane waits and compresses; another vehicle of the same type
+          queues and then makes its own stop. When done it starts with no additional reaction time.</td>
+        <td>Between the vehicle length and <code>[road] length</code>.</td></tr>
+      <tr><td><code>stop_time_mean</code>, <code>stop_time_std</code></td><td>number</td><td>Mean and standard deviation
+          (s) of the time stopped at the stop: normal truncated to ≥ 0 (with a large σ relative to the mean, the real mean
+          goes up; the free-flow time in the summary uses the truncated mean). Default 20 and 5. They only apply with
+          <code>stop_position</code>.</td>
+        <td>≥ 0; mean + 6σ ≤ 3600 s.</td></tr>
+      <tr><td><code>overtake</code></td><td>true/false</td><td>Aggressive overtaking (e.g. motorbikes): the leader counts
+          as slow by its real speed in the last step (a car manoeuvring or slowed by its queue), not only by its nominal
+          one, and the vehicle even moves down to a lane with a lower limit if it advances more there than behind it.
+          Like everyone, it only changes lanes behind a leader going at least <code>leader_slowdown</code> below the lane
+          limit. Optional; default <code>false</code>.</td>
+        <td>Only with <code>lane_change = true</code>.</td></tr>
+      <tr><td><code>cargo_prob</code></td><td>number</td><td>Probability that a vehicle of the type carries goods instead of
+          passengers (e.g. delivery motorbikes). It is drawn for each arriving vehicle. The vehicle uses the road like the
+          others: it counts in arrivals, crossings, travel time, queues, saturation and lane changes. However, it does not
+          count in any passenger metric: crossing passengers, flow, pax·km/h, passengers per vehicle, pax/m and the
+          passenger distribution. With 1, the type only carries goods and does not appear in the passenger plots, except
+          in the box of vehicles that crossed. Optional; default 0.</td>
+        <td>Between 0 and 1.</td></tr>
+      <tr><td><code>bottleneck_prob</code>, <code>bottleneck_time_mean</code>, <code>bottleneck_time_std</code></td>
+        <td>number</td><td>Halts of <a href="#bottleneck">[bottleneck]</a> for the type: probability that each vehicle
+          stops once in the segment and duration of the halt (mean and σ, in s; normal truncated to ≥ 0 and rounded to
+          0.1 s). They allow, e.g., a goods vehicle to stop more often and for longer than a car. The lanes and zone where
+          they happen are those of <code>[bottleneck]</code>. They are named differently from
+          <code>stop_time_mean</code>/<code>stop_time_std</code> in this table, which are the duration of the type's own
+          stop (e.g. the bus stop). Optional; default 0 (does not stop), 30 s and 0 s.</td>
+        <td>Probability between 0 and 1; mean and σ ≥ 0, mean + 6σ ≤ 3600 s; a probability &gt; 0 is not allowed with
+          <code>stop_position</code>.</td></tr>
+      <tr><td><code>accel</code>, <code>decel</code></td><td>number</td>
+        <td>Gradual acceleration and braking (m/s²). Without them, the vehicle reaches its speed immediately and stops
+          dead. With them:
+          <ul>
+            <li>The speed rises by at most <code>accel</code> per second towards the desired one (maximum, lane limit,
+              manoeuvre) and drops by at most <code>decel</code> if the desired one drops. When starting after the
+              reaction it starts from 0: the queue discharges more spaced out and the first one loses time when
+              starting.</li>
+            <li>It brakes in advance: it does not exceed the speed at which it can still stop braking at
+              <code>decel</code> (with one reaction step) behind the one ahead, counting what that one travels while
+              stopping, nor before the line on red or a stop (Gipps' rule).</li>
+            <li>Behind a moving leader, the gap goes from <code>gap_stop</code> (almost stopped) to <code>gap_run</code>
+              (at its desired speed), so the queue starts without sudden braking.</li>
+            <li>On yellow it stops if it can still do so braking at <code>decel</code>; otherwise, it crosses without
+              slowing down (<code>yellow_speed_factor</code> does not apply).</li>
+            <li>It only changes lanes (or overtakes within the lane) if neither it nor the follower in the destination
+              lane has to brake harder than its <code>decel</code>.</li>
+          </ul>
+          The space to the one ahead is still a hard limit: if something appears suddenly (the start of a red without
+          yellow, a vehicle stopping alongside), it brakes harder than <code>decel</code>, but there are never overlaps.
+          Optional; by default, instantaneous. Typical values: car 2.5 / 4.5, motorbike 3 / 5, bus 1.2 / 3.5, bike and
+          goods 1 / 3.</td>
+        <td>In (0, 20].</td></tr>
+      <tr><td><code>time_headway</code></td><td>number</td>
+        <td>Following headway while moving (s). Behind a moving leader, the vehicle keeps
+          <code>gap_stop + time_headway · v</code>, with <code>v</code> its speed (the real one of the previous step with
+          <code>accel</code>/<code>decel</code>; without them, the desired one), instead of <code>gap_run</code>; when
+          entering the segment behind a moving one, that of its desired speed. Behind a stopped leader
+          <code>gap_stop</code> is still enough, and lane changes and in-lane overtaking still use <code>gap_run</code>.
+          Without it, a fixed <code>gap_run</code> (as before), which with gradual dynamics leaves cars ~0.9 s apart at
+          50 km/h. Optional; calibrated for the car: 1.1 s with <code>gap_stop = 2</code> (see
+          <a href="#calibracion">calibration</a>).</td>
+        <td>In (0, 5].</td></tr>
+      <tr><td><code>speed_bump_kmh</code></td><td>number</td>
+        <td>Maximum speed (km/h) at which the type goes over the bump of <a href="#speed_bump">[speed_bump]</a>: it does
+          not exceed it while on it. Optional; without it, it goes over without braking (e.g. bikes). Without a
+          configured bump it has no effect.</td>
+        <td>&gt; 0.</td></tr>
+      <tr><td><code>[vehicles.&lt;key&gt;.emissions]</code></td><td>section</td>
+        <td>Coefficients of the type's emission model (see <a href="#emissions">Emissions</a>): a
+          <a href="#emission-sets">named set</a> (<code>source</code>) and/or hand-written lists. The built-in car and
+          bus come with those of <code>int_panis_2006</code>; writing the section replaces them, and empty the type does
+          not emit. They are only computed if the type has <code>accel</code> and <code>decel</code>.</td>
+        <td>Lists of 6 numbers; <code>source</code> from <code>int_panis_2006</code> or
+          <code>sedema_cdmx_2018</code>.</td></tr>
+      <tr><td><code>fuel</code></td><td>text</td>
+        <td>Fuel of the type: <code>"gasolina"</code> (petrol), <code>"diesel"</code> or <code>"glp"</code> (LPG). The
+          consumption comes from its CO2 (see <a href="#fuel">[fuel]</a>): without CO2 coefficients it is not computed.
+          Optional; by default, petrol for the car, diesel for the bus and none for the others.</td>
+        <td>One of the three.</td></tr>
+      <tr><td><code>mass_kg</code></td><td>number</td>
+        <td>Vehicle mass (kg). Only used in the physical reference curve of the efficiency at constant speed; it does not
+          change the simulation or the emissions. Optional; default 1250 for the car and 12000 for the bus.</td>
+        <td>&gt; 0.</td></tr>
+      <tr><td><code>lookahead</code>, <code>min_advantage</code>, <code>lane_change_cooldown</code></td><td>number</td>
+        <td>The type's own lane-change thresholds: distance (m) at which a slow leader motivates a change, extra free
+          space (m) that makes it worthwhile and time (s) before changing again. With more favourable values than those
+          of <code>[behavior]</code> the type changes lanes more often. Optional; by default, those of
+          <code>[behavior]</code>.</td>
+        <td>≥ 0; only with <code>lane_change = true</code>.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Example: overtaking motorbikes</h3>
+  <pre><code>[vehicles.motorbike]
+overtake = true             # overtakes by real speed; even moves down to a slower lane and then back up
+lookahead = 50.0            # m (in [behavior], 30)
+min_advantage = 1.0         # m
+lane_change_cooldown = 1.0  # s</code></pre>
+  <p>A vehicle that can change lanes only does so if it has ahead, within <code>lookahead</code>, a vehicle going at
+    least <code>leader_slowdown</code> (25 %) below the lane limit; with nobody ahead it does not change. Then it
+    overtakes through the adjacent lane if that gives it <code>min_advantage</code> m more free space or, otherwise, it
+    moves up to an adjacent lane with a higher limit when there is room. With these values motorbikes change lanes more
+    often than cars. <code>resumen.txt</code> shows it in the row «Cambios de carril/veh», per type.</p>
+
+  <h3>Example: goods and goods vehicles</h3>
+  <pre><code>[demand]
+carga_rate = {min = 1, max = 1, mean = 1, std = 0}
+
+[vehicles.motorbike]
+cargo_prob = 0.3        # 30 % of motorbikes are delivery bikes
+
+[vehicles.carga]        # goods only: no pax needed
+speed_kmh = {min = 40, max = 40, mean = 40, std = 0}
+length = {min = 8, max = 16, mean = 10, std = 2}   # m: mean 10, σ 2, between 8 and 16
+gap_run = 4.0
+gap_stop = 1.5
+cargo_prob = 1.0</code></pre>
+  <p>Vehicles with goods saturate the road without adding passengers. <code>resumen.txt</code> shows the row «Con
+    mercancía (%)» (with goods) with the share of each type's arrivals that carries goods. «Pasajeros por vehículo»
+    (passengers per vehicle) is the mean of those carrying passengers; for a type that only carries goods it shows «—».
+    In the plot legend each type gives its goods percentage. In the video, vehicles with goods are drawn lighter.</p>
+
+  <h3>Values of the built-in types</h3>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>name</th><th>speed_kmh</th><th>length</th><th>gap_run</th><th>gap_stop</th>
+      <th>passengers</th><th>lane_change</th><th>rate</th></tr></thead>
+    <tbody>
+      <tr><td><code>car</code></td><td>auto</td><td class="num">50</td><td class="num">4.5</td><td class="num">3.0</td>
+        <td class="num">1.0</td><td class="num">[1, 6], μ 1.5, σ 1</td><td>true</td><td class="num">15/min</td></tr>
+      <tr><td><code>bike</code></td><td>bici</td><td class="num">15</td><td class="num">1.8</td><td class="num">1.0</td>
+        <td class="num">0.5</td><td class="num">1</td><td>false</td><td class="num">4/min</td></tr>
+      <tr><td><code>bus</code></td><td>autobús</td><td class="num">40</td><td class="num">12.0</td><td class="num">4.0*</td>
+        <td class="num">1.5</td><td class="num">[1, 80], μ 40, σ 10</td><td>false</td><td class="num">1/min</td></tr>
+    </tbody>
+  </table></div>
+  <p class="lead">* Assumption: the original specification does not give the bus's moving gap. <code>speed_kmh</code>
+    is the maximum speed (here, fixed: <code>std = 0</code>); with <code>max_line_speed</code>, the free-flow speed of
+    each type is the lower of it and the limit of the best lane it can use. With variable speed, «T. a flujo libre»
+    (free-flow time) in the summary is the mean of segment length / min(speed, limit) over the distribution, which is
+    larger than the length divided by the mean speed.</p>
+
+  <h3>Adding a new type</h3>
+  <p>A new type must define its maximum speed <code>speed_kmh</code>, the numeric parameters (<code>gap_run</code>,
+    <code>gap_stop</code>), its length <code>length</code>, its passengers <code>pax</code> and its rate in
+    <code>[demand]</code>. If any is missing, the run stops saying which one.</p>
+  <pre><code>[demand]
+motorbike_rate = {min = 5, max = 5, mean = 5, std = 0}
+
+[vehicles.motorbike]
+name = "moto"          # optional
+lane_change = true     # optional
+speed_kmh = {min = 40, max = 40, mean = 40, std = 0}
+length = {min = 2, max = 2, mean = 2, std = 0}
+gap_run = 2.0
+gap_stop = 1.0
+pax = {min = 1, max = 2, mean = 1.2, std = 0.2}</code></pre>
+  <p>The colour of each type in the plot depends on its position: first the built-in ones and then the new ones, in the
+    order of the file.</p>
+</section>
+
+<section id="emissions">
+  <h2>Emissions</h2>
+  <p class="lead">Estimate of CO2, NOx, VOC (volatile organic compounds) and PM (particulate matter) with the
+    instantaneous emission model of Int Panis, Broekx and Liu (2006), <em>Modelling instantaneous traffic emission and
+    the influence of traffic speed limits</em>, Sci. Total Environ. 371:270–285, the same one used by Aimsun. At each
+    step, each vehicle emits <code>E = max(0, f1 + f2·v + f3·v² + f4·a + f5·a² + f6·v·a)</code> g/s, with its speed v
+    (m/s) and its acceleration a (m/s²). It is meant to <strong>compare scenarios</strong> (with and without a bump,
+    with and without a light, more or less demand): the model was fitted with a European fleet from the early 2000s, it
+    does not include CO or cold starts, and its absolute values are an approximation.</p>
+  <p>Each type carries its coefficients in <code>[vehicles.&lt;key&gt;.emissions]</code>, one list
+    <code>[f1, f2, f3, f4, f5, f6]</code> per pollutant (<code>co2</code>, <code>nox</code>, <code>voc</code>,
+    <code>pm</code>). <code>&lt;pollutant&gt;_decel</code> gives those for a &lt; −0.5 m/s² (by default, the same ones).
+    A type without the section, or without <code>accel</code> and <code>decel</code>, does not emit: without gradual
+    dynamics acceleration is instantaneous (from 0 to 50 km/h in one step) and the model does not apply. So that an
+    emergency stop does not blow up the a² term, the acceleration that enters the model is capped to
+    [−<code>decel</code>, <code>accel</code>].</p>
+  <p>Verified coefficients, which the car (petrol) and the bus (PM only) come with by default:</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Type</th><th>Pollutant</th><th>f1</th><th>f2</th><th>f3</th><th>f4</th><th>f5</th><th>f6</th></tr></thead>
+    <tbody>
+      <tr><td>petrol car</td><td>CO2</td><td>5.53e-1</td><td>1.61e-1</td><td>-2.89e-3</td><td>2.66e-1</td><td>5.11e-1</td><td>1.83e-1</td></tr>
+      <tr><td>petrol car</td><td>NOx</td><td>6.19e-4</td><td>8.00e-5</td><td>-4.03e-6</td><td>-4.13e-4</td><td>3.80e-4</td><td>1.77e-4</td></tr>
+      <tr><td>petrol car</td><td>NOx, a &lt; −0.5</td><td>2.17e-4</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+      <tr><td>petrol car</td><td>VOC</td><td>4.47e-3</td><td>7.32e-7</td><td>-2.87e-8</td><td>-3.41e-6</td><td>4.94e-6</td><td>1.66e-6</td></tr>
+      <tr><td>petrol car</td><td>VOC, a &lt; −0.5</td><td>2.63e-3</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+      <tr><td>diesel car</td><td>PM</td><td>0</td><td>3.13e-4</td><td>-1.84e-5</td><td>0</td><td>7.50e-4</td><td>3.78e-4</td></tr>
+      <tr><td>bus</td><td>PM</td><td>2.23e-4</td><td>3.47e-4</td><td>-2.38e-5</td><td>2.08e-3</td><td>1.76e-3</td><td>2.23e-4</td></tr>
+    </tbody>
+  </table></div>
+  <p>Sources: arXiv <a href="https://arxiv.org/abs/2411.15238">2411.15238</a> (table 7) and
+    <a href="https://arxiv.org/abs/1912.05956">1912.05956</a> for the petrol car, and
+    <a href="https://arxiv.org/abs/2008.02405">2008.02405</a> for PM. The CO2 and NOx of the diesel car, the bus and
+    trucks (HGV) are in the original paper, which is not open access: they have to be entered by hand. The model has no
+    motorbikes.</p>
+  <p>Outputs, when some participating type emits:</p>
+  <ul>
+    <li><code>resumen.txt</code>, per type and pollutant: per km travelled, per full trip along the segment and
+      <strong>excess compared with free flow</strong>: how much more it emits than if it travelled the same at constant
+      speed (its maximum within the lane limit). It measures the cost of stops, starts, the bump, the queue and speed
+      changes.</li>
+    <li><code>resumen.txt</code>, «Emisiones al acelerar» (emissions when accelerating): the reference table for 0→20,
+      20→40, 40→60 and 60→80 km/h at each type's <code>accel</code>, with what it would emit at constant speed over the
+      same time and distance. Steps that go past the type's maximum speed are marked with «*»: outside its range, the
+      polynomial can give meaningless values (the bus PM drops to 0 at 70 km/h).</li>
+    <li><code>movilidad_pasajeros.png</code>: a row with CO2 and NOx per minute per type.</li>
+    <li><code>emisiones_posicion.png</code> and <code>.csv</code>: g/(m·h) (mg for those that are not CO2) in 5 m
+      intervals along the segment, per lane, with the bump, the stops and the light marked. It shows where they
+      concentrate: after the bump, when leaving the stop and when starting at the light.</li>
+    <li><code>series.csv</code>: columns <code>emis_&lt;pollutant&gt;_g_min_&lt;type&gt;</code>.</li>
+  </ul>
+  <p>With the petrol car and <code>accel = 2.5</code> m/s², the reference table is as follows (in brackets, at constant
+    speed over the same time and distance):</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Step</th><th>Time</th><th>Distance</th><th>CO2 (g)</th><th>NOx (mg)</th><th>VOC (mg)</th></tr></thead>
+    <tbody>
+      <tr><td>0 → 20 km/h</td><td class="num">2.2 s</td><td class="num">6 m</td><td class="num">13.56 (2.17)</td><td class="num">7.49 (1.80)</td><td class="num">10.01 (9.94)</td></tr>
+      <tr><td>20 → 40 km/h</td><td class="num">2.2 s</td><td class="num">19 m</td><td class="num">20.80 (3.76)</td><td class="num">13.39 (2.24)</td><td class="num">10.07 (9.94)</td></tr>
+      <tr><td>40 → 60 km/h</td><td class="num">2.2 s</td><td class="num">31 m</td><td class="num">27.64 (4.96)</td><td class="num">18.73 (2.12)</td><td class="num">10.12 (9.94)</td></tr>
+      <tr><td>60 → 80 km/h</td><td class="num">2.2 s</td><td class="num">43 m</td><td class="num">34.08 (5.76)</td><td class="num">23.53 (1.45)</td><td class="num">10.17 (9.94)</td></tr>
+    </tbody>
+  </table></div>
+  <p>Example (Insurgentes configuration on a 200 m segment with cars at 6 veh/min): without a light, a car emits 42 g of
+    CO2 per trip (19 % above free flow, because of lane changes, halts and slow vehicles); with a light, 65 g (82 %);
+    with a light and a bump at 80 m, 98 g (174 %). The bump adds ~51 % of CO2 and NOx, of the order of what speed bump
+    studies report (+52 % of CO2).</p>
+
+  <h3 id="emission-sets">Coefficient sets</h3>
+  <p>Instead of writing the coefficients, a type can take them from a named set:</p>
+  <pre><code>[vehicles.car.emissions]
+source = "sedema_cdmx_2018"   # the entry with the type's key (car)
+
+[vehicles.micro.emissions]
+source = "sedema_cdmx_2018"
+source_type = "colectivo"     # the entry of another type in the set
+pm = [2.23e-4, 3.47e-4, -2.38e-5, 2.08e-3, 1.76e-3, 2.23e-4]   # hand-written ones are added or replace</code></pre>
+  <p>Hand-written coefficients replace those of the set pollutant by pollutant (also just
+    <code>&lt;pollutant&gt;_decel</code>, e.g. <code>co2_decel</code> to correct the braking of
+    <code>int_panis_2006</code>). The run header gives the set of each type.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th><code>source</code></th><th>Types</th><th>Origin</th></tr></thead>
+    <tbody>
+      <tr><td><code>int_panis_2006</code></td><td><code>car</code> (CO2, NOx, VOC), <code>bus</code> (PM)</td>
+        <td>Those of the paper, verified (table above). European fleet from the early 2000s. Its CO2 uses the same set
+          when braking: the a² term makes hard braking emit more than driving at constant speed (braking from 40 to
+          10 km/h at 4.5 m/s²: 9.2 g of CO2, against 1.0 g idling).</td></tr>
+      <tr><td><code>sedema_cdmx_2018</code></td><td><code>car</code> (private, 1250 kg), <code>taxi</code> (1150 kg),
+          <code>carga_ligera</code> (pickups, 1700 kg), <code>colectivo</code> (LPG vans and minibuses, 2300 kg): CO2,
+          NOx and VOC</td>
+        <td>Recalibrated with the microdata of Mexico City's vehicle inspection program (SEDEMA, Jul–Dec 2018): Int
+          Panis CO2 scaled by the type's mass, with braking equal to idling (fuel is cut off); NOx and VOC as CO2 × the
+          pollutant/CO2 ratio measured at idle, at 40 km/h and at 24 km/h under load, according to the specific
+          power.</td></tr>
+    </tbody>
+  </table></div>
+  <p>What changes with <code>sedema_cdmx_2018</code> for the car: idle NOx is a fifth (7.5 mg per minute against 37),
+    and at constant speed it rises with speed (0.51, 0.88, 1.23 and 1.56 mg/s at 20, 40, 60 and 80 km/h; Int Panis
+    drops after 40 km/h); VOC is about 50 times lower at idle; CO2 is the same except when braking. On the 200 m street
+    without a light with cars and buses, a bump at 100 m raises the car's CO2 by +45 % (274 → 399 g/km), NOx by +59 %
+    and VOC by +48 %; with <code>int_panis_2006</code> they were +52 %, +54 % and +15 %.</p>
+  <div class="warn"><p><strong>Limitations of <code>sedema_cdmx_2018</code>:</strong> it is the fleet
+    <em>mean</em> (driven by high emitters; the typical vehicle emits much less); the inspection only reaches ≈ 7 kW/t
+    (24 km/h under load), so accelerating after a bump or at a start is an extrapolation, with a constant ratio; the six
+    coefficients reproduce the measured ratio with a 22 % error in the car's NOx; infrared HC underestimates VOC; there
+    is no CO or PM, and diesel (bus, goods) is not recalibrated because the inspection only measures its opacity. The
+    types <code>taxi</code>, <code>carga_ligera</code> and <code>colectivo</code> in <code>config.toml</code> have
+    demand 0, and their length, passengers and kinematics are assumptions. The coefficients were copied from
+    <code>multi-dashboard/data/sedema_cdmx/emisiones_sim.toml</code>
+    (<code>exploracion/sedema_cdmx/factores_sim.py</code> explains how they were obtained).</p></div>
+</section>
+
+<section id="fuel">
+  <h2><code>[fuel]</code> Fuel and cost</h2>
+  <p class="lead">The consumption of each type comes from its CO2: all the carbon in the fuel leaves as CO2, so the
+    litres are the CO2 emitted divided by the g of CO2 per litre of its fuel. The type needs <code>fuel</code>, CO2
+    coefficients and <code>accel</code>/<code>decel</code>; the cost also needs the price of its fuel.</p>
+  <pre><code>[fuel]
+price = {gasolina = 23.99, diesel = 26.99}   # per litre
+currency = "MXN"
+
+[vehicles.car]
+fuel = "gasolina"
+mass_kg = 1250.0</code></pre>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Description</th><th>Constraints</th></tr></thead>
+    <tbody>
+      <tr><td><code>price</code></td><td>dictionary</td>
+        <td>Price per litre of each fuel (<code>gasolina</code>, <code>diesel</code>, <code>glp</code>). In
+          <code>config.toml</code>: the median of regular petrol (23.99) and diesel (26.99) at the 378 and 195 Mexico
+          City filling stations in the CNE snapshot of 1 July 2026 (80 % of regular costs between 22.99 and 23.99).
+          There is no public price for automotive LPG; without a price, the consumption is given only in litres, with a
+          warning. Optional; by default, no prices.</td>
+        <td>≥ 0.</td></tr>
+      <tr><td><code>currency</code></td><td>text</td><td>Currency used to label the costs. Default
+          <code>"MXN"</code>.</td><td>Not empty.</td></tr>
+    </tbody>
+  </table></div>
+  <p>g of CO2 per litre: petrol 2,348 (8,887 g per gallon, EPA-420-F-18-008), diesel 2,689 (10,180 g per gallon) and
+    LPG 1,511 (propane, 5,720 g per gallon; the Mexican mix contains butane, so the litres come out somewhat high). The
+    carbon of CO and HC (less than 1 %) is not counted.</p>
+  <p>Outputs, when some participating type burns fuel:</p>
+  <ul>
+    <li><code>resumen.txt</code>, per type: fuel in L/100 km and per trip along the segment (mL), the extra spent
+      <strong>compared with free flow</strong> (the same trip at constant speed, in mL and in money), the cost per trip
+      and the run total (litres and cost, mean per replica). The excess in % is the same as that of CO2.</li>
+    <li><code>resumen.txt</code>, «Rendimiento a velocidad constante» (efficiency at constant speed): L/100 km, km/L and
+      cost per km at 20, 40, 60 and 80 km/h (up to the type's maximum speed), with the model and with a physical
+      reference curve.</li>
+    <li><code>series.csv</code>: columns <code>comb_l_min_&lt;type&gt;</code> (litres per minute).</li>
+    <li>The run header: the fuel and price of each type, and those that have <code>fuel</code> but no CO2 (the bus and
+      goods vehicles, which only have PM or nothing).</li>
+  </ul>
+  <p><strong>The two efficiency curves.</strong> The model's is Int Panis CO2 at zero acceleration: it was fitted with
+    real urban driving (small accelerations, a fleet from twenty years ago), and per km it always falls as speed rises;
+    above ≈ 70–80 km/h it is below what overcoming air resistance demands. The physical one (Willans line) is the
+    model's idle plus the wheel power needed to overcome rolling and air resistance, VSP = 0.132·v + 0.000302·v³ kW/t
+    times the mass (<code>mass_kg</code>), divided by a marginal engine efficiency of 24.6 % and the heating value of
+    the fuel; that efficiency makes the 1250 kg car at 77.7 km/h do 18.6 km/L, the highway median of the 4-cylinder,
+    1.4–2.0 L petrol cars in the CONUEE 2026 catalogue. It has its minimum near 50 km/h. In the city the model uses 1.3
+    to 1.7 times the physical curve (real traffic against perfectly constant speed and a new car):</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Car, 1250 kg</th><th>20 km/h</th><th>40 km/h</th><th>60 km/h</th><th>80 km/h</th></tr></thead>
+    <tbody>
+      <tr><td>Model (L/100 km)</td><td class="num">10.4</td><td class="num">7.6</td><td class="num">6.2</td><td class="num">5.2</td></tr>
+      <tr><td>Physical (L/100 km)</td><td class="num">6.5</td><td class="num">4.8</td><td class="num">4.8</td><td class="num">5.5</td></tr>
+      <tr><td>Model at 23.99 MXN/L (MXN/km)</td><td class="num">2.50</td><td class="num">1.83</td><td class="num">1.49</td><td class="num">1.24</td></tr>
+    </tbody>
+  </table></div>
+  <p>With the SEDEMA coefficients the car uses 14.1 mL per minute idling (0.85 L/h, 34 cents per minute waiting at the
+    light).</p>
+</section>
+
+<section id="behavior">
+  <h2><code>[behavior]</code> Behaviour</h2>
+  <p class="lead">Parameters shared by all vehicles: reaction when starting, lane changes and yellow.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>reaction</code></td><td class="num">{min = 1, max = 5}</td>
+        <td>Reaction time (s) of a stopped vehicle that becomes free: the light turned green or the one ahead started.
+          Chained vehicle after vehicle, it produces the <strong>stretching</strong> of the platoon. It is a
+          dictionary:
+          <ul>
+            <li><code>{min, max}</code>: uniform in [<code>min</code>, <code>max</code>].</li>
+            <li><code>{min, max, mean, std}</code>: normal(<code>mean</code>, <code>std</code>) truncated to
+              [<code>min</code>, <code>max</code>] and rounded to 0.1 s. The cut can shift the observed mean: with
+              1.5 ± 0.5 in [0.7, 3.0], the real mean is ~1.56 s. With <code>std = 0</code>, everyone reacts at the
+              mean.</li>
+          </ul>
+          Example: <code>reaction = {min = 0.7, max = 3, mean = 1.5, std = 0.5}</code>.</td>
+        <td>0 &lt; min ≤ max ≤ 600; <code>mean</code> and <code>std</code> go together; min ≤ mean ≤ max; std ≥ 0.</td></tr>
+      <tr><td><code>lane_change_min</code>, <code>lane_change_max</code></td><td class="num">1.0, 4.0</td>
+        <td>Range (s) of the uniform duration of the lane-change manoeuvre. While it lasts, the vehicle occupies both
+          lanes and compresses those behind in both.</td><td>0 &lt; min ≤ max ≤ 600.</td></tr>
+      <tr><td><code>lane_change_speed_factor</code></td><td class="num">0.5</td>
+        <td>Fraction of the speed during the manoeuvre: the cost of the lane change.</td><td>(0, 1].</td></tr>
+      <tr><td><code>lane_change_cooldown</code></td><td class="num">3.0</td>
+        <td>Seconds without changing lanes again after a manoeuvre.</td><td>≥ 0.</td></tr>
+      <tr><td><code>lane_change_interval</code></td><td class="num">0.5</td>
+        <td>How often (s) lane changes are evaluated.</td><td>≥ 0.1.</td></tr>
+      <tr><td><code>lookahead</code></td><td class="num">30.0</td>
+        <td>Distance (m) at which a slower or stopped vehicle ahead motivates a lane change.</td><td>≥ 0.</td></tr>
+      <tr><td><code>min_advantage</code></td><td class="num">5.0</td>
+        <td>Metres of extra free space the neighbouring lane must offer for the change to be worthwhile.</td><td>≥ 0.</td></tr>
+      <tr><td><code>leader_slowdown</code></td><td class="num">0.25</td>
+        <td>Condition for every lane change: the vehicle ahead, within <code>lookahead</code>, must be going at least
+          this fraction below the lane limit (with 0.25, under 75 % of the limit; in a lane without a limit, of the
+          vehicle's own maximum speed). Its real speed in the last step is used; a stopped one counts as 0. With no
+          vehicle ahead there is no lane change.</td><td>In [0, 1).</td></tr>
+      <tr><td><code>release_space</code></td><td class="num">0.5</td>
+        <td>Space (m) that, when it opens up ahead of a stopped vehicle, releases it to start its reaction.</td><td>≥ 0.</td></tr>
+      <tr><td><code>queue_reaction</code></td><td class="num">false</td>
+        <td>Reaction time in the entry queue. Vehicles that do not fit in the segment wait outside, in the entry queue of
+          their lane. With <code>false</code> they enter already moving as soon as there is room, even if the queue in
+          the segment is stopped; so, on a segment shorter than the queue, those waiting outside skip the reaction time
+          and the light lets through more vehicles than in reality. With <code>true</code>, if the queue in the segment
+          reaches the entry stopped, the entry queue also counts as stopped: the first one starts its reaction (drawn
+          from <code>reaction</code>) when the one ahead moves and enters when it ends, as soon as it fits; then the next
+          one reacts. An entry queue that is only waiting for room behind moving vehicles still enters moving. For
+          example, with the Insurgentes configuration and a 50 m segment, cars let through 20.9 pax/min instead of 24.6,
+          close to the 19.7–20.2 of segments from 100 to 550 m.</td>
+        <td>true/false.</td></tr>
+      <tr><td><code>yellow_approach</code></td><td class="num">50.0</td>
+        <td>Distance (m) before the stop line within which, with the light on yellow, vehicles that have not yet crossed
+          it slow down. Only applies with <code>[traffic_light] yellow</code> &gt; 0.</td><td>≥ 0.</td></tr>
+      <tr><td><code>yellow_speed_factor</code></td><td class="num">0.5</td>
+        <td>Fraction of the speed at which they move in that zone during the yellow; it combines with the reduction for
+          changing lanes. Whoever reaches the line on yellow crosses; whoever does not, stops when the light turns
+          red.</td><td>In (0, 1].</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="animation">
+  <h2><code>[animation]</code> Vehicle movement</h2>
+  <p class="lead">It is used to tune the model by watching how the vehicles move. It does not change the results: one
+    replica is simulated again with the seed of the run (it is identical to the one in the run) and its state is
+    recorded over a time window. It is generated with <code>[output] animation = true</code> when running, or later
+    with <code>uv run traffic-ver [folder]</code> (by default, the latest run). The command options
+    <code>--inicio</code> (start), <code>--duracion</code> (duration), <code>--velocidad</code> (speed),
+    <code>--replica</code> and <code>--formato</code> (format) replace these keys.</p>
+  <p>In the video, the light is painted in the colour of its phase and the legend shows, next to each vehicle type, the
+    passengers that have crossed the light since the start of the video, updated every frame. For a type that only
+    carries goods it counts vehicles. Vehicles with goods do not add passengers. To the left of each lane, the «en cola»
+    (queued) column shows how many vehicles are waiting in its entry queue: they have arrived, but do not fit in the
+    segment yet and so are not drawn. If there is an <a href="#exit">exit queue</a>, the «salida» (exit) column to the
+    right of the light shows the metres occupied in it against its length, in red when the next vehicle does not
+    fit.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
+    <tbody>
+      <tr><td><code>start</code></td><td>number</td><td class="num">0.0</td>
+        <td>Simulated second where the window starts.</td><td>Between 0 and the duration of the run.</td></tr>
+      <tr><td><code>duration</code></td><td>number</td><td class="num">2 cycles</td>
+        <td>Simulated seconds of the window. Without it, two light cycles (2 × (red + green)). If it goes past the end
+          of the run, it is trimmed.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>speed</code></td><td>number</td><td class="num">4.0</td>
+        <td>Simulated seconds per second of video: 120 s at ×4 give a 30 s video.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>fps</code></td><td>integer</td><td class="num">20</td>
+        <td>Frames per second of the video.</td><td>Between 1 and 60.</td></tr>
+      <tr><td><code>replica</code></td><td>integer</td><td class="num">1</td>
+        <td>Replica shown (1 = the first one).</td><td>Between 1 and <code>[execution] replicas</code>.</td></tr>
+      <tr><td><code>format</code></td><td>text</td><td class="num">"webm"</td>
+        <td>Video format. <code>"webm"</code> (VP9) is patent-free and opens on Fedora without extra codecs: VLC from
+          the Fedora repository, Showtime/GNOME Videos and browsers. <code>"mp4"</code> (H.264) is the most common on
+          Windows and macOS, but on Fedora only players with OpenH264 or RPM Fusion codecs open it (Fedora's VLC flatpak
+          cannot). <code>"gif"</code> does not need ffmpeg, but it is slow and heavy.</td>
+        <td><code>"webm"</code>, <code>"mp4"</code> or <code>"gif"</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <p>They are saved in the run folder, with the window in the name; if the file already exists a suffix is added, it is
+    never overwritten:</p>
+  <ul>
+    <li><code>espacio_tiempo_&lt;start&gt;-&lt;end&gt;s.png</code>: one line per vehicle (position against time), one
+      panel per lane. The slope is the speed; a horizontal stretch, a stopped vehicle; the fan when the light turns green
+      shows the reaction (<code>reaction</code>) and the stretching; the lines close together in the queue, the
+      compression (<code>gap_stop</code>). A vehicle changing lanes appears in both during the manoeuvre.</li>
+    <li><code>movimiento_&lt;start&gt;-&lt;end&gt;s.webm</code> (or <code>.mp4</code>/<code>.gif</code> according to
+      <code>format</code>): top-down view with the vehicles to scale in the colour of their type (dark border =
+      stopped), the light, the stop and a clock with the simulated time in hours, minutes and seconds
+      (<code>hh:mm:ss</code>). WebM and MP4 require <code>ffmpeg</code>; without it a GIF is written.</li>
+  </ul>
+</section>
+
+<section id="sample">
+  <h2>About <code>sample</code></h2>
+  <p><code>sample</code> only decides how often the plot and CSV series are recorded. <strong>It does not change the
+    simulation</strong>: with the same seed exactly the same vehicles drive and the summary comes out the same with any
+    value.</p>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Value</th><th>Advantage</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr><td>Small (0.1–0.5 s)</td><td>More detail: each start after the green, the stretching of the queue, each
+        crossing.</td>
+        <td>CSV and series memory 2 to 10 times larger; somewhat slower.</td></tr>
+      <tr><td>1 s (default)</td><td>Good balance for light phases of tens of seconds.</td><td>—</td></tr>
+      <tr><td>Large (5–10 s)</td><td>Small CSV and little memory in runs of many hours.</td>
+        <td>Less detail and risk of aliasing.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="warn">
+    <p><strong>Aliasing with the traffic light.</strong> Passengers per metre of lane and the saturation of each lane are
+      instantaneous snapshots at each sample. If <code>sample</code> gets close to the cycle length, the snapshots always
+      fall in the same phase and the curve is misleading. It should not exceed ~1/10 of the shortest phase (≤ 3 s with
+      30 s phases).</p>
+    <p>Cumulative passengers, the flow in pax/min, pax·km/h and the mean speed of each lane lose no information: they are
+      accumulated at each 0.1 s step and sampling only groups them.</p>
+  </div>
+  <ul>
+    <li>The smoothing windows (one cycle for the flow, 10 s for pax·km/h and the speed per lane) are measured in samples
+      and rounded if <code>sample</code> does not divide those durations. If <code>sample</code> exceeds 10 s, the moving
+      average stops smoothing.</li>
+    <li>If the simulated duration is not a multiple of <code>sample</code>, the last stretch does not enter the series;
+      the summary does include it.</li>
+  </ul>
+</section>
+
+<section id="replicas">
+  <h2>About <code>replicas</code></h2>
+  <p>A replica is a complete, independent run, with the same configuration but another sequence of random numbers:
+    arrivals, passengers per vehicle, reaction times, duration of lane changes and tie-breaks when choosing a lane.
+    Repeating it N times (Monte Carlo) estimates the typical behaviour and how much it varies. The plot shows the mean ±
+    1σ across replicas.</p>
+  <ul>
+    <li><strong>Seeds:</strong> they are derived from the base seed, one per replica. The result does not depend on
+      <code>workers</code>, and going from 8 to 16 replicas the first 8 remain the same.</li>
+    <li><strong>More replicas, a more precise mean:</strong> the error of the mean is σ/√N; with 4 times more replicas
+      it is halved.</li>
+    <li><strong>The shaded band does not get narrower:</strong> ±1σ measures how much one run varies from another, and
+      that variation belongs to the system. More replicas only estimate it better.</li>
+    <li><strong>Infrequent types need more replicas.</strong> With 16 replicas, cars (268 ± 11 passengers) are within
+      ±2 % at 95 %, and buses (277 ± 132) within ±24 %. For ±10 % on buses about 85 replicas would be needed; a longer
+      <code>run</code> also helps.</li>
+    <li><strong>Cost:</strong> time grows linearly with N and is divided among the processes; memory hardly grows,
+      because aggregation is done online. N should be a multiple of <code>workers</code>.</li>
+    <li><strong>Few replicas:</strong> with 1 there is no σ (band of width 0) and with 2–3 σ is unreliable.</li>
+  </ul>
+  <div class="note">
+    <p><strong>Recommendation:</strong> 8–16 replicas to explore; 30 or more to report. To choose N with data, use the
+      «± σ entre réplicas» (± σ across replicas) of the summary: N ≈ (1.96 · σ / desired margin)².</p>
+  </div>
+</section>
+
+<footer>trafico 0.1.0 · <code>config.toml</code> documentation</footer>
+</div>
+</body>
+</html>

@@ -955,7 +955,7 @@ def config_copy_text(settings: Settings, seed: int, name: str, run_dir: Path, no
     header = (
         f"# Copia de la configuración usada en la corrida {run_dir.name}\n"
         f"# ({now:%Y-%m-%d %H:%M:%S}, trafico {__version__}). Para replicarla:\n"
-        f"#   uv run trafico {shown}\n\n"
+        f"#   uv run traffic {shown}\n\n"
     )
     text = _COPY_HEADER.sub("", settings.text, count=1)  # al replicar una copia, no apilar encabezados
     if settings.run.seed is None:

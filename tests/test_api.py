@@ -35,7 +35,7 @@ def test_simulate_returns_the_results_document(root):
     assert r.mode == "corrida" and r.folder.parent == root / "resultados" and "Resultados en" in r.log
     doc = r.results
     assert doc["schema"] == SCHEMA and doc["modo"] == "corrida" and doc["semilla"] == 7 and doc["replicas"] == 2
-    assert doc["id"] == r.folder.name and doc["comando"] == "uv run trafico"
+    assert doc["id"] == r.folder.name and doc["comando"] == "uv run traffic"
     assert {"resumen.txt", RESULTS_NAME, CONFIG_NAME} <= set(r.files) and r.path("resumen.txt").is_file()
     car = doc["metricas"]["tipos"]["car"]
     assert car["nombre"] and car["tiempo_recorrido_s"] > 0 and car["vehiculos_cruzan"] > 0

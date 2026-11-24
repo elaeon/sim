@@ -1,6 +1,6 @@
 """`resultados.json`: el resumen de una corrida en un formato estable para programas (scripts, agentes, un servidor).
 
-Cada comando (`trafico`, `trafico-variantes`, `trafico-emisiones`, con o sin `--separacion`, y `trafico-calibrar`) lo
+Cada comando (`traffic`, `traffic-variantes`, `traffic-emisiones`, con o sin `--separacion`, y `traffic-calibrar`) lo
 escribe al final en la
 carpeta de resultados. Tiene siempre la misma cabecera y las métricas de cada modo bajo `"metricas"`:
 
@@ -86,7 +86,7 @@ def mode_of(folder: Path) -> str | None:
 
 def rebuild(folder: Path) -> dict | None:
     """El documento de una carpeta de comparación o de barrido sin `resultados.json`, a partir de sus datos crudos
-    (`datos.npz` y `escenarios.json`); None si no se puede (las corridas de `trafico` no guardan datos crudos)."""
+    (`datos.npz` y `escenarios.json`); None si no se puede (las corridas de `traffic` no guardan datos crudos)."""
     mode = mode_of(folder)
     if mode == "separacion":
         from trafico.bump_spacing import results_metrics
@@ -105,7 +105,7 @@ def rebuild(folder: Path) -> dict | None:
 
 def read_results(folder: str | Path) -> dict:
     """`resultados.json` de una carpeta. Si no lo tiene (corrida de una versión anterior) y es una comparación o un
-    barrido, lo reconstruye de sus datos sin escribir nada; para una corrida de `trafico` sin él, `FileNotFoundError`."""
+    barrido, lo reconstruye de sus datos sin escribir nada; para una corrida de `traffic` sin él, `FileNotFoundError`."""
     folder = Path(folder).expanduser()
     path = folder / RESULTS_NAME
     if path.is_file():

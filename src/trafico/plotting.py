@@ -747,7 +747,7 @@ def plot_passenger_distribution(agg: Aggregate, path: Path, footer: str | None =
 
 
 def plot_variants(path: Path, meta: dict, data: dict) -> None:
-    """Comparación de variantes (trafico-variantes): arriba, la velocidad media de cada carril por
+    """Comparación de variantes (traffic-variantes): arriba, la velocidad media de cada carril por
     semáforo (barras, media ± 1σ entre réplicas); abajo, los vehículos en la cola de entrada a lo
     largo del tiempo, una línea por semáforo. Una columna por largo de tramo."""
     from matplotlib.figure import Figure  # sin pyplot: no depende del backend
@@ -867,7 +867,7 @@ def _scenario_bars(ax, values: list[float], colors: list[str], labels: list[str]
 
 
 def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
-    """Comparación de escenarios de trafico-emisiones: flujo que sale del tramo en el tiempo, vehículos por minuto
+    """Comparación de escenarios de traffic-emisiones: flujo que sale del tramo en el tiempo, vehículos por minuto
     de cada tipo, emisiones por km de cada tipo y contaminante, y emisiones a lo largo de la calle."""
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
@@ -977,7 +977,7 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
 
 
 def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
-    """Resultados de `trafico-emisiones --separacion` (o `--separacion-semaforos`): cuánto deben separarse dos topes o
+    """Resultados de `traffic-emisiones --separacion` (o `--separacion-semaforos`): cuánto deben separarse dos topes o
     semáforos (o los de una cadena) para que la huella de emisiones del primero se diluya. Cinco métricas contra la
     separación (aditividad, media en el tramo, exceso entre ellos, gradiente y costo de cada uno añadido, total y por
     metro), una línea por contaminante, y el perfil a lo largo de la calle para algunas separaciones."""
@@ -1168,7 +1168,7 @@ def _chain_marks(meta: dict, first: float, d: float) -> list[float]:
 
 
 def plot_calibration(path: Path, m: dict, rows: list[dict]) -> None:
-    """Resultados de `trafico-calibrar`: el intervalo entre cruces por posición en la cola contra el de saturación de
+    """Resultados de `traffic-calibrar`: el intervalo entre cruces por posición en la cola contra el de saturación de
     referencia, y el flujo contra la densidad en flujo continuo contra la capacidad y la densidad de embotellamiento de
     referencia. El titular cuenta cuántas medidas quedan fuera de su rango."""
     from matplotlib.figure import Figure

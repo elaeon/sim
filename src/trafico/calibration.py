@@ -1,5 +1,5 @@
 """Calibración: mide cómo se comporta un tipo de vehículo de la configuración en situaciones estándar de ingeniería de
-tránsito y lo compara con valores de referencia publicados (`trafico-calibrar`).
+tránsito y lo compara con valores de referencia publicados (`traffic-calibrar`).
 
 Tres mediciones, cada una en un tramo de un carril con solo ese tipo (sin topes, paradas, cuellos de botella ni
 peatones), con su velocidad, largos, gaps, aceleración, frenado y la conducta ([behavior]) de la configuración:
@@ -44,7 +44,7 @@ class Reference:
     source: str
 
 
-# Rangos para autos. Ver el docstring del módulo y la documentación (docs/configuracion.html#calibracion).
+# Rangos para autos. Ver el docstring del módulo y la documentación (docs/config.html#calibracion).
 REFERENCES = {
     "flujo_saturacion_veh_h": Reference(
         1700, 1950, "HCM 6.ª ed.: flujo de saturación base de 1,900 veh/h/carril (1,750 en ciudades de menos de "

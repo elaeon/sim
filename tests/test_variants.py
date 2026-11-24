@@ -100,7 +100,7 @@ def test_command_writes_the_comparison(root, capsys):
     assert folder.parent == root / "resultados" and folder.name.endswith("_prueba")
     files = {p.name for p in folder.iterdir()}
     assert {PLOT_NAME, DATA_NAME, META_NAME, SPEED_CSV, QUEUE_CSV, SUMMARY_NAME, BASE_CONFIG_NAME} <= files
-    assert CONFIG_NAME not in files and latest_run_dir(folder.parent) is None  # no es una corrida de `trafico`
+    assert CONFIG_NAME not in files and latest_run_dir(folder.parent) is None  # no es una corrida de `traffic`
     meta = json.loads((folder / META_NAME).read_text())
     assert meta["largos_m"] == [60.0, 100.0] and meta["carriles"] == ["carril 0 (30 km/h)", "carril 1 (50 km/h)"]
     assert meta["semilla"] == 7 and meta["replicas"] == 2 and meta["cola_tipos"] == [CAR]
@@ -149,7 +149,7 @@ def test_scenario_varies_only_the_light_at_the_end():
 
 
 def test_scenario_replaces_a_pedestrian_light_at_the_end_with_a_fixed_cycle_one():
-    """trafico-variantes varía el reparto rojo/verde del final del tramo: ahí el semáforo es de ciclo fijo, aunque en la
+    """traffic-variantes varía el reparto rojo/verde del final del tramo: ahí el semáforo es de ciclo fijo, aunque en la
     configuración sea peatonal; los intermedios peatonales se conservan."""
     from trafico.config import Rate
 

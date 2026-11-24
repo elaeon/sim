@@ -1,8 +1,8 @@
 """Comparación de variantes: el escenario de una configuración con distintos largos de tramo y
-repartos del semáforo (`uv run trafico-variantes`).
+repartos del semáforo (`uv run traffic-variantes`).
 
 Cada combinación de largo y semáforo es un escenario que corre `replicas` réplicas con las mismas
-semillas que `trafico` (SeedSequence.spawn), así que las variantes comparten los números
+semillas que `traffic` (SeedSequence.spawn), así que las variantes comparten los números
 aleatorios. De cada réplica se guarda la velocidad media de cada carril en toda la corrida y los
 vehículos en la cola de entrada de cada tipo en cada muestra.
 """
@@ -26,7 +26,7 @@ from trafico.settings import ConfigError, RunOptions, validate_config
 PLOT_NAME = "variantes_semaforo.png"
 DATA_NAME = "datos.npz"
 META_NAME = "variantes.json"
-BASE_CONFIG_NAME = "config_base.toml"  # no se llama config.toml: la carpeta no es una corrida de `trafico`
+BASE_CONFIG_NAME = "config_base.toml"  # no se llama config.toml: la carpeta no es una corrida de `traffic`
 SPEED_CSV = "velocidad_por_carril.csv"
 QUEUE_CSV = "cola_entrada.csv"
 SUMMARY_NAME = "resumen.txt"
@@ -177,7 +177,7 @@ def metadata(base: SimConfig, v: Variants, seed: int, argv: list[str]) -> dict:
     limits = reduced.lane_max_kmh
     old = list(range(base.lanes)) if v.lanes is None else list(v.lanes)
     return {
-        "comando": "uv run trafico-variantes " + " ".join(argv),
+        "comando": "uv run traffic-variantes " + " ".join(argv),
         "semilla": seed,
         "largos_m": list(v.lengths),
         "semaforos": [{"rojo_s": r, "verde_s": g, "nombre": light_name(r, g)} for r, g in v.lights],
@@ -269,7 +269,7 @@ def load(folder: Path) -> tuple[dict, dict[str, np.ndarray]]:
     """Parámetros y datos de una comparación ya corrida."""
     meta_path, data_path = folder / META_NAME, folder / DATA_NAME
     if not (meta_path.is_file() and data_path.is_file()):
-        raise ConfigError(f"{folder} no es una carpeta de trafico-variantes (faltan {META_NAME} o {DATA_NAME})")
+        raise ConfigError(f"{folder} no es una carpeta de traffic-variantes (faltan {META_NAME} o {DATA_NAME})")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     with np.load(data_path) as d:
         data = {k: d[k] for k in d.files}

@@ -35,7 +35,7 @@ def test_command_compares_bumps(root, capsys):
     assert folder.parent == root / "resultados" and folder.name.endswith("_prueba")
     files = {p.name for p in folder.iterdir()}
     assert {PLOT_NAME, DATA_NAME, META_NAME, TABLE_CSV, POSITION_CSV, SUMMARY_NAME, BASE_CONFIG_NAME} <= files
-    assert CONFIG_NAME not in files and latest_run_dir(folder.parent) is None  # no es una corrida de `trafico`
+    assert CONFIG_NAME not in files and latest_run_dir(folder.parent) is None  # no es una corrida de `traffic`
     meta = json.loads((folder / META_NAME).read_text())
     assert meta["escenarios"] == ["sin tope", "tope a 80 m"] and meta["topes_m"] == [[], [80.0]]
     assert meta["contaminantes"] == ["co2", "nox", "voc"] and meta["semilla"] == 7
