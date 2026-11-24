@@ -1,4 +1,4 @@
-"""Lectura y validación del archivo de configuración TOML de una corrida."""
+"""Reading and validation of a run's TOML configuration file."""
 
 from __future__ import annotations
 
@@ -9,42 +9,42 @@ from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from pathlib import Path
 
-from trafico import __version__
-from trafico.config import (
+from traffic import __version__
+from traffic.config import (
     DEFAULT_RATES, DEFAULT_SPECS, DT, FUELS, MAX_TYPES, PEDESTRIAN_RATE, PEDESTRIAN_TIME, POLLUTANTS, Behavior,
     Bottleneck, Light, Rate, SimConfig, SpeedBump, VehicleSpec,
 )
-from trafico.emission_sets import EMISSION_SETS
+from traffic.emission_sets import EMISSION_SETS
 
 CONFIG_NAME = "config.toml"
 DEFAULT_RUN_NAME = "run"
-# Parámetros numéricos de un vehículo: obligatorios para los tipos nuevos.
+# Numeric parameters of a vehicle: required for new types.
 _SPEC_FIELDS = {
     "gap_run": float, "gap_stop": float,
 }  # fmt: skip
-# Diccionarios {min, max, mean, std}: pasajeros por vehículo ([vehicles.<clave>] pax), velocidad máxima, largo
-# y tasa de llegada.
+# {min, max, mean, std} dictionaries: passengers per vehicle ([vehicles.<key>] pax), maximum speed, length
+# and arrival rate.
 _PAX_KINDS = {"min": int, "max": int, "mean": float, "std": float}
 _RATE_KINDS = dict.fromkeys(("min", "max", "mean", "std"), float)
-_FLOAT_DIST_KINDS = _RATE_KINDS  # velocidad máxima y largo
-# Campos de VehicleSpec que salen de [vehicles.<clave>] length.
+_FLOAT_DIST_KINDS = _RATE_KINDS  # maximum speed and length
+# VehicleSpec fields that come from [vehicles.<key>] length.
 _LENGTH_FIELDS = {"mean": "length", "std": "length_std", "min": "length_min", "max": "length_max"}
-# Campos de VehicleSpec que salen de [vehicles.<clave>] speed_kmh.
+# VehicleSpec fields that come from [vehicles.<key>] speed_kmh.
 _SPEED_FIELDS = {"mean": "speed_kmh", "std": "speed_std", "min": "speed_min", "max": "speed_max"}
-# Umbrales de cambio de carril que un tipo puede fijar para sí; sin ellos, los de [behavior].
+# Lane change thresholds a type can set for itself; without them, those of [behavior].
 _LANE_CHANGE_FIELDS = ("lookahead", "min_advantage", "lane_change_cooldown")
-# Aceleración y frenado graduales (m/s²); sin ellos, cambios de velocidad instantáneos.
+# Gradual acceleration and braking (m/s²); without them, instantaneous speed changes.
 _DYNAMICS_FIELDS = ("accel", "decel", "time_headway")
-# Detenciones de [bottleneck] de cada tipo: probabilidad y duración.
+# Halts at [bottleneck] for each type: probability and duration.
 _BOTTLENECK_FIELDS = ("bottleneck_prob", "bottleneck_time_mean", "bottleneck_time_std")
-# Claves que [bottleneck] ya no admite y a dónde se movieron (para el mensaje de error).
+# Keys [bottleneck] no longer accepts and where they moved to (for the error message).
 _MOVED_BOTTLENECK = {
     "[bottleneck] stop_prob": "bottleneck_prob", "[bottleneck] stop_time_mean": "bottleneck_time_mean",
     "[bottleneck] stop_time_std": "bottleneck_time_std", "[bottleneck] stop_types": "bottleneck_prob",
 }  # fmt: skip
-# Pasajeros de un tipo que solo lleva mercancía (cargo_prob = 1): su clave pax es opcional.
+# Passengers of a type that only carries freight (cargo_prob = 1): its pax key is optional.
 _CARGO_PAX = {"pax_min": 1, "pax_max": 1, "pax_mean": 1.0, "pax_std": 0.0}
-# Valores por defecto de VehicleSpec (con slots, VehicleSpec.<campo> es un descriptor, no el valor).
+# VehicleSpec defaults (with slots, VehicleSpec.<field> is a descriptor, not the value).
 _SPEC_DEFAULTS = {f.name: f.default for f in fields(VehicleSpec)}
 _BUILTIN = {spec.key: (spec, rate) for spec, rate in zip(DEFAULT_SPECS, DEFAULT_RATES)}
 _REQUIRED = object()
@@ -59,40 +59,40 @@ VIDEO_FORMATS = ("webm", "mp4", "gif")
 
 
 class ConfigError(ValueError):
-    """Error en el contenido del archivo de configuración."""
+    """Error in the contents of the configuration file."""
 
 
 @dataclass(frozen=True, slots=True)
 class RunOptions:
-    """Parámetros de ejecución y salida que no afectan al modelo."""
+    """Run and output parameters that do not affect the model."""
 
     replicas: int = 8
-    workers: int = 0  # 0 = min(réplicas, CPUs disponibles)
-    seed: int | None = None  # None = aleatoria (se registra en la copia de la configuración)
+    workers: int = 0  # 0 = min(replicas, available CPUs)
+    seed: int | None = None  # None = random (recorded in the copy of the configuration)
     output_dir: str = "results"
-    name: str = ""  # sufijo de la carpeta de resultados; el nombre dado en el comando tiene prioridad
+    name: str = ""  # suffix of the results folder; the name given on the command line takes priority
     series_csv: bool = True  # genera series.csv
-    emisiones_csv: bool = True  # genera emisiones_posicion.csv (si algún tipo emite)
+    emisiones_csv: bool = True  # writes emissions_by_position.csv (if some type emits)
     progress: bool = True
-    animation: bool = False  # genera también el diagrama espacio-tiempo y el video de movimiento
-    mobility_plot: bool = True  # genera movilidad_pasajeros.png
-    passengers_plot: bool = True  # genera distribucion_pasajeros.png (si algún tipo lleva pasajeros)
-    emissions_plot: bool = True  # genera emisiones_posicion.png (si algún tipo emite)
+    animation: bool = False  # also writes the space-time diagram and the movement video
+    mobility_plot: bool = True  # writes passenger_mobility.png
+    passengers_plot: bool = True  # writes passenger_distribution.png (if some type carries passengers)
+    emissions_plot: bool = True  # writes emissions_by_position.png (if some type emits)
 
 
 @dataclass(frozen=True, slots=True)
 class AnimationOptions:
-    """Ventana y ritmo de la visualización del movimiento ([animation]); no afectan al modelo."""
+    """Window and pace of the movement visualization ([animation]); they do not affect the model."""
 
-    start: float = 0.0  # s simulados
-    duration: float | None = None  # s simulados; None = 2 ciclos del semáforo
-    speed: float = 4.0  # s simulados por s de video
+    start: float = 0.0  # simulated s
+    duration: float | None = None  # simulated s; None = 2 traffic light cycles
+    speed: float = 4.0  # simulated s per s of video
     fps: int = 20
-    replica: int = 1  # réplica que se visualiza (1 = la primera)
+    replica: int = 1  # replica shown (1 = the first)
     format: str = "webm"  # "webm" (VP9) | "mp4" (H.264) | "gif"
 
     def window(self, sim: SimConfig) -> tuple[float, float]:
-        """(inicio, fin) en s simulados, sin pasar del final de la corrida."""
+        """(start, end) in simulated s, not past the end of the run."""
         duration = self.duration if self.duration is not None else 2 * sim.flow_window
         return self.start, min(self.start + duration, sim.sim_seconds)
 
@@ -102,15 +102,15 @@ class Settings:
     sim: SimConfig
     run: RunOptions
     path: Path
-    text: str  # contenido original del archivo
-    notices: tuple[str, ...] = ()  # avisos para la cabecera de la corrida
+    text: str  # original contents of the file
+    notices: tuple[str, ...] = ()  # notices for the run's header
     animation: AnimationOptions = AnimationOptions()
 
 
 def project_root() -> Path:
-    """Raíz del proyecto (donde está pyproject.toml); si el paquete no está en modo editable, el directorio actual."""
+    """Project root (where pyproject.toml is); if the package is not installed in editable mode, the current directory."""
     root = Path(__file__).resolve().parents[2]
-    if (root / "pyproject.toml").is_file() and (root / "src" / "trafico").is_dir():
+    if (root / "pyproject.toml").is_file() and (root / "src" / "traffic").is_dir():
         return root
     return Path.cwd()
 
@@ -120,13 +120,13 @@ def default_config_path() -> Path:
 
 
 def resolve_output_dir(output_dir: str) -> Path:
-    """Las rutas relativas de salida se toman desde la raíz del proyecto."""
+    """Relative output paths are taken from the project root."""
     path = Path(output_dir).expanduser()
     return path if path.is_absolute() else project_root() / path
 
 
 class _Reader:
-    """Lee claves tipadas y recuerda cuáles se usaron para detectar claves desconocidas."""
+    """Read typed keys and remember which ones were used, to detect unknown keys."""
 
     def __init__(self, data: dict):
         self.data = data
@@ -157,7 +157,7 @@ class _Reader:
             return tuple(value)
         if kind is float and type(value) is int:
             value = float(value)
-        if type(value) is not kind:  # type() exacto: un bool no cuenta como entero
+        if type(value) is not kind:  # exact type(): a bool does not count as an integer
             raise ConfigError(f"{_label(keypath)} must be {_KIND_NAMES[kind]}; got {value!r}")
         return value
 
@@ -210,30 +210,30 @@ def parse_settings(text: str, path: Path) -> Settings:
     occupancy = r.get(("initial", "occupancy"), FLOATS, d.initial_occupancy)
     exit_capacity = r.get(("exit", "capacity"), FLOATS, d.exit_capacity)
     exit_storage = r.get(("exit", "storage"), FLOATS, d.exit_storage)
-    # [behavior] congestion_factor se eliminó (casi no cambiaba los resultados y duplicaba lo que ya hacen la
-    # dinámica gradual y la reacción en cadena); las copias anteriores la traen. Una lista sigue contando para el
-    # número de carriles, para que esas copias carguen con los mismos carriles.
+    # [behavior] congestion_factor was removed (it barely changed the results and duplicated what gradual
+    # dynamics and the chain reaction already do); older copies include it. A list still counts for the
+    # number of lanes, so that those copies load with the same lanes.
     congestion = r.get(("behavior", "congestion_factor"), FLOATS, None)
     lanes, speed_limit, notices = _lanes(r, occupancy, d.lanes, exit_capacity, exit_storage, congestion)
     notices += bump_notices
     if congestion is not None:
         notices += ("Warning: [behavior] congestion_factor was removed and is ignored (it does not change the speed); you can "
                     "remove it from the file",)  # fmt: skip
-    # [demand] slow_lane se eliminó; las copias anteriores la traen con "right", que es lo que se hace ahora.
+    # [demand] slow_lane was removed; older copies include it with "right", which is what is done now.
     slow_lane = r.get(("demand", "slow_lane"), str, None)
     if slow_lane is not None:
         if slow_lane != "right":
             raise ConfigError('[demand] slow_lane was removed: types that do not change lanes and have no lane use '
                               'the rightmost free lane; for another lane use lane in [vehicles.<key>]')
         notices += ("Warning: [demand] slow_lane was removed and is ignored; you can remove it from the file",)
-    # [output] csv se renombró series_csv; las copias anteriores la traen y conservan su valor.
+    # [output] csv was renamed series_csv; older copies include it and keep their value.
     legacy_csv = r.get(("output", "csv"), bool, None)
     if legacy_csv is not None:
         notices += ("Warning: [output] csv was renamed series_csv; its value is used, but change it in the file",)
-    # [output] show se eliminó (abría la ventana de matplotlib); las copias anteriores la traen.
+    # [output] show was removed (it opened the matplotlib window); older copies include it.
     if r.get(("output", "show"), bool, None) is not None:
         notices += ("Warning: [output] show was removed and is ignored; you can remove it from the file",)
-    # [output] saturation_threshold se eliminó (solo marcaba la gráfica); las copias anteriores la traen.
+    # [output] saturation_threshold was removed (it only marked the plot); older copies include it.
     if r.get(("output", "saturation_threshold"), float, None) is not None:
         notices += ("Warning: [output] saturation_threshold was removed and is ignored; you can remove it from the file",)
     length = r.get(("road", "length"), float, d.length)
@@ -252,7 +252,7 @@ def parse_settings(text: str, path: Path) -> Settings:
         light_pedestrian_crossing=exit_light.pedestrian_crossing,
         light_offset=exit_light.offset,
         extra_lights=extra_lights,
-        # Solo con alguna tasa variable hace falta la distribución; si todas son fijas, basta su valor.
+        # The distribution is only needed with some variable rate; if all are fixed, their value is enough.
         **({"rate_dists": rates} if any(rate.variable for rate in rates) else {"rates": tuple(r.expected for r in rates)}),
         rate_interval=r.get(("demand", "rate_interval"), float, d.rate_interval),
         initial_occupancy=occupancy,
@@ -313,7 +313,7 @@ def parse_settings(text: str, path: Path) -> Settings:
         raise ConfigError(msg)
     validate_config(sim, opts)
     validate_animation(anim, sim, opts.replicas)
-    # Warn only about emissions written in the file (el auto y el autobús incorporados traen coeficientes).
+    # Warn only about emissions written in the file (the built-in car and bus come with coefficients).
     written = {key for key, value in r.data.get("vehicles", {}).items() if isinstance(value, dict) and "emissions" in value}
     silent = [sp.name for k, sp in enumerate(sim.specs)
               if sp.key in written and sp.emissions and not sp.emits and sim.rates[k] > 0]  # fmt: skip
@@ -328,11 +328,11 @@ def parse_settings(text: str, path: Path) -> Settings:
 
 
 def _emissions(r: _Reader, key: str, base: VehicleSpec | None) -> tuple[tuple, str]:
-    """[vehicles.<clave>.emissions]: (coeficientes, conjunto del que salen). `source` toma los de un conjunto con
-    nombre (`EMISSION_SETS`) para la clave del tipo o para `source_type`; encima, por contaminante, los
-    coeficientes [f1..f6] escritos a mano del modelo de Int Panis et al. (2006) y, opcional, `<contaminante>_decel`
-    para a < −0.5 m/s² (por defecto, los mismos). Si la sección está, reemplaza a la del tipo incorporado; vacía,
-    el tipo no emite."""
+    """[vehicles.<key>.emissions]: (coefficients, set they come from). `source` takes those of a named set
+    (`EMISSION_SETS`) for the type's key or for `source_type`; on top of that, per pollutant, the hand-written
+    [f1..f6] coefficients of the model of Int Panis et al. (2006) and, optionally, `<pollutant>_decel`
+    for a < −0.5 m/s² (by default, the same ones). If the section is present, it replaces that of the built-in type;
+    if empty, the type does not emit."""
     table = r.data.get("vehicles", {}).get(key, {}).get("emissions")
     if table is None:
         return (base.emissions, base.emission_source) if base else ((), "")
@@ -363,7 +363,7 @@ def _emissions(r: _Reader, key: str, base: VehicleSpec | None) -> tuple[tuple, s
                 raise ConfigError(f"{label} {name} must be a list of 6 numbers [f1, f2, f3, f4, f5, f6]")
             coefs[name] = value
         acc, dec = coefs[pol], coefs[f"{pol}_decel"]
-        if acc is None and pol in found:  # del conjunto; el _decel escrito a mano lo reemplaza
+        if acc is None and pol in found:  # from the set; a hand-written _decel replaces it
             acc, dec = found[pol][0], dec or found[pol][1]
         if acc is None:
             if dec is not None:
@@ -374,7 +374,7 @@ def _emissions(r: _Reader, key: str, base: VehicleSpec | None) -> tuple[tuple, s
 
 
 def _zone(value):
-    """[inicio, fin] de [bottleneck] stop_zone: una lista de dos números."""
+    """[start, end] of [bottleneck] stop_zone: a list of two numbers."""
     if value is None:
         return None
     if not isinstance(value, tuple) or len(value) != 2:
@@ -397,12 +397,12 @@ def validate_animation(anim: AnimationOptions, sim: SimConfig, replicas: int) ->
 
 
 def _lanes(r: _Reader, occupancy, default: int, exit_capacity=0.0, exit_storage=60.0, congestion=None):
-    """Número de carriles: la longitud de las listas por carril ([road] max_line_speed, [initial] occupancy,
-    [exit] capacity y storage y, en copias anteriores, [behavior] congestion_factor), que deben coincidir. Un
-    número suelto aplica a todos los carriles; sin ninguna lista se usan `default` carriles.
+    """Number of lanes: the length of the per-lane lists ([road] max_line_speed, [initial] occupancy,
+    [exit] capacity and storage and, in older copies, [behavior] congestion_factor), which must match. A
+    single number applies to all lanes; without any list, `default` lanes are used.
 
-    `[road] lanes` está obsoleto: solo se acepta para replicar copias anteriores, y en ese caso
-    las listas se ajustan a él (los carriles extra usan el último valor; los sobrantes se ignoran).
+    `[road] lanes` is deprecated: it is only accepted to replicate older copies, and in that case
+    the lists are adjusted to it (extra lanes use the last value; surplus values are ignored).
     """
     speed = r.get(("road", "max_line_speed"), FLOATS, None)
     legacy = r.get(("road", "lanes"), int, None)
@@ -430,24 +430,24 @@ def _lanes(r: _Reader, occupancy, default: int, exit_capacity=0.0, exit_storage=
 
 
 def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ...]]:
-    """Tipos de vehículo: los incorporados (car, bike, bus) y cada [vehicles.<clave>] nuevo.
+    """Vehicle types: the built-in ones (car, bike, bus) and each new [vehicles.<key>].
 
-    Los incorporados toman sus valores por defecto para las claves que falten. Un tipo nuevo
-    debe definir todos los parámetros numéricos, sus pasajeros `pax = {min, max, mean, std}` y su
-    tasa `[demand] <clave>_rate`; `name`
-    (por defecto, la clave), `lane_change` (por defecto, true), `lane` (carril fijo de un tipo que
-    no cambia de carril; por defecto, el derecho libre), `exclusive` (reserva ese carril
-    para los tipos que lo tienen como fijo; por defecto, false), la parada antes del semáforo
-    (`stop_position`, `stop_time_mean`, `stop_time_std`; por defecto, sin parada) y `abreast`
-    (cuántos se detienen lado a lado en un carril; por defecto, 1) son opcionales, igual que el
-    rebase dentro del carril (`pass_in_lane`; por defecto, false), la aceleración y el frenado
-    graduales (`accel`, `decel` en m/s²; por defecto, instantáneos), el intervalo de seguimiento en marcha
-    (`time_headway` en s; por defecto, gap_run fijo), la velocidad al pasar el tope
-    (`speed_bump_kmh`; por defecto, sin frenar), el rebase agresivo (`overtake`; por defecto, false), los umbrales de cambio de carril propios
-    del tipo (`lookahead`, `min_advantage`, `lane_change_cooldown`; por defecto, los de [behavior]),
-    la probabilidad de llevar mercancía (`cargo_prob`; por defecto, 0; con 1, `pax` es
-    opcional). La velocidad máxima (`speed_kmh`) y el largo (`length`) son diccionarios {min, max, mean,
-    std}: normal truncada a [min, max] sorteada para cada vehículo; con std = 0, todos tienen mean.
+    The built-in ones take their defaults for the missing keys. A new type
+    must define all numeric parameters, its passengers `pax = {min, max, mean, std}` and its
+    rate `[demand] <key>_rate`; `name`
+    (default: the key), `lane_change` (default: true), `lane` (fixed lane of a type that
+    does not change lanes; default: the free right lane), `exclusive` (reserves that lane
+    for the types that have it as fixed; default: false), the stop before the traffic light
+    (`stop_position`, `stop_time_mean`, `stop_time_std`; default: no stop) and `abreast`
+    (how many stop side by side in one lane; default: 1) are optional, as are
+    overtaking within the lane (`pass_in_lane`; default: false), gradual acceleration and
+    braking (`accel`, `decel` in m/s²; default: instantaneous), the car-following headway when moving
+    (`time_headway` in s; default: fixed gap_run), the speed over the bump
+    (`speed_bump_kmh`; default: no braking), aggressive overtaking (`overtake`; default: false), the type's own
+    lane change thresholds (`lookahead`, `min_advantage`, `lane_change_cooldown`; default: those of [behavior]),
+    and the probability of carrying freight (`cargo_prob`; default: 0; with 1, `pax` is
+    optional). The maximum speed (`speed_kmh`) and the length (`length`) are {min, max, mean,
+    std} dictionaries: a normal truncated to [min, max] drawn for each vehicle; with std = 0, all have mean.
     """
     table = r.data.get("vehicles", {})
     if not isinstance(table, dict):
@@ -481,7 +481,7 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
                 values.update({f"pax_{f}": v for f, v in pax.items()})
             elif base is not None:
                 values.update({f: getattr(base, f) for f in _CARGO_PAX})
-            elif cargo_prob == 1:  # sin pasajeros, no hace falta describirlos
+            elif cargo_prob == 1:  # without passengers, there is no need to describe them
                 values.update(_CARGO_PAX)
             else:
                 raise ConfigError(f"missing required key [vehicles.{key}] pax")
@@ -519,11 +519,11 @@ def _parse_vehicles(r: _Reader) -> tuple[tuple[VehicleSpec, ...], tuple[Rate, ..
 
 
 def _lights(r: _Reader, length: float, d: SimConfig) -> tuple[Light, tuple[Light, ...]]:
-    """[traffic_light]: un semáforo al final del tramo (una sección) o varios ([[traffic_light]], uno por semáforo).
-    Cada uno lleva `position` (m desde el inicio; sin ella o igual a `length`, el del final del tramo), `enabled`,
-    `red`, `green`, `yellow`, `start_phase`, `free_lanes` y, si es peatonal, `pedestrian` y `pedestrian_crossing`.
-    Devuelve (el del final del tramo, los intermedios); si hay semáforos pero ninguno en el final del tramo, este
-    queda desactivado."""
+    """[traffic_light]: one traffic light at the end of the segment (one section) or several ([[traffic_light]], one per
+    light). Each has `position` (m from the start; without it or equal to `length`, the one at the end of the segment),
+    `enabled`, `red`, `green`, `yellow`, `start_phase`, `free_lanes` and, if it is a pedestrian light, `pedestrian` and
+    `pedestrian_crossing`. Returns (the one at the end of the segment, the intermediate ones); if there are lights but
+    none at the end of the segment, that one is disabled."""
     table = r.data.get("traffic_light")
     if table is None:
         return d.exit_light, ()
@@ -575,10 +575,10 @@ def _lights(r: _Reader, length: float, d: SimConfig) -> tuple[Light, tuple[Light
 
 
 def _speed_bumps(r: _Reader) -> tuple[tuple[SpeedBump, ...], tuple[str, ...]]:
-    """[speed_bump]: un tope (una sección) o varios ([[speed_bump]], uno por tope), cada uno con su `position` (m desde
-    el inicio, un número), `lanes`, `pedestrian`, `pedestrian_crossing` y `pedestrian_time`. Sin la sección no hay
-    topes; una sección sin `position` ni otra clave tampoco. Devuelve (topes, avisos). `position` como lista
-    (el formato anterior) se acepta con un aviso: cada posición es un tope con las demás claves de la sección."""
+    """[speed_bump]: one bump (one section) or several ([[speed_bump]], one per bump), each with its `position` (m from
+    the start, a number), `lanes`, `pedestrian`, `pedestrian_crossing` and `pedestrian_time`. Without the section there
+    are no bumps; neither with a section without `position` or any other key. Returns (bumps, notices). `position` as a
+    list (the old format) is accepted with a notice: each position is a bump with the section's other keys."""
     table = r.data.get("speed_bump")
     if table is None:
         return (), ()
@@ -611,7 +611,7 @@ def _speed_bumps(r: _Reader) -> tuple[tuple[SpeedBump, ...], tuple[str, ...]]:
         else:
             positions = () if value is None else (value,)
         if not positions:
-            if lanes is not None or pedestrian:  # claves de un tope sin dónde está
+            if lanes is not None or pedestrian:  # keys of a bump without where it is
                 where = "[speed_bump]" if legacy else f"[[speed_bump]] of bump {n}"
                 key = "lanes" if lanes is not None else "pedestrian"
                 raise ConfigError(f"{where}: {key} requires position (where the bump is)")
@@ -627,16 +627,16 @@ def _speed_bumps(r: _Reader) -> tuple[tuple[SpeedBump, ...], tuple[str, ...]]:
 
 
 def _crossing(r: _Reader, section: tuple[str, ...]) -> Rate:
-    """`pedestrian_crossing` de una sección ([speed_bump] o un [[traffic_light]]): la aparición de peatones, un
-    diccionario {min, max, mean, std} en peatones/min. Sin ella, PEDESTRIAN_RATE. Se valida solo si la sección tiene
-    pedestrian = true (en `validate_config`)."""
+    """`pedestrian_crossing` of a section ([speed_bump] or a [[traffic_light]]): the appearance of pedestrians, a
+    {min, max, mean, std} dictionary in pedestrians/min. Without it, PEDESTRIAN_RATE. Validated only if the section has
+    pedestrian = true (in `validate_config`)."""
     values = _dist(r, (*section, "pedestrian_crossing"), _RATE_KINDS,
                    "{min = 0.5, max = 3, mean = 1.5, std = 1} (pedestrians/min)")  # fmt: skip
     return PEDESTRIAN_RATE if values is None else Rate(**values)
 
 
 def _fuel(r: _Reader, d: SimConfig) -> dict:
-    """[fuel]: precio por litro de cada combustible (`price = {gasolina = 24.0, ...}`) y su moneda."""
+    """[fuel]: price per litre of each fuel (`price = {gasolina = 24.0, ...}`) and its currency."""
     table = r.data.get("fuel", {})
     if isinstance(table, dict) and "price" in table and not isinstance(table["price"], dict):
         raise ConfigError(f"[fuel] price must be a dictionary per fuel, e.g. price = {{gasolina = 24.0}}; "
@@ -646,8 +646,8 @@ def _fuel(r: _Reader, d: SimConfig) -> dict:
 
 
 def _rate(r: _Reader, key: str, default) -> Rate:
-    """[demand] <clave>_rate: un diccionario {min, max, mean, std} en veh/min. Los tipos incorporados
-    que no la definen usan su tasa fija por defecto."""
+    """[demand] <key>_rate: a {min, max, mean, std} dictionary in veh/min. Built-in types
+    that do not define it use their fixed default rate."""
     name = f"{key}_rate"
     if not isinstance(r.data.get("demand", {}), dict):
         raise ConfigError("[demand] must be a section")
@@ -662,8 +662,8 @@ def _rate(r: _Reader, key: str, default) -> Rate:
 
 
 def _reaction(r: _Reader) -> dict[str, float]:
-    """[behavior] reaction: {min, max} (uniforme) o {min, max, mean, std} (normal truncada a [min, max]).
-    Sin la clave, los valores por defecto de Behavior."""
+    """[behavior] reaction: {min, max} (uniform) or {min, max, mean, std} (normal truncated to [min, max]).
+    Without the key, the Behavior defaults."""
     behavior = r.data.get("behavior", {})
     value = behavior.get("reaction") if isinstance(behavior, dict) else None
     pair = {"mean", "std"} & set(value) if isinstance(value, dict) else set()
@@ -676,7 +676,7 @@ def _reaction(r: _Reader) -> dict[str, float]:
 
 
 def _dist(r: _Reader, keypath: tuple[str, ...], kinds: dict[str, type], example: str) -> dict | None:
-    """Diccionario en `keypath` con todas las claves de `kinds`; None si no está."""
+    """Dictionary at `keypath` with all the keys of `kinds`; None if it is missing."""
     *sections, key = keypath
     table = r.data
     for section in sections:
@@ -707,7 +707,7 @@ def load_settings(path: Path) -> Settings:
 
 
 def validate_config(sim: SimConfig, opts: RunOptions) -> None:
-    """Valida la configuración de una corrida; lanza ConfigError con la clave que falla."""
+    """Validate a run's configuration; raises ConfigError with the failing key."""
     def check(ok: bool, msg: str) -> None:
         if not ok:
             raise ConfigError(msg)
@@ -783,8 +783,8 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
                                                                 for e in sim.extra_lights)]:  # fmt: skip
         check(lt.red >= 0, f"{where} red cannot be negative")
         check(lt.yellow >= 0, f"{where} yellow cannot be negative")
-        # Con los tres en 0 no hay semáforo (como enabled = false); si no, hace falta verde. El peatonal usa
-        # green como verde mínimo entre dos cruces (puede ser 0) y red como lo que dura el cruce.
+        # With all three at 0 there is no traffic light (like enabled = false); otherwise green is required. The pedestrian
+        # light uses green as the minimum green between two crossings (it may be 0) and red as how long the crossing lasts.
         check(not lt.active or lt.pedestrian or lt.green > 0,
               f"{where} green must be greater than 0 (or red, green and yellow at 0, or enabled = false, for no "
               "traffic light)")  # fmt: skip
@@ -796,7 +796,7 @@ def validate_config(sim: SimConfig, opts: RunOptions) -> None:
             check(abs(value / DT - round(value / DT)) < 1e-9, f"{where} {name} must be a multiple of {DT} s")
         check(lt.offset == 0 or 0 < lt.offset < lt.cycle,
               f"{where} offset must be between 0 and the cycle (red + green + yellow), excluding it")  # fmt: skip
-    # Un semáforo desactivado (enabled = false, o sus fases en 0) no está en la calle: su posición no se revisa.
+    # A disabled traffic light (enabled = false, or its phases at 0) is not on the street: its position is not checked.
     positions = [e.position for e in sim.extra_lights if e.active]
     check(all(0 < p < sim.length for p in positions),
           f"[[traffic_light]] position: each intermediate light must be between 0 and {sim.length:g} m ([road] "
@@ -890,25 +890,25 @@ def _validate_spec(s: VehicleSpec, label: str, check) -> None:
     check(s.shortest > 0, f"{label} length: the minimum length (mean − 3·std without min) must be greater than 0")
 
 
-# ------------------------------------------------------------ carpeta de corrida
+# ------------------------------------------------------------ run folder
 
 
 @dataclass(frozen=True, slots=True)
 class Target:
-    """Qué configuración leer y con qué nombre guardar la corrida."""
+    """Which configuration to read and under which name to save the run."""
 
-    config: Path  # ruta del config.toml
-    name: str | None  # nombre dado en el comando (tiene prioridad sobre [output] name)
-    fallback_name: str  # si no hay nombre en el comando ni en [output] name
+    config: Path  # path of the config.toml
+    name: str | None  # name given on the command line (takes priority over [output] name)
+    fallback_name: str  # if there is no name on the command line or in [output] name
 
 
 def resolve_target(arg: str | None) -> Target:
-    """Interpreta el único argumento del comando.
+    """Interpret the command's only argument.
 
-    - Sin argumento: config.toml de la raíz del proyecto.
-    - Una carpeta existente (p. ej. results/<ID>_<nombre>): su config.toml.
-    - Cualquier otro texto sin separadores de ruta: el nombre de la corrida, con el
-      config.toml de la raíz del proyecto.
+    - No argument: config.toml at the project root.
+    - An existing folder (e.g. results/<ID>_<name>): its config.toml.
+    - Any other text without path separators: the run's name, with the
+      config.toml at the project root.
     """
     if arg is None:
         return Target(default_config_path(), None, DEFAULT_RUN_NAME)
@@ -925,12 +925,12 @@ def resolve_target(arg: str | None) -> Target:
 
 
 def safe_name(name: str) -> str:
-    """Nombre apto para carpeta: letras, dígitos, '.', '_' y '-'."""
+    """Name fit for a folder: letters, digits, '.', '_' and '-'."""
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._") or DEFAULT_RUN_NAME
 
 
 def make_run_dir(base: Path, name: str, now: datetime) -> Path:
-    """Crea `base/<fecha-hora>_<nombre>`; si ya existe, agrega un sufijo numérico."""
+    """Create `base/<date-time>_<name>`; if it already exists, add a numeric suffix."""
     stem = f"{now:%Y%m%d-%H%M%S}_{safe_name(name)}"
     run_dir = base / stem
     k = 2
@@ -942,11 +942,11 @@ def make_run_dir(base: Path, name: str, now: datetime) -> Path:
 
 
 def config_copy_text(settings: Settings, seed: int, name: str, run_dir: Path, now: datetime) -> str:
-    """Copia de la configuración para replicar la corrida.
+    """Copy of the configuration to replicate the run.
 
-    Es el texto original con un encabezado de comentario, más lo necesario para
-    que la copia reproduzca la corrida: la semilla, si era aleatoria, y el nombre
-    usado en [output] name, para que la réplica conserve el sufijo de la carpeta.
+    It is the original text with a comment header, plus what is needed for the
+    copy to reproduce the run: the seed, if it was random, and the name
+    used in [output] name, so that the replica keeps the folder's suffix.
     """
     try:
         shown = run_dir.relative_to(Path.cwd())
@@ -954,10 +954,10 @@ def config_copy_text(settings: Settings, seed: int, name: str, run_dir: Path, no
         shown = run_dir
     header = (
         f"# Copia de la configuración usada en la corrida {run_dir.name}\n"
-        f"# ({now:%Y-%m-%d %H:%M:%S}, trafico {__version__}). Para replicarla:\n"
+        f"# ({now:%Y-%m-%d %H:%M:%S}, traffic {__version__}). Para replicarla:\n"
         f"#   uv run traffic {shown}\n\n"
     )
-    text = _COPY_HEADER.sub("", settings.text, count=1)  # al replicar una copia, no apilar encabezados
+    text = _COPY_HEADER.sub("", settings.text, count=1)  # when replicating a copy, do not stack headers
     if settings.run.seed is None:
         text = _set_key(text, "execution", "seed", seed, f"semilla aleatoria generada en la corrida {run_dir.name}")
     if settings.run.name != name:
@@ -969,14 +969,14 @@ _COPY_HEADER = re.compile(r"\A# Copia de .*?\n\n", flags=re.DOTALL)
 
 
 def _set_key(text: str, section: str, key: str, value: int | str, comment: str) -> str:
-    """Escribe `key = value` en [section] conservando el resto del texto tal cual.
+    """Write `key = value` in [section], keeping the rest of the text as is.
 
-    Reemplaza la línea de la clave si ya existe, la agrega al inicio de la sección
-    si no, y crea la sección al final si falta. El resultado se verifica
-    releyéndolo: debe ser igual al original salvo por esa clave. Si el formato no
-    lo permite (p. ej. una tabla en línea), se deja el texto y se anota el valor.
+    Replaces the key's line if it already exists, adds it at the start of the section
+    if not, and creates the section at the end if it is missing. The result is checked by
+    reading it back: it must equal the original except for that key. If the format does
+    not allow it (e.g. an inline table), the text is left as is and the value is noted.
     """
-    literal = json.dumps(value)  # un entero o una cadena JSON también son TOML válido
+    literal = json.dumps(value)  # an integer or a JSON string is also valid TOML
     line = f"{key} = {literal}  # {comment}\n"
     if not text.endswith("\n"):
         text += "\n"

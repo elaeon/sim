@@ -1,10 +1,10 @@
-"""Registro de series por réplica y agregación estadística en línea."""
+"""Recording of per-replica series and online statistical aggregation."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from trafico.config import DT, POLLUTANTS, SimConfig
+from traffic.config import DT, POLLUTANTS, SimConfig
 
 SERIES = ("cum_pax", "pax_flow", "paxkm_h", "pax_per_m")
 LANE_SATURATION = "lane_saturation"
@@ -23,27 +23,27 @@ EMIS_SERIES = tuple(f"emis_{pol}" for pol in POLLUTANTS)
 """Series con una columna por tipo: g/min de cada contaminante (ventana de un ciclo; sin semáforo, de
 NO_LIGHT_WINDOW s)."""
 """Series por carril que se agregan entre réplicas."""
-SMOOTH_S = 10.0  # s de la media móvil de pax·km/h
-SPEED_BIN = 0.5  # km/h, ancho de los intervalos del histograma de velocidad por carril
+SMOOTH_S = 10.0  # s of the moving average of pax·km/h
+SPEED_BIN = 0.5  # km/h, width of the bins of the per-lane speed histogram
 """Series derivadas que se agregan y grafican (una columna por tipo de vehículo)."""
 
 
 class Recorder:
-    """Series crudas muestreadas cada `sample` segundos, preasignadas en float32."""
+    """Raw series sampled every `sample` seconds, preallocated as float32."""
 
     def __init__(self, n_samples: int, n_types: int, n_lanes: int):
         shape = (n_samples, n_types)
-        self.cum_pax = np.zeros(shape, np.float32)  # pasajeros acumulados que cruzaron el semáforo
-        self.pax_m = np.zeros(shape, np.float32)  # pasajeros·m recorridos en el intervalo
-        self.pax_on = np.zeros(shape, np.float32)  # pasajeros dentro del tramo
-        self.footprint = np.zeros(shape, np.float32)  # m de carril ocupados (largo + gap real)
-        self.lane_sat = np.zeros((n_samples, n_lanes), np.float32)  # saturación de cada carril
-        self.lane_dist = np.zeros((n_samples, n_lanes), np.float32)  # m recorridos en el intervalo
-        self.lane_time = np.zeros((n_samples, n_lanes), np.float32)  # vehículo·s en el intervalo
-        self.lane_cross = np.zeros((n_samples, n_lanes), np.float32)  # cruces de la línea en el intervalo
-        self.exit_q = np.zeros((n_samples, n_lanes), np.float32)  # m ocupados en la cola de salida
-        self.entry_q = np.zeros((n_samples, n_lanes), np.float32)  # vehículos en la cola de entrada
-        self.emis = np.zeros((n_samples, n_types, len(POLLUTANTS)), np.float32)  # g emitidos en el intervalo
+        self.cum_pax = np.zeros(shape, np.float32)  # cumulative passengers that crossed the traffic light
+        self.pax_m = np.zeros(shape, np.float32)  # passenger·m travelled in the interval
+        self.pax_on = np.zeros(shape, np.float32)  # passengers inside the segment
+        self.footprint = np.zeros(shape, np.float32)  # m of lane occupied (length + actual gap)
+        self.lane_sat = np.zeros((n_samples, n_lanes), np.float32)  # saturation of each lane
+        self.lane_dist = np.zeros((n_samples, n_lanes), np.float32)  # m travelled in the interval
+        self.lane_time = np.zeros((n_samples, n_lanes), np.float32)  # vehicle·s in the interval
+        self.lane_cross = np.zeros((n_samples, n_lanes), np.float32)  # line crossings in the interval
+        self.exit_q = np.zeros((n_samples, n_lanes), np.float32)  # m occupied in the exit queue
+        self.entry_q = np.zeros((n_samples, n_lanes), np.float32)  # vehicles in the entry queue
+        self.emis = np.zeros((n_samples, n_types, len(POLLUTANTS)), np.float32)  # g emitted in the interval
         self.count = 0
 
     def record(self, cum_pax, pax_m, pax_on, footprint, lane_sat, lane_dist, lane_time, lane_cross, exit_q, entry_q,
@@ -67,9 +67,9 @@ class Recorder:
 
 
 def _window_rate(cum: np.ndarray, w: int, dt: float) -> np.ndarray:
-    """Tasa por segundo de una serie acumulada en una ventana de `w` muestras.
+    """Per-second rate of a cumulative series over a window of `w` samples.
 
-    Al inicio la ventana se acota al historial disponible.
+    At the start the window is limited to the available history.
     """
     n = cum.shape[0]
     padded = np.vstack((np.zeros((1, cum.shape[1])), cum))
@@ -79,18 +79,18 @@ def _window_rate(cum: np.ndarray, w: int, dt: float) -> np.ndarray:
 
 
 def derive_series(rec: Recorder, cfg: SimConfig) -> dict[str, np.ndarray]:
-    """Convierte las series crudas en las métricas de movilidad de pasajeros."""
+    """Turn the raw series into the passenger mobility metrics."""
     dt = cfg.sample_ticks * DT
     cum = rec.cum_pax.astype(np.float64)
 
-    # Flujo en ventana móvil de un ciclo de semáforo (sin semáforo, de NO_LIGHT_WINDOW s).
+    # Flow over a moving window of one traffic light cycle (without a light, NO_LIGHT_WINDOW s).
     window = round(cfg.flow_window / dt)
     flow = _window_rate(cum, window, dt) * 60.0
     lane_flow = _window_rate(np.cumsum(rec.lane_cross, axis=0, dtype=np.float64), window, dt) * 60.0
-    # pax·m del intervalo -> pax·km/h, suavizado con media móvil.
+    # pax·m of the interval -> pax·km/h, smoothed with a moving average.
     pax_m_cum = np.cumsum(rec.pax_m, axis=0, dtype=np.float64)
     paxkm_h = _window_rate(pax_m_cum, round(SMOOTH_S / dt), dt) * 3600.0 / 1000.0
-    # Velocidad media por carril en la misma media móvil: distancia / tiempo de sus vehículos.
+    # Mean speed per lane with the same moving average: distance / time of its vehicles.
     w = round(SMOOTH_S / dt)
     dist = _window_rate(np.cumsum(rec.lane_dist, axis=0, dtype=np.float64), w, dt)
     veh_time = _window_rate(np.cumsum(rec.lane_time, axis=0, dtype=np.float64), w, dt)
@@ -118,14 +118,14 @@ def derive_series(rec: Recorder, cfg: SimConfig) -> dict[str, np.ndarray]:
 
 
 def speed_bin_count(cfg: SimConfig) -> int:
-    """Intervalos de SPEED_BIN km/h desde 0 hasta la velocidad máxima de cualquier tipo."""
+    """SPEED_BIN km/h bins from 0 up to the maximum speed of any type."""
     return int(np.ceil(max(s.fastest_kmh for s in cfg.specs) / SPEED_BIN)) + 1
 
 
 def lane_speed_histogram(rec: Recorder, cfg: SimConfig) -> np.ndarray:
-    """(carriles, intervalos): cuántas muestras de la réplica tuvo cada carril en cada intervalo de
-    velocidad media (distancia / tiempo de sus vehículos en el intervalo de muestreo, con los
-    detenidos). Solo cuentan las muestras con vehículos en el carril."""
+    """(lanes, bins): how many samples of the replica each lane had in each mean speed
+    bin (distance / time of its vehicles in the sampling interval, including stopped
+    ones). Only samples with vehicles in the lane count."""
     n_bins = speed_bin_count(cfg)
     dist, time = rec.lane_dist[: rec.count], rec.lane_time[: rec.count]
     out = np.zeros((cfg.lanes, n_bins), np.int64)
@@ -137,9 +137,9 @@ def lane_speed_histogram(rec: Recorder, cfg: SimConfig) -> np.ndarray:
 
 
 class RunningStats:
-    """Media y desviación estándar elemento a elemento (Welford), ignorando NaN.
+    """Element-wise mean and standard deviation (Welford), ignoring NaN.
 
-    Ocupa O(tamaño de una réplica) sin importar cuántas réplicas se agreguen.
+    Uses O(size of one replica) no matter how many replicas are aggregated.
     """
 
     def __init__(self, shape):

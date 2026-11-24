@@ -1,16 +1,15 @@
-"""`resultados.json`: el resumen de una corrida en un formato estable para programas (scripts, agentes, un servidor).
+"""`results.json`: the summary of a run in a stable format for programs (scripts, agents, a server).
 
-Cada comando (`traffic`, `traffic-variants`, `traffic-emissions`, con o sin `--spacing`, y `traffic-calibrate`) lo
-escribe al final en la
-carpeta de resultados. Tiene siempre la misma cabecera y las métricas de cada modo bajo `"metricas"`:
+Each command (`traffic`, `traffic-variants`, `traffic-emissions`, with or without `--spacing`, and `traffic-calibrate`)
+writes it at the end into the results folder. It always has the same header, with each mode's metrics under `"metricas"`:
 
     {"schema": 1, "modo": "corrida" | "variantes" | "emisiones" | "separacion" | "calibracion", "id": ..., "carpeta": ...,
-     "creado": "AAAA-MM-DDTHH:MM:SS", "comando": ..., "semilla": ..., "replicas": ..., "s_simulados": ...,
+     "creado": "YYYY-MM-DDTHH:MM:SS", "comando": ..., "semilla": ..., "replicas": ..., "s_simulados": ...,
      "archivos": [...], "metricas": {...}}
 
-Reglas del formato (`SCHEMA`): las claves son ASCII en minúsculas con la unidad al final (`_s`, `_m`, `_kmh`, `_pct`);
-una clave no cambia de significado ni de unidad; se pueden añadir claves nuevas sin subir `SCHEMA`, y solo se sube si
-se quita o cambia una. NaN e infinitos se escriben como `null`.
+Format rules (`SCHEMA`): keys are lowercase ASCII with the unit at the end (`_s`, `_m`, `_kmh`, `_pct`); a key never
+changes meaning or unit; new keys may be added without bumping `SCHEMA`, which is bumped only when one is removed or
+changed. NaN and infinities are written as `null`.
 """
 
 from __future__ import annotations
@@ -46,7 +45,7 @@ MODES = ("corrida", "variantes", "emisiones", "separacion", "calibracion")
 
 
 def plain(obj):
-    """`obj` con tipos de Python (listas, números, None en lugar de NaN) para `json`."""
+    """`obj` with Python types (lists, numbers, None instead of NaN) for `json`."""
     if isinstance(obj, dict):
         return {str(k): plain(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -65,7 +64,7 @@ def plain(obj):
 
 
 def created(folder: Path) -> str | None:
-    """Fecha y hora de la corrida, de su nombre `AAAAMMDD-HHMMSS_<nombre>`."""
+    """Date and time of the run, from its name `YYYYMMDD-HHMMSS_<name>`."""
     try:
         return datetime.strptime(folder.name[:15], "%Y%m%d-%H%M%S").isoformat()
     except ValueError:
@@ -75,7 +74,7 @@ def created(folder: Path) -> str | None:
 def document(
     mode: str, folder: Path, *, command: str, seed: int | None, replicas: int, sim_seconds: float, metrics: dict,
 ) -> dict:  # fmt: skip
-    """Cabecera común y métricas de un modo. `archivos` lista lo que hay en la carpeta (y el propio resultados.json)."""
+    """Common header and the metrics of a mode. `archivos` lists what is in the folder (including results.json itself)."""
     files = {p.name for p in folder.iterdir() if p.is_file()} | {RESULTS_NAME}
     return plain({
         "schema": SCHEMA, "modo": mode, "id": folder.name, "carpeta": folder.resolve(), "creado": created(folder),
@@ -91,7 +90,7 @@ def write_results(folder: Path, doc: dict) -> Path:
 
 
 def mode_of(folder: Path) -> str | None:
-    """Modo de una carpeta de resultados sin `resultados.json` (de una versión anterior), por sus archivos."""
+    """Mode of a results folder without `results.json` (from an older version), from its files."""
     if existing(folder, "calibration.csv").is_file():
         return "calibracion"
     meta_path = existing(folder, "scenarios.json")
@@ -104,16 +103,16 @@ def mode_of(folder: Path) -> str | None:
 
 
 def rebuild(folder: Path) -> dict | None:
-    """El documento de una carpeta de comparación o de barrido sin `resultados.json`, a partir de sus datos crudos
-    (`datos.npz` y `escenarios.json`); None si no se puede (las corridas de `traffic` no guardan datos crudos)."""
+    """The document of a comparison or sweep folder without `results.json`, from its raw data
+    (`data.npz` and `scenarios.json`); None if that is not possible (`traffic` runs keep no raw data)."""
     mode = mode_of(folder)
     if mode == "separacion":
-        from trafico.bump_spacing import results_metrics
-        from trafico.emission_scenarios import load
+        from traffic.bump_spacing import results_metrics
+        from traffic.emission_scenarios import load
     elif mode == "emisiones":
-        from trafico.emission_scenarios import load, results_metrics
+        from traffic.emission_scenarios import load, results_metrics
     elif mode == "variantes":
-        from trafico.variants import load, results_metrics
+        from traffic.variants import load, results_metrics
     else:
         return None
     meta, data = load(folder)
@@ -123,8 +122,8 @@ def rebuild(folder: Path) -> dict | None:
 
 
 def read_results(folder: str | Path) -> dict:
-    """`resultados.json` de una carpeta. Si no lo tiene (corrida de una versión anterior) y es una comparación o un
-    barrido, lo reconstruye de sus datos sin escribir nada; para una corrida de `traffic` sin él, `FileNotFoundError`."""
+    """`results.json` of a folder. If it has none (a run from an older version) and it is a comparison or a
+    sweep, it is rebuilt from its data without writing anything; for a `traffic` run without it, `FileNotFoundError`."""
     folder = Path(folder).expanduser()
     path = existing(folder, RESULTS_NAME)
     if path.is_file():
@@ -138,9 +137,9 @@ def read_results(folder: str | Path) -> dict:
 
 
 def list_runs(output_dir: str | Path | None = None, mode: str | None = None, limit: int | None = None) -> list[dict]:
-    """Carpetas de resultados, de la más reciente a la más antigua: `id`, `carpeta`, `modo`, `creado` y si tiene
-    `resultados.json`. `output_dir` por omisión es `[output] dir` de la configuración."""
-    from trafico.settings import default_config_path, load_settings, resolve_output_dir
+    """Results folders, newest first: `id`, `carpeta`, `modo`, `creado` and whether it has
+    `results.json`. `output_dir` defaults to `[output] dir` from the configuration."""
+    from traffic.settings import default_config_path, load_settings, resolve_output_dir
 
     base = Path(output_dir).expanduser() if output_dir else resolve_output_dir(load_settings(default_config_path()).run.output_dir)
     out = []

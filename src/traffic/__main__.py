@@ -1,4 +1,4 @@
-from trafico.cli import main
+from traffic.cli import main
 
 if __name__ == "__main__":
     main()

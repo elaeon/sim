@@ -3,9 +3,9 @@ import json
 import numpy as np
 import pytest
 
-from trafico import api
-from trafico.cli import CONFIG_NAME, emissions, run, variants
-from trafico.results import RESULTS_NAME, SCHEMA, list_runs, plain, read_results
+from traffic import api
+from traffic.cli import CONFIG_NAME, emissions, run, variants
+from traffic.results import RESULTS_NAME, SCHEMA, list_runs, plain, read_results
 
 CONFIG = (
     "[road]\nlength = 150.0\nmax_line_speed = [50, 50]\n[traffic_light]\nenabled = false\n"
@@ -19,7 +19,7 @@ CONFIG = (
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    monkeypatch.setattr("trafico.settings.project_root", lambda: tmp_path)
+    monkeypatch.setattr("traffic.settings.project_root", lambda: tmp_path)
     (tmp_path / CONFIG_NAME).write_text(CONFIG, encoding="utf-8")
     return tmp_path
 
@@ -42,7 +42,7 @@ def test_simulate_returns_the_results_document(root):
     assert "co2_g_km" in car and car["co2_g_km"] > 0 and car["velocidad_media_kmh"] > 0
     assert len(doc["metricas"]["carriles"]["cruzan_veh_min"]) == 2 and doc["metricas"]["ejecucion"]["tiempo_real_s"] > 0
     text = (r.folder / RESULTS_NAME).read_text(encoding="utf-8")
-    assert "NaN" not in text and json.loads(text) == doc  # JSON estricto
+    assert "NaN" not in text and json.loads(text) == doc  # strict JSON
     assert read_results(r.folder) == doc
 
 
@@ -99,9 +99,9 @@ def test_api_does_not_print(root, capsys):
 def test_json_flag_prints_only_the_results(root, capsys):
     folder = emissions(["--spacing", "20", "--replicas", "1", "--json"])
     out = capsys.readouterr()
-    doc = json.loads(out.out)  # stdout es solo el JSON
+    doc = json.loads(out.out)  # stdout is only the JSON
     assert doc["modo"] == "separacion" and doc["carpeta"] == str(folder.resolve())
-    assert "Minimum spacing" in out.err  # lo demás, a stderr
+    assert "Minimum spacing" in out.err  # the rest, to stderr
     run(["--json"])
     assert json.loads(capsys.readouterr().out)["modo"] == "corrida"
     variants(["--lengths", "100", "--replicas", "1", "--json"])
@@ -116,7 +116,7 @@ def test_list_runs_and_rebuild(root):
     assert [r["modo"] for r in list_runs(mode="separacion")] == ["separacion"]
     assert len(list_runs(limit=2)) == 2 and list_runs()[0]["resultados_json"]
     assert list_runs(root / "no_hay") == []
-    # una carpeta anterior sin resultados.json se reconstruye de sus datos, sin escribir nada
+    # an older folder without results.json is rebuilt from its data, without writing anything
     for run_ in (emis, spacing):
         (run_.folder / RESULTS_NAME).unlink()
         doc = read_results(run_.folder)
@@ -147,7 +147,7 @@ def test_folders_with_the_old_spanish_file_names_still_load(root, tmp_path):
     and redraw."""
     import shutil
 
-    from trafico.results import LEGACY_NAMES
+    from traffic.results import LEGACY_NAMES
 
     folder = api.compare_emissions(bumps=["none", 40], replicas=1).folder
     old = tmp_path / folder.name

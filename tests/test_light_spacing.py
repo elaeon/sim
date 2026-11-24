@@ -1,4 +1,4 @@
-"""`traffic-emissions --light-spacing` y el desfase de los semáforos (`offset`)."""
+"""`traffic-emissions --light-spacing` and the offset of the traffic lights (`offset`)."""
 
 import json
 from pathlib import Path
@@ -6,18 +6,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from trafico.bump_spacing import (
+from traffic.bump_spacing import (
     DATA_NAME, LIGHT_CYCLE, META_NAME, PROFILE_CSV, SUMMARY_NAME, Spacing, analyze, build_configs, first_position,
     travel_time,
 )  # fmt: skip
-from trafico.cli import CONFIG_NAME, emissions
-from trafico.config import DT, GREEN, POLLUTANTS, RED, YELLOW, Light, SimConfig, SpeedBump
-from trafico.emissions import EMIS_BIN
-from trafico.pedestrians import fixed_phases
-from trafico.results import read_results
-from trafico.settings import ConfigError, parse_settings
+from traffic.cli import CONFIG_NAME, emissions
+from traffic.config import DT, GREEN, POLLUTANTS, RED, YELLOW, Light, SimConfig, SpeedBump
+from traffic.emissions import EMIS_BIN
+from traffic.pedestrians import fixed_phases
+from traffic.results import read_results
+from traffic.settings import ConfigError, parse_settings
 
-# ---------------------------------------------------------------- desfase
+# ---------------------------------------------------------------- offset
 
 
 def test_offset_delays_the_whole_cycle():
@@ -28,7 +28,7 @@ def test_offset_delays_the_whole_cycle():
     assert [late.phase(int(t)) for t in ticks] == [plain.phase(int(t) - shift) for t in ticks]
     assert np.array_equal(fixed_phases(late, 2000), np.array([late.phase(int(t)) for t in ticks], np.int8))
     assert {late.phase(int(t)) for t in ticks} == {RED, GREEN, YELLOW}
-    # Los intervalos en rojo coinciden con las fases, también con el desfase mayor que el rojo y en t = 0.
+    # The red intervals match the phases, also with an offset larger than the red and at t = 0.
     for light in (late, Light(100.0, red=20, green=25, yellow=3, offset=40.0, start_phase="green")):
         red = np.array([light.phase(t) == RED for t in range(3000)])
         edges = np.flatnonzero(np.diff(np.r_[False, red, False].astype(int)))
@@ -55,7 +55,7 @@ def test_offset_in_the_configuration():
             parse_settings(_settings(text), Path("x.toml"))
 
 
-# ---------------------------------------------------------------- escenarios
+# ---------------------------------------------------------------- scenarios
 
 
 def _base(**kw) -> SimConfig:
@@ -74,12 +74,12 @@ def test_build_configs_puts_only_the_sweep_lights_with_red_on_arrival():
     configs, skipped = build_configs(_base(), _spacing(distances=(50.0, 150.0, 300.0)))
     assert skipped == [300.0]
     assert [n for n, _ in configs][:3] == ["no traffic light", "one traffic light at 100 m", "traffic lights at 100 and 150 m (d = 50 m)"]
-    for _, cfg in configs:  # sin el semáforo del final ni los de la configuración, y sin topes
+    for _, cfg in configs:  # without the light at the end or those of the configuration, and without bumps
         assert not cfg.has_light and cfg.speed_bumps == ()
     assert configs[0][1].inner_lights == ()
     pair = configs[3][1].inner_lights
     assert [lt.position for lt in pair] == [100.0, 250.0] and all(lt.start_phase == "red" for lt in pair)
-    # El segundo pasa a rojo cuando llega la cabeza del pelotón que salió del primero al ponerse en verde (t = 30 s).
+    # The second turns red when the head of the platoon that left the first one on green arrives (t = 30 s).
     car = configs[0][1].specs[0]
     v, a = min(car.speed_kmh, 1e9) / 3.6, car.accel
     trip = travel_time(configs[0][1], 150.0)
@@ -88,7 +88,7 @@ def test_build_configs_puts_only_the_sweep_lights_with_red_on_arrival():
     t = round((30.0 + trip) / DT)
     assert pair[0].phase(round(30.0 / DT) - 1) == RED and pair[0].phase(round(30.0 / DT)) == GREEN
     assert pair[1].phase(t - 2) != RED and pair[1].phase(t + 1) == RED
-    # Con d corta la cabeza no llega a su velocidad: viaja acelerando.
+    # With a short d the head does not reach its speed: it travels while accelerating.
     if a:
         assert travel_time(configs[0][1], 5.0) == pytest.approx(np.sqrt(2 * 5.0 / a))
 
@@ -112,10 +112,10 @@ def test_green_wave_and_mixed_chain():
     a, b = configs[2][1].inner_lights
     trip = travel_time(configs[0][1], 50.0)
     assert b.offset == pytest.approx(round(trip / DT) * DT)
-    # B pasa a verde cuando llega la cabeza del pelotón que salió de A al ponerse en verde (t = 30 s).
+    # B turns green when the head of the platoon that left A on green arrives (t = 30 s).
     t = round((30.0 + trip) / DT)
     assert b.phase(t - 2) == RED and b.phase(t + 1) == GREEN
-    # Cadena mixta: A y B (d) en onda verde, C 150 m después de B en rojo al llegar.
+    # Mixed chain: A and B (d) in a green wave, C 150 m after B, red on arrival.
     s = _spacing(distances=(40.0, 60.0), count=3, offset_mode="verde,rojo", fixed_gaps=(150.0,))
     configs, skipped = build_configs(_base(), s)
     assert skipped == [] and configs[2][0] == "traffic lights at 100, 140 and 290 m (d = 40 m)"
@@ -130,24 +130,24 @@ def test_green_wave_and_mixed_chain():
             build_configs(_base(), _spacing(distances=(40.0,), count=3, **{"offset_mode": "rojo", **bad}))
 
 
-# ---------------------------------------------------------------- análisis
+# ---------------------------------------------------------------- analysis
 
 BINS = 120  # 600 m
 X = (np.arange(BINS) + 0.5) * EMIS_BIN
 FIRST = 100.0
-BEFORE, AFTER = 30.0, 40.0  # m de cola y de estela
+BEFORE, AFTER = 30.0, 40.0  # m of queue and of wake
 
 
 def _footprint(at: float, height: float = 600.0) -> np.ndarray:
-    """Exceso de un semáforo: meseta de la cola (BEFORE m antes) y estela triangular de AFTER m después."""
+    """Excess of a traffic light: a plateau for the queue (BEFORE m before) and a triangular wake of AFTER m after."""
     queue = np.where((X >= at - BEFORE) & (X < at), 0.5 * height, 0.0)
     wake = height * np.clip(1 - (X - at) / AFTER, 0, 1) * (X >= at)
     return queue + wake
 
 
 def _synthetic(distances, far_factor: float = 1.1, near_extra: dict | None = None, entry: tuple = ()) -> tuple[dict, dict]:
-    """El segundo semáforo emite `far_factor` × uno aislado (todo el pelotón se detiene); con d en `near_extra`, la
-    pareja emite además ese exceso uniforme; con d en `entry`, la cola llega a la entrada."""
+    """The second light emits `far_factor` × an isolated one (the whole platoon stops); with d in `near_extra`, the
+    pair also emits that uniform excess; with d in `entry`, the queue reaches the entry."""
     base = np.full(BINS, 100.0)
     profs = [base, base + _footprint(FIRST)]
     for d in distances:
@@ -171,14 +171,14 @@ def test_two_sided_footprint_and_stable_separation():
     assert first_position(meta) == FIRST
     r = analyze(meta, data)
     co2 = r["pollutants"]["co2"]
-    assert co2["huella_antes_m"] == pytest.approx(BEFORE + EMIS_BIN / 2)  # centro del intervalo libre anterior
+    assert co2["huella_antes_m"] == pytest.approx(BEFORE + EMIS_BIN / 2)  # centre of the previous free bin
     assert co2["huella_m"] == pytest.approx(37.5)
-    # Fuera de la huella: d ≥ antes + después; la pareja lejana emite 1.05 × dos aislados (no 1): se compara con ella.
+    # Outside the footprint: d ≥ before + after; the distant pair emits 1.05 × two isolated ones (not 1): it is compared with it.
     assert co2["d_huella"] == 80.0
     assert co2["aditividad"][-1] == pytest.approx(1.05, abs=0.01)
     assert co2["estabilidad"][0] > 1.05 and co2["estabilidad"][1:] == pytest.approx(1.0, abs=0.01)
     assert co2["d_aditiva"] == 80.0 and co2["d_minima"] == 80.0 and r["recomendada_m"] == 80.0
-    # Demora: (40 − 20) / (2 × (30 − 20)) = 1.
+    # Delay: (40 − 20) / (2 × (30 − 20)) = 1.
     assert np.allclose(r["demora"], 1.0) and not r["cola_en_entrada"]
 
 
@@ -186,18 +186,18 @@ def test_entry_blocking_and_no_plateau():
     meta, data = _synthetic([80.0, 120.0, 200.0], entry=(80.0,))
     r = analyze(meta, data)
     assert list(r["cola_entrada_d"]) == [True, False, False]
-    assert r["pollutants"]["co2"]["d_aditiva"] == 120.0  # la de la cola en la entrada no cuenta
-    # Si solo la más separada cumple (no hay meseta), no hay separación estable.
+    assert r["pollutants"]["co2"]["d_aditiva"] == 120.0  # the one with the queue at the entry does not count
+    # If only the widest spacing qualifies (there is no plateau), there is no stable spacing.
     meta, data = _synthetic([80.0, 120.0], near_extra={80.0: 150.0, 120.0: 150.0})
     assert analyze(meta, data)["pollutants"]["co2"]["d_aditiva"] is None
 
 
-# ---------------------------------------------------------------- comando
+# ---------------------------------------------------------------- command
 
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    monkeypatch.setattr("trafico.settings.project_root", lambda: tmp_path)
+    monkeypatch.setattr("traffic.settings.project_root", lambda: tmp_path)
     (tmp_path / CONFIG_NAME).write_text(
         "[road]\nlength = 150.0\nmax_line_speed = [50, 50]\n[traffic_light]\nenabled = false\n"
         "[[speed_bump]]\nposition = 40.0\n"
@@ -219,7 +219,7 @@ def test_command_runs_the_light_sweep_and_redraws(root, capsys):
     assert meta["elemento"] == "semaforo" and meta["primer_semaforo_m"] == 100.0 and meta["desfase"] == "rojo"
     assert meta["ciclo"] == {"rojo_s": 20.0, "verde_s": 20.0, "amarillo_s": 2.0} and meta["topes_fijos_m"] == []
     assert meta["tipo_peloton"] and len(meta["viaje_s"]) == 2 and meta["viaje_s"][0] < meta["viaje_s"][1]
-    assert meta["largo_m"] == 350.0  # 100 + 100 + 150, ampliado desde 150 m
+    assert meta["largo_m"] == 350.0  # 100 + 100 + 150, extended from 150 m
     assert meta["escenarios"][:2] == ["no traffic light", "one traffic light at 100 m"]
     out = capsys.readouterr().out
     assert "the segment is extended from 150 to 350 m" in out and "Minimum spacing between traffic lights" in out

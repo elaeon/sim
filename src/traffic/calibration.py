@@ -1,19 +1,19 @@
-"""Calibración: mide cómo se comporta un tipo de vehículo de la configuración en situaciones estándar de ingeniería de
-tránsito y lo compara con valores de referencia publicados (`traffic-calibrate`).
+"""Calibration: measures how a vehicle type from the configuration behaves in standard traffic engineering
+situations and compares it with published reference values (`traffic-calibrate`).
 
-Tres mediciones, cada una en un tramo de un carril con solo ese tipo (sin topes, paradas, cuellos de botella ni
-peatones), con su velocidad, largos, gaps, aceleración, frenado y la conducta ([behavior]) de la configuración:
+Three measurements, each on a single-lane segment with only that type (no bumps, stops, bottlenecks or
+pedestrians), with the configuration's speed, lengths, gaps, acceleration, braking and behaviour ([behavior]):
 
-  * Descarga de una cola en verde: una cola detenida ante un rojo largo arranca al ponerse en verde; se mide el
-    intervalo entre cruces sucesivos de la línea (frente del vehículo) por posición en la cola. De ahí salen el
-    intervalo de saturación (media de las posiciones `SATURATION_FROM` en adelante), el flujo de saturación
-    (3600 / intervalo) y el tiempo perdido al arrancar (HCM: Σ de las primeras 4 posiciones de intervalo − saturación).
-  * Flujo continuo (sin semáforo) con demanda creciente: flujo a la salida y densidad media en el tercio central del
-    tramo. La capacidad es el mayor flujo; de ahí el intervalo en marcha (3600 / capacidad).
-  * Densidad de embotellamiento: 1000 / (largo medio + gap_stop), vehículos por km de carril en una cola detenida.
+  * Discharge of a queue on green: a queue stopped at a long red starts when the light turns green; the
+    headway between successive crossings of the line (front of the vehicle) is measured by position in the queue.
+    This gives the saturation headway (mean of positions `SATURATION_FROM` onwards), the saturation flow
+    (3600 / headway) and the start-up lost time (HCM: Σ over the first 4 positions of headway − saturation).
+  * Continuous flow (no traffic light) with increasing demand: flow at the exit and mean density in the middle
+    third of the segment. Capacity is the highest flow; from it, the moving headway (3600 / capacity).
+  * Jam density: 1000 / (mean length + gap_stop), vehicles per lane km in a stopped queue.
 
-Las referencias son de autos (HCM 6.ª ed. y literatura de flujo vehicular); para otros tipos se informan los
-valores sin compararlos. No son datos locales: si hay aforos de la calle, valen más que estos rangos.
+The references are for cars (HCM 6th ed. and traffic flow literature); for other types the values are reported
+without comparing them. They are not local data: counts from the street are worth more than these ranges.
 """
 
 from __future__ import annotations
@@ -24,17 +24,17 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from trafico.config import DT, SimConfig
-from trafico.engine import Simulation
-from trafico.settings import ConfigError
+from traffic.config import DT, SimConfig
+from traffic.engine import Simulation
+from traffic.settings import ConfigError
 
-QUEUE = 15  # posiciones de la cola que se miden
-SATURATION_FROM = 5  # el intervalo de saturación es la media desde la 5.ª posición (índice 4) en adelante
-LOST_POSITIONS = 4  # HCM: el tiempo perdido al arrancar se cuenta en los primeros 4 vehículos
-RED_S = 120.0  # s de rojo para formar la cola
-FLOW_RATES = (10, 20, 30, 45, 60, 90, 120)  # veh/min de demanda en flujo continuo
-FLOW_LENGTH = 600.0  # m del tramo en flujo continuo
-FLOW_SECONDS = 900.0  # s simulados por demanda (el primer cuarto no cuenta)
+QUEUE = 15  # queue positions that are measured
+SATURATION_FROM = 5  # the saturation headway is the mean from the 5th position (index 4) onwards
+LOST_POSITIONS = 4  # HCM: the start-up lost time is counted over the first 4 vehicles
+RED_S = 120.0  # s of red to build the queue
+FLOW_RATES = (10, 20, 30, 45, 60, 90, 120)  # veh/min of demand in continuous flow
+FLOW_LENGTH = 600.0  # m of segment in continuous flow
+FLOW_SECONDS = 900.0  # simulated s per demand (the first quarter does not count)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +44,7 @@ class Reference:
     source: str
 
 
-# Rangos para autos. Ver el docstring del módulo y la documentación (docs/config.html#calibracion).
+# Ranges for cars. See the module docstring and the documentation (docs/config.html#calibracion).
 REFERENCES = {
     "flujo_saturacion_veh_h": Reference(
         1700, 1950, "HCM 6th ed.: base saturation flow of 1,900 veh/h/lane (1,750 in cities of fewer than "
@@ -61,8 +61,8 @@ REFERENCES = {
 
 
 def _single(base: SimConfig, k: int, **kw) -> SimConfig:
-    """Un carril con solo el tipo k, sin lo que no es del tipo (paradas, cuellos de botella, topes, peatones, cola de
-    salida, ocupación inicial). El límite del carril es el del carril del tipo en la configuración."""
+    """A single lane with only type k, without what is not part of the type (stops, bottlenecks, bumps, pedestrians,
+    exit queue, initial occupancy). The lane's limit is that of the type's lane in the configuration."""
     spec = replace(base.specs[k], bottleneck_prob=0.0, stop_position=None, lane=None, exclusive=False)
     limit = base.lane_max_kmh[base.specs[k].lane or 0]
     return SimConfig(specs=(spec,), lanes=1, lane_speed_limit=limit if np.isfinite(limit) else None,
@@ -79,8 +79,8 @@ def discharge_config(base: SimConfig, k: int) -> SimConfig:
 
 
 def discharge_replica(cfg: SimConfig, seed: np.random.SeedSequence) -> np.ndarray | None:
-    """Intervalos (s) entre los cruces de la línea de los primeros QUEUE vehículos de la cola, desde el verde; None si
-    la cola no llegó a QUEUE vehículos detenidos."""
+    """Headways (s) between the line crossings of the first QUEUE vehicles of the queue, from the green; None if
+    the queue did not reach QUEUE stopped vehicles."""
     sim = Simulation(cfg, np.random.default_rng(seed))
     green_at = round(cfg.red / DT)
     while sim.tick < green_at:
@@ -104,8 +104,8 @@ def flow_config(base: SimConfig, k: int, rate: float, seconds: float) -> SimConf
 
 
 def flow_replica(cfg: SimConfig, seed: np.random.SeedSequence) -> tuple[float, float, int]:
-    """(flujo a la salida en veh/h, densidad media en el tercio central en veh/km, vehículos en la cola de entrada al
-    final), sin el primer cuarto de la corrida."""
+    """(flow at the exit in veh/h, mean density in the middle third in veh/km, vehicles in the entry queue at the
+    end), without the first quarter of the run."""
     sim = Simulation(cfg, np.random.default_rng(seed))
     warm = cfg.n_ticks // 4
     lo, hi = cfg.length / 3, 2 * cfg.length / 3
@@ -141,8 +141,8 @@ def measure(
     base: SimConfig, vehicle: str, queues: int = 30, seed: int = 0, workers: int = 0,
     rates: tuple[float, ...] | None = None, flow_seconds: float | None = None,
 ) -> dict:  # fmt: skip
-    """Las tres mediciones para el tipo `vehicle` (su clave, p. ej. "car"): `queues` colas con distinta semilla y una
-    corrida de `flow_seconds` s simulados por demanda de `rates` veh/min (por omisión, FLOW_RATES y FLOW_SECONDS)."""
+    """The three measurements for the type `vehicle` (its key, e.g. "car"): `queues` queues with different seeds and a
+    run of `flow_seconds` simulated s per demand of `rates` veh/min (FLOW_RATES and FLOW_SECONDS by default)."""
     rates = tuple(FLOW_RATES if rates is None else rates)
     flow_seconds = FLOW_SECONDS if flow_seconds is None else flow_seconds
     keys = [s.key for s in base.specs]
@@ -197,8 +197,8 @@ def _reaction_text(cfg: SimConfig) -> str:
 
 
 def compare(m: dict) -> list[dict]:
-    """Cada medida contra su referencia: valor, rango, fuente y si queda "dentro", "abajo" o "arriba" (None si el tipo no
-    es un auto: las referencias son de autos)."""
+    """Each measurement against its reference: value, range, source and whether it is "dentro" (inside), "abajo" (below)
+    or "arriba" (above) (None if the type is not a car: the references are for cars)."""
     rows = []
     for key, ref in REFERENCES.items():
         value = m[key]
@@ -259,12 +259,12 @@ SUMMARY_NAME = "summary.txt"
 
 
 def results_metrics(m: dict, rows: list[dict]) -> dict:
-    """Métricas de `resultados.json`: cada medida con su referencia y las mediciones completas."""
+    """`results.json` metrics: each measurement with its reference and the full measurements."""
     return {"tipo": m["tipo"], "medidas": rows, **{k: v for k, v in m.items() if k not in ("tipo",)}}
 
 
 def write_outputs(folder, m: dict, rows: list[dict]) -> str:
-    """Tablas y resumen; devuelve el resumen en texto."""
+    """Tables and summary; returns the summary as text."""
     import csv
 
     with open(folder / TABLE_CSV, "w", newline="", encoding="utf-8") as fh:

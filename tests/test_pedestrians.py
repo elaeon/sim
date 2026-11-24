@@ -3,12 +3,12 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from trafico.config import (
+from traffic.config import (
     CAR, DEFAULT_SPECS, DT, GREEN, RED, YELLOW, Behavior, Light, Rate, SimConfig, SpeedBump,
 )  # fmt: skip
-from trafico import kernel
-from trafico.engine import Simulation
-from trafico.pedestrians import Schedule, arrivals, bump_schedule, fixed_phases, light_schedule
+from traffic import kernel
+from traffic.engine import Simulation
+from traffic.pedestrians import Schedule, arrivals, bump_schedule, fixed_phases, light_schedule
 
 N = 1000
 
@@ -24,12 +24,12 @@ def _at(phases: np.ndarray, a: int, b: int) -> bool:
     return bool((phases[a:b] == phases[a]).all())
 
 
-# ---------------------------------------------------------------- paso peatonal de un tope
+# ---------------------------------------------------------------- a bump's pedestrian crossing
 
 
 def test_bump_schedule_pedestrians_during_the_crossing_extend_it():
-    """El peatón de t=10 espera 30 pasos (amarillo) y cruza 100 (rojo, hasta 140); el de t=50 se une y lo alarga hasta
-    150; el de t=400 abre otro cierre."""
+    """The pedestrian at t=10 waits 30 steps (yellow) and crosses for 100 (red, until 140); the one at t=50 joins and
+    extends it to 150; the one at t=400 opens another closure."""
     s = bump_schedule(_counts((10, 1), (50, 1), (400, 1)), cross_ticks=100, yield_ticks=30, n=N)
     ph = s.phases
     assert ph.size == N + 1 and ph.dtype == np.int8
@@ -40,13 +40,13 @@ def test_bump_schedule_pedestrians_during_the_crossing_extend_it():
     assert ph[400] == YELLOW and ph[430] == RED and ph[529] == RED and ph[530] == GREEN
     assert (s.crossed, s.crossings) == (3, 2)
     assert s.closed_ticks == 110 + 100
-    assert s.wait_ticks == 30 + 0 + 30  # el de t=50 ya cruza al llegar
+    assert s.wait_ticks == 30 + 0 + 30  # the one at t=50 is already crossing on arrival
 
 
 def test_bump_schedule_pedestrians_waiting_at_the_curb_cross_together():
     s = bump_schedule(_counts((10, 2), (20, 1)), cross_ticks=100, yield_ticks=30, n=N)
     assert (s.crossed, s.crossings) == (3, 1)
-    assert s.phases[40] == RED and s.phases[139] == RED and s.phases[140] == GREEN  # el fin no se mueve
+    assert s.phases[40] == RED and s.phases[139] == RED and s.phases[140] == GREEN  # the end does not move
     assert s.wait_ticks == 2 * 30 + 1 * 20
 
 
@@ -58,10 +58,10 @@ def test_bump_schedule_without_pedestrians_is_always_green():
 def test_bump_schedule_clips_at_the_horizon():
     s = bump_schedule(_counts((90, 1), n=100), cross_ticks=100, yield_ticks=30, n=100)
     assert s.phases.size == 101 and s.phases[89] == GREEN and s.phases[90] == YELLOW and s.phases[100] == YELLOW
-    assert s.closed_ticks == 0 and s.crossed == 1  # cuenta el peatón; el rojo empezaría después del final
+    assert s.closed_ticks == 0 and s.crossed == 1  # the pedestrian counts; the red would start after the end
 
 
-# ---------------------------------------------------------------- semáforo peatonal
+# ---------------------------------------------------------------- pedestrian light
 
 
 def _light(red=15.0, green=20.0, yellow=3.0) -> Light:
@@ -87,7 +87,7 @@ def test_light_schedule_without_a_previous_light_only_waits_for_the_yellow():
     assert ph[9] == GREEN and ph[10] == YELLOW and ph[39] == YELLOW and ph[40] == RED and ph[189] == RED
     assert ph[190] == GREEN and (ph[190:] == GREEN).all()
     assert (s.crossed, s.crossings, s.closed_ticks) == (2, 1, 150)
-    assert s.wait_ticks == 2 * 30  # los dos esperan hasta que empieza el rojo (paso 40)
+    assert s.wait_ticks == 2 * 30  # both wait until the red starts (step 40)
 
 
 def test_light_schedule_waits_for_the_previous_light_to_be_red():
@@ -95,7 +95,7 @@ def test_light_schedule_waits_for_the_previous_light_to_be_red():
     prev_red[300:400] = True
     s = light_schedule(_counts((10, 1), (100, 1)), _light(), prev_red, 2000)
     ph = s.phases
-    assert (ph[:300] == GREEN).all()  # los dos esperan el rojo del anterior
+    assert (ph[:300] == GREEN).all()  # both wait for the previous light's red
     assert ph[300] == YELLOW and ph[330] == RED and ph[479] == RED and ph[480] == GREEN
     assert (s.crossed, s.crossings) == (2, 1) and s.wait_ticks == (330 - 10) + (330 - 100)
 
@@ -106,8 +106,8 @@ def test_light_schedule_never_activates_if_the_previous_never_turns_red():
 
 
 def test_light_schedule_respects_the_minimum_green_between_crossings():
-    """El del paso 60 llega con el rojo en curso (hasta 190): espera al siguiente cruce, que empieza al terminar el
-    verde mínimo (200 pasos = 20 s)."""
+    """The one at step 60 arrives during the red (until 190): it waits for the next crossing, which starts when the
+    minimum green ends (200 steps = 20 s)."""
     s = light_schedule(_counts((10, 1), (60, 1)), _light(), None, 2000)
     ph = s.phases
     assert ph[40] == RED and ph[189] == RED and ph[190] == GREEN and ph[389] == GREEN
@@ -118,26 +118,26 @@ def test_light_schedule_respects_the_minimum_green_between_crossings():
 
 def test_light_schedule_pedestrians_arriving_during_the_yellow_cross():
     s = light_schedule(_counts((10, 1), (25, 1), (45, 1)), _light(), None, 2000)
-    assert s.crossed == 3 and s.crossings == 2  # el de t=45 llega con el rojo en curso: otro cruce
+    assert s.crossed == 3 and s.crossings == 2  # the one at t=45 arrives during the red: another crossing
     assert s.wait_ticks == 30 + 15 + (390 + 30 - 45)
 
 
 def test_light_schedule_with_zero_minimum_green_can_chain_crossings():
     s = light_schedule(_counts((10, 1), (60, 1)), _light(green=0.0), None, 2000)
-    assert s.phases[190] == YELLOW  # sin verde mínimo, vuelve a empezar al terminar el rojo
+    assert s.phases[190] == YELLOW  # without a minimum green, it starts again when the red ends
     assert s.crossings == 2
 
 
-# ---------------------------------------------------------------- llegadas
+# ---------------------------------------------------------------- arrivals
 
 
 def test_arrivals_follow_the_rate_and_are_reproducible():
-    cfg = SimConfig(run=100.0, time_scale=10.0)  # 1000 s simulados
-    rate = Rate(6.0, 6.0, 6.0, 0.0)  # 6 peatones/min
+    cfg = SimConfig(run=100.0, time_scale=10.0)  # 1000 simulated s
+    rate = Rate(6.0, 6.0, 6.0, 0.0)  # 6 pedestrians/min
     a = arrivals(*np.random.default_rng(1).spawn(2), rate, cfg)
     b = arrivals(*np.random.default_rng(1).spawn(2), rate, cfg)
     np.testing.assert_array_equal(a, b)
-    assert a.size == cfg.n_ticks and abs(a.sum() - 100) < 35  # ~100 peatones (Poisson)
+    assert a.size == cfg.n_ticks and abs(a.sum() - 100) < 35  # ~100 pedestrians (Poisson)
     assert arrivals(*np.random.default_rng(2).spawn(2), Rate(0, 0, 0, 0), cfg).sum() == 0
 
 
@@ -149,8 +149,8 @@ INSTANT = DEFAULT_SPECS[CAR]
 
 
 def _sim(spec=GRADUAL, lanes=1, bump_lanes=None, red=(30, 700), yellow_from=10, **kw) -> Simulation:
-    """Calle sin llegadas con un paso peatonal a 60 m y un calendario fijo: amarillo desde el paso `yellow_from` y
-    rojo en los pasos [red[0], red[1])."""
+    """Street without arrivals with a pedestrian crossing at 60 m and a fixed schedule: yellow from step `yellow_from`
+    and red in steps [red[0], red[1])."""
     cfg = SimConfig(length=150, lanes=lanes, rates=(0, 0, 0), traffic_light=False, run=5.0, time_scale=20.0,
                     specs=(spec, *DEFAULT_SPECS[1:]),
                     behavior=Behavior(reaction_min=1.0, reaction_max=1.0, reaction_mean=1.0, reaction_std=0.0),
@@ -162,7 +162,7 @@ def _sim(spec=GRADUAL, lanes=1, bump_lanes=None, red=(30, 700), yellow_from=10, 
     schedule = Schedule(phases, 1, 1, red[1] - red[0], 0)
     sim.ped_schedules[("tope", 60.0)] = schedule
     sim._line_sched[0] = schedule
-    sim._p = kernel.as_ref(sim._params())  # las fases de las líneas de alto se fijan al armar los parámetros
+    sim._p = kernel.as_ref(sim._params())  # the phases of the stop lines are fixed when the parameters are built
     return sim
 
 
@@ -180,18 +180,18 @@ def test_vehicles_stop_completely_at_the_crossing_and_go_when_it_ends(spec):
     stopped_at_line = False
     while sim.tick < 700:
         sim.step()
-        assert sim.x[0] <= 60.0 + 1e-9  # no cruza mientras el paso está cerrado
+        assert sim.x[0] <= 60.0 + 1e-9  # it does not cross while the crossing is closed
         if sim.tick > 300 and sim.x[0] > 59.0 and sim.v_last[0] == 0.0:
             stopped_at_line = True
     assert stopped_at_line, "debe quedar detenido con el frente en el paso"
     while sim.n and sim.tick < sim.cfg.n_ticks:
         sim.step()
     assert sim.vid[0] == vid or sim.n == 0
-    assert sim.cum_veh[CAR] == 1  # al terminar el cruce sigue y sale del tramo
+    assert sim.cum_veh[CAR] == 1  # when the crossing ends it continues and leaves the segment
 
 
 def test_a_vehicle_that_cannot_stop_in_the_yellow_goes_through():
-    """Con el frente a 3 m del paso y a 50 km/h, el amarillo no le da para frenar a decel: pasa."""
+    """With its front 3 m from the crossing and at 50 km/h, the yellow does not leave room to brake at decel: it goes through."""
     sim = _sim(red=(60, 700), yellow_from=0)
     i = _place(sim, 56.5)
     sim.v_last[i] = 50 / 3.6 * DT
@@ -207,12 +207,12 @@ def test_the_crossing_only_rules_in_the_bump_lanes():
     waiting = sim.vid[left]
     while sim.tick < 600:
         sim.step()
-    assert sim.cum_veh[CAR] == 1 and sim.n == 1  # el del carril sin tope siguió y salió
-    assert sim.vid[0] == waiting and sim.x[0] <= 60.0  # el del carril del tope espera
+    assert sim.cum_veh[CAR] == 1 and sim.n == 1  # the one in the lane without a bump continued and left
+    assert sim.vid[0] == waiting and sim.x[0] <= 60.0  # the one in the bump's lane waits
 
 
 def test_pedestrians_do_not_change_vehicle_arrivals():
-    """Los peatones tienen sus propios generadores: con la misma semilla llegan los mismos vehículos."""
+    """Pedestrians have their own generators: with the same seed the same vehicles arrive."""
     base = dict(length=150, lanes=2, rates=(20, 6, 1), red=10, green=10, run=10.0, time_scale=10.0)
     plain = Simulation(SimConfig(**base, speed_bumps=(SpeedBump(60.0),)), np.random.default_rng(3))
     ped = Simulation(SimConfig(**base, speed_bumps=(SpeedBump(60.0, pedestrian=True),)), np.random.default_rng(3))
@@ -245,7 +245,7 @@ def test_pedestrian_light_at_the_end_of_the_street_stops_the_line():
         before = sim.cum_veh.copy()
         sim.step()
         if red:
-            assert (sim.cum_veh == before).all()  # nadie cruza la línea en rojo
+            assert (sim.cum_veh == before).all()  # nobody crosses the line on red
     row = sim.summary()["pedestrians"][0]
     assert row[0] > 0 and row[1] > 0 and row[2] > 0
 

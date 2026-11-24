@@ -1,10 +1,10 @@
-"""Comparación de emisiones entre escenarios de una misma calle: con y sin tope (o con topes en distintas
-posiciones) y, opcionalmente, con y sin semáforo (`uv run traffic-emissions`).
+"""Comparison of emissions between scenarios of the same street: with and without a bump (or with bumps at different
+positions) and, optionally, with and without a traffic light (`uv run traffic-emissions`).
 
-Todos los escenarios corren las mismas réplicas con la misma semilla que `traffic` (SeedSequence.spawn): las
-llegadas, pasajeros y velocidades sorteadas son las mismas, así que las diferencias vienen del tope o del
-semáforo. De cada escenario se guardan las medias entre réplicas del flujo que sale del tramo, los vehículos,
-tiempos y velocidades por tipo, y las emisiones por tipo, por km y a lo largo del tramo.
+All scenarios run the same replicas with the same seed as `traffic` (SeedSequence.spawn): the arrivals,
+passengers and drawn speeds are the same, so the differences come from the bump or the traffic light. For
+each scenario it keeps the means across replicas of the flow leaving the segment, the vehicles, times and
+speeds per type, and the emissions per type, per km and along the segment.
 """
 
 from __future__ import annotations
@@ -17,17 +17,17 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import POLLUTANT_LABELS, POLLUTANTS, SimConfig, SpeedBump, as_positions
-from trafico.emissions import EMIS_BIN, emitted, unit
-from trafico.metrics import LANE_EXIT_FLOW
-from trafico.runner import run_many
-from trafico.settings import ConfigError, RunOptions, validate_config
-from trafico.variants import reduce_config
+from traffic.config import POLLUTANT_LABELS, POLLUTANTS, SimConfig, SpeedBump, as_positions
+from traffic.emissions import EMIS_BIN, emitted, unit
+from traffic.metrics import LANE_EXIT_FLOW
+from traffic.runner import run_many
+from traffic.settings import ConfigError, RunOptions, validate_config
+from traffic.variants import reduce_config
 
 PLOT_NAME = "emission_comparison.png"
 DATA_NAME = "data.npz"
 META_NAME = "scenarios.json"
-BASE_CONFIG_NAME = "base_config.toml"  # no se llama config.toml: la carpeta no es una corrida de `traffic`
+BASE_CONFIG_NAME = "base_config.toml"  # not called config.toml: the folder is not a `traffic` run
 TABLE_CSV = "emission_comparison.csv"
 POSITION_CSV = "emissions_by_position.csv"
 SUMMARY_NAME = "summary.txt"
@@ -35,27 +35,27 @@ SUMMARY_NAME = "summary.txt"
 
 @dataclass(frozen=True, slots=True)
 class Scenarios:
-    """Qué se compara y cómo."""
+    """What is compared and how."""
 
-    # Topes de cada escenario: una posición (m), varias (tupla) o None / vacía = sin tope.
+    # Bumps of each scenario: one position (m), several (tuple) or None / empty = no bump.
     bumps: tuple[float | tuple[float, ...] | None, ...]
-    bump_lanes: tuple[int, ...] | None  # carriles de todos los topes (ya renumerados); None = los de cada tope
-    lights: tuple[bool | None, ...]  # semáforo activado en cada variante; None = como en la configuración
-    length: float | None  # m del tramo; None = [road] length
-    lanes: tuple[int, ...] | None  # carriles de la configuración base que se conservan; None = todos
-    without: tuple[str, ...]  # claves de los tipos que no participan
+    bump_lanes: tuple[int, ...] | None  # lanes of every bump (already renumbered); None = those of each bump
+    lights: tuple[bool | None, ...]  # traffic light enabled in each variant; None = as in the configuration
+    length: float | None  # m of the segment; None = [road] length
+    lanes: tuple[int, ...] | None  # lanes of the base configuration that are kept; None = all
+    without: tuple[str, ...]  # keys of the types that do not take part
     replicas: int
-    run: float  # s de proceso (× time_scale = s simulados)
+    run: float  # process s (× time_scale = simulated s)
 
 
 def bump_positions(bump: float | tuple[float, ...] | None) -> tuple[float, ...]:
-    """Posiciones (m) de los topes de un escenario, de la entrada a la salida (vacía = sin tope)."""
+    """Positions (m) of a scenario's bumps, from the entry to the exit (empty = no bump)."""
     return as_positions(bump)
 
 
 def scenario_label(bump: float | tuple[float, ...] | None, light: bool | None) -> str:
-    """Nombre del escenario, p. ej. «tope a 100 m», «topes a 35 y 70 m» o, si se comparan semáforos, «sin tope ·
-    sin semáforo»."""
+    """Name of the scenario, e.g. «bump at 100 m», «bumps at 35 and 70 m» or, when traffic lights are compared,
+    «no bump · no traffic light»."""
     at = bump_positions(bump)
     name = "no bump" if not at else f"{'bumps' if len(at) > 1 else 'bump'} at {' and '.join(f'{p:g}' for p in at)} m"
     if light is not None:
@@ -64,9 +64,9 @@ def scenario_label(bump: float | tuple[float, ...] | None, light: bool | None) -
 
 
 def scenario_bumps(base: SimConfig, positions: tuple[float, ...], lanes: tuple[int, ...] | None) -> tuple[SpeedBump, ...]:
-    """Topes de un escenario en esas posiciones: el de la configuración que está ahí (con sus carriles y peatones) o,
-    si no hay, uno nuevo como el primero de la configuración (o sin peatones, si no hay ninguno). `lanes` reemplaza
-    los carriles de todos; sin posiciones no hay tope ni paso peatonal."""
+    """A scenario's bumps at those positions: the configuration's bump that is there (with its lanes and pedestrians)
+    or, if there is none, a new one like the configuration's first (or without pedestrians, if there is none). `lanes`
+    replaces the lanes of all of them; without positions there is no bump or pedestrian crossing."""
     configured = {b.position: b for b in base.bumps}
     template = base.bumps[0] if base.bumps else SpeedBump(0.0)
     bumps = (configured.get(p) or replace(template, position=p) for p in positions)
@@ -74,7 +74,7 @@ def scenario_bumps(base: SimConfig, positions: tuple[float, ...], lanes: tuple[i
 
 
 def build_configs(base: SimConfig, s: Scenarios) -> list[tuple[str, SimConfig]]:
-    """(nombre, configuración validada) de cada escenario: cada semáforo por cada tope."""
+    """(name, validated configuration) of each scenario: each traffic light setting for each bump setting."""
     reduced = reduce_config(base, s.lanes, s.without)
     if s.length is not None:
         reduced = replace(reduced, length=s.length)
@@ -98,12 +98,12 @@ def run_scenarios(
     configs: list[tuple[str, SimConfig]], replicas: int, seed: int, workers: int = 0,
     progress: Callable[[str, int, int], None] | None = None,
 ) -> dict[str, np.ndarray]:  # fmt: skip
-    """Corre cada escenario con las mismas semillas. Devuelve arreglos indexados por escenario (media entre
-    réplicas; «_sd», su desviación estándar)."""
+    """Run each scenario with the same seeds. Returns arrays indexed by scenario (mean across
+    replicas; «_sd», its standard deviation)."""
     keys = ("crossed_veh", "travel_time", "mean_speed", "veh_km", "emissions", "emissions_free", "emissions_pos")
     out: dict[str, list] = {k: [] for k in (*keys, "crossed_veh_sd", "emissions_sd", "flow")}
     names = [name for name, _ in configs]
-    # Un solo grupo de procesos para todas las réplicas de todos los escenarios (mismas semillas en cada uno).
+    # A single process pool for all replicas of all scenarios (the same seeds in each one).
     aggs = run_many([cfg for _, cfg in configs], replicas, workers, seed,
                     progress=(lambda i, d, n: progress(names[i], d, n)) if progress else None)  # fmt: skip
     for agg in aggs:
@@ -111,7 +111,7 @@ def run_scenarios(
             out[k].append(agg.summary[k].mean)
         out["crossed_veh_sd"].append(agg.summary["crossed_veh"].std)
         out["emissions_sd"].append(agg.summary["emissions"].std)
-        out["flow"].append(np.nansum(agg.series[LANE_EXIT_FLOW].mean, axis=1))  # veh/min que salen, todos los carriles
+        out["flow"].append(np.nansum(agg.series[LANE_EXIT_FLOW].mean, axis=1))  # veh/min leaving, all lanes
     t = aggs[-1].times
     data = {k: np.array(v) for k, v in out.items()}
     data["t"] = np.asarray(t)
@@ -119,7 +119,7 @@ def run_scenarios(
 
 
 def metadata(base: SimConfig, s: Scenarios, configs: list[tuple[str, SimConfig]], seed: int, argv: list[str]) -> dict:
-    """Lo necesario para describir, graficar y repetir la comparación."""
+    """What is needed to describe, plot and repeat the comparison."""
     cfg = configs[0][1]
     pols, types = emitted(cfg)
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0]
@@ -131,8 +131,8 @@ def metadata(base: SimConfig, s: Scenarios, configs: list[tuple[str, SimConfig]]
         "topes_m": [[b.position for b in c.bumps] for _, c in configs],
         "semaforo": [c.any_light for _, c in configs],
         "carriles_tope": sorted({ln for _, c in configs for b in c.bumps for ln in c.bump_lanes(b)}) or None,
-        # Peatones en los topes ([[speed_bump]] pedestrian): tasa media (peatones/min) y s por cruce del primero con
-        # peatones; None = sin peatones.
+        # Pedestrians at the bumps ([[speed_bump]] pedestrian): mean rate (pedestrians/min) and s per crossing of the first
+        # one with pedestrians; None = no pedestrians.
         "peatones_tope": next(({"peatones_min": b.pedestrian_crossing.expected, "s_cruce": b.pedestrian_time}
                                for _, c in configs for b in c.crossings), None),  # fmt: skip
         "largo_m": cfg.length,
@@ -159,17 +159,17 @@ def metadata(base: SimConfig, s: Scenarios, configs: list[tuple[str, SimConfig]]
 
 
 def per_km(data: dict, meta: dict) -> np.ndarray:
-    """(escenario, tipo, contaminante) en la unidad de cada contaminante por km recorrido (NaN si no emite)."""
+    """(scenario, type, pollutant) in each pollutant's unit per km travelled (NaN if it does not emit it)."""
     km = data["veh_km"][:, :, None]
     scale = np.array([unit(pol)[1] for pol in POLLUTANTS])
     with np.errstate(invalid="ignore", divide="ignore"):
         out = data["emissions"] * scale / km
-    emits = data["emissions"].sum(axis=0) > 0  # (tipo, contaminante)
+    emits = data["emissions"].sum(axis=0) > 0  # (type, pollutant)
     return np.where(emits[None], out, np.nan)
 
 
 def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
-    """Tablas, datos crudos y parámetros; devuelve el resumen en texto."""
+    """Tables, raw data and parameters; returns the summary as text."""
     np.savez(folder / DATA_NAME, **data)
     (folder / META_NAME).write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     names = meta["nombres"]
@@ -193,7 +193,7 @@ def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
                     excess = 100 * (data["emissions"][si, k, p] / free - 1) if free > 0 else np.nan
                     row += [_num(v), _num(100 * (v / ref - 1) if np.isfinite(v) and ref > 0 else np.nan), _num(excess)]
                 w.writerow(row)
-    pos = data["emissions_pos"].sum(axis=2) / EMIS_BIN / (meta["s_simulados"] / 3600.0)  # (escenario, contaminante, x)
+    pos = data["emissions_pos"].sum(axis=2) / EMIS_BIN / (meta["s_simulados"] / 3600.0)  # (scenario, pollutant, x)
     with open(folder / POSITION_CSV, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["x_start_m", "x_end_m"] + [f"{POLLUTANTS[p]}_g_m_h_{i}" for p in pidx
@@ -209,8 +209,8 @@ def _num(v: float) -> str:
 
 
 def summary_text(meta: dict, data: dict[str, np.ndarray]) -> str:
-    """Tabla por escenario: vehículos por minuto y tiempo de recorrido de cada tipo, y emisiones por km de cada
-    tipo que emite, con el cambio frente al primer escenario."""
+    """Table per scenario: vehicles per minute and travel time of each type, and emissions per km of each
+    emitting type, with the change from the first scenario."""
     names = meta["nombres"]
     minutes = meta["s_simulados"] / 60
     km = per_km(data, meta)
@@ -241,8 +241,8 @@ def summary_text(meta: dict, data: dict[str, np.ndarray]) -> str:
 
 
 def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
-    """Métricas de `resultados.json`: por escenario y tipo, vehículos por minuto, tiempo de recorrido, velocidad media y,
-    por contaminante emitido, lo emitido por km, su cambio frente al primer escenario y su exceso frente a flujo libre."""
+    """`results.json` metrics: per scenario and type, vehicles per minute, travel time, mean speed and,
+    per emitted pollutant, the amount emitted per km, its change from the first scenario and its excess over free flow."""
     minutes = meta["s_simulados"] / 60
     km = per_km(data, meta)
     scenarios = []
@@ -269,8 +269,8 @@ def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
 
 
 def load(folder: Path) -> tuple[dict, dict[str, np.ndarray]]:
-    """Parámetros y datos de una comparación ya corrida."""
-    from trafico.results import existing
+    """Parameters and data of a comparison that has already run."""
+    from traffic.results import existing
 
     meta_path, data_path = existing(folder, META_NAME), existing(folder, DATA_NAME)
     if not (meta_path.is_file() and data_path.is_file()):

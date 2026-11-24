@@ -1,6 +1,6 @@
 """Landscape (16:9) visualization of a train journey: map on the left, elevation profile on the right.
 
-Same approach as the traffic video (trafico/movement.py): matplotlib draws the static background
+Same approach as the traffic video (traffic/movement.py): matplotlib draws the static background
 once, each frame redraws only the moving artists, and the RGBA buffer is piped to ffmpeg.
 Without ffmpeg (or with fmt="gif") frames are written as a GIF with Pillow.
 Colours come from a rail.theme.Theme (the default one unless a theme is passed).

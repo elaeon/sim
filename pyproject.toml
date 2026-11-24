@@ -1,7 +1,7 @@
 [project]
-name = "trafico"
+name = "traffic"
 version = "0.2.0"
-description = "Simulación microscópica de flujo vehicular en un tramo con semáforo (CPU, en paralelo)"
+description = "Microsimulation of vehicle flow on a road segment with traffic lights (CPU, in parallel) and a train journey simulation with route map and video"
 readme = "README.md"
 authors = [
     { name = "elaeon", email = "1216884+elaeon@users.noreply.github.com" }
@@ -14,11 +14,11 @@ dependencies = [
 ]
 
 [project.scripts]
-traffic = "trafico.cli:main"
-traffic-view = "trafico.cli:view_main"
-traffic-variants = "trafico.cli:variants_main"
-traffic-emissions = "trafico.cli:emissions_main"
-traffic-calibrate = "trafico.cli:calibrate_main"
+traffic = "traffic.cli:main"
+traffic-view = "traffic.cli:view_main"
+traffic-variants = "traffic.cli:variants_main"
+traffic-emissions = "traffic.cli:emissions_main"
+traffic-calibrate = "traffic.cli:calibrate_main"
 rail = "rail.cli:main"
 
 [build-system]
@@ -34,4 +34,4 @@ dev = [
 testpaths = ["tests"]
 
 [tool.uv.build-backend]
-module-name = ["trafico", "rail"]
+module-name = ["traffic", "rail"]

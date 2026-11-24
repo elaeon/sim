@@ -1,4 +1,4 @@
-"""Línea de comandos: `uv run traffic [name | folder]`."""
+"""Command line: `uv run traffic [name | folder]`."""
 
 from __future__ import annotations
 
@@ -14,17 +14,17 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import (
+from traffic.config import (
     DT, FUEL_CO2_G_PER_L, FUEL_LABELS, MAX_TYPES, PEDESTRIAN_YIELD, POLLUTANT_LABELS, POLLUTANTS, as_positions,
 )
-from trafico.emissions import EMIS_BIN, acceleration_table, emissions_label, emitted, unit
-from trafico.fuel import constant_speed_table, cost, liters
-from trafico.metrics import (
+from traffic.emissions import EMIS_BIN, acceleration_table, emissions_label, emitted, unit
+from traffic.fuel import constant_speed_table, cost, liters
+from traffic.metrics import (
     EMIS_SERIES, ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, LANE_SPEED, SERIES,
 )
-from trafico.results import document, read_results, write_results
-from trafico.runner import Aggregate, run_parallel
-from trafico.settings import (
+from traffic.results import document, read_results, write_results
+from traffic.runner import Aggregate, run_parallel
+from traffic.settings import (
     CONFIG_NAME,
     ConfigError,
     config_copy_text,
@@ -82,8 +82,8 @@ def _fmt(value: float, digits: int = 1) -> str:
 
 
 def summary_rows(agg: Aggregate) -> tuple[list[tuple[str, np.ndarray, int, str]], dict]:
-    """Filas de la tabla del resumen, (etiqueta, valor por tipo, decimales, clave de resultados.json), y las medias entre
-    réplicas de cada estadístico."""
+    """Rows of the summary table, (label, value per type, decimals, results.json key), and the means across
+    replicas of each statistic."""
     cfg = agg.cfg
     s = {k: v.mean for k, v in agg.summary.items()}
     sd = {k: v.std for k, v in agg.summary.items()}
@@ -108,7 +108,7 @@ def summary_rows(agg: Aggregate) -> tuple[list[tuple[str, np.ndarray, int, str]]
         ("Lane changes/veh", np.divide(s["lane_changes_type"], s["entered_veh"], out=np.full(cfg.n_types, np.nan),
                                             where=s["entered_veh"] > 0), 2, "cambios_carril_por_veh"),  # fmt: skip
     ]
-    active = [k for k, rate in enumerate(cfg.rates) if rate > 0]  # tipos que participan
+    active = [k for k, rate in enumerate(cfg.rates) if rate > 0]  # participating types
     if any(cfg.specs[k].stop_position is not None for k in active):
         rows.insert(9, ("Mean time at the stop (s)", s["stop_time"], 1, "tiempo_parada_s"))
     if cfg.bottleneck_active:
@@ -116,12 +116,12 @@ def summary_rows(agg: Aggregate) -> tuple[list[tuple[str, np.ndarray, int, str]]
         rows.append(("Mean time halted (s)", s["bottleneck_time"], 1, "tiempo_detenido_s"))
     passers = np.array([sp.pass_in_lane for sp in cfg.specs])
     if passers[active].any():
-        # Rebases dentro del carril por vehículo que entró; «—» para los tipos que no rebasan así.
+        # Overtakes within the lane per vehicle that entered; «—» for the types that do not overtake that way.
         per_veh = np.divide(s["in_lane_passes"], s["entered_veh"], out=np.full(cfg.n_types, np.nan),
                             where=passers & (s["entered_veh"] > 0))  # fmt: skip
         rows.append(("In-lane overtakes/veh", per_veh, 2, "rebases_carril_por_veh"))
     if any(cfg.specs[k].cargo_prob > 0 for k in active):
-        # Los de mercancía cuentan como vehículos, pero no en las filas de pasajeros.
+        # Freight types count as vehicles, but not in the passenger rows.
         cargo = np.divide(100.0 * s["arrived_cargo"], s["arrived_veh"], out=np.full(cfg.n_types, np.nan),
                           where=s["arrived_veh"] > 0)  # fmt: skip
         rows.insert(1, ("Carrying goods (%)", cargo, 1, "mercancia_pct"))
@@ -134,7 +134,7 @@ def format_summary(agg: Aggregate) -> str:
     cfg = agg.cfg
     rows, stats = summary_rows(agg)
     s = stats["s"]
-    active = [k for k, rate in enumerate(cfg.rates) if rate > 0]  # tipos que participan
+    active = [k for k, rate in enumerate(cfg.rates) if rate > 0]  # participating types
     w0 = max(len(r[0]) for r in rows) + 2
     widths = {k: max(10, len(cfg.specs[k].name) + 2) for k in active}
     speed = cfg.sim_seconds / agg.replica_wall.mean
@@ -163,8 +163,8 @@ def format_summary(agg: Aggregate) -> str:
 
 
 def _pedestrian_lines(cfg, s: dict) -> list[str]:
-    """Peatones de cada semáforo peatonal y de cada tope con paso peatonal: cuántos cruzaron, cuántas veces se cerró el
-    paso, la espera media de quien cruzó y el tiempo que estuvo cerrado a los vehículos (en rojo)."""
+    """Pedestrians at each pedestrian light and each bump with a pedestrian crossing: how many crossed, how many times
+    the crossing closed, the mean wait of those who crossed and the time it was closed to vehicles (red)."""
     spots = cfg.pedestrian_spots
     if not spots or "pedestrians" not in s:
         return []
@@ -179,8 +179,8 @@ def _pedestrian_lines(cfg, s: dict) -> list[str]:
 
 
 def _emission_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int, str]]:
-    """Por contaminante emitido: por km recorrido, por recorrido completo del tramo y el exceso frente al mismo
-    recorrido a velocidad constante (paradas, arranques, tope, cola). «—» en los tipos que no lo emiten."""
+    """Per emitted pollutant: per km travelled, per full trip along the segment and the excess over the same
+    trip at constant speed (stops, starts, bump, queue). «—» for the types that do not emit it."""
     pols, types = emitted(cfg)
     rows = []
     km = s["veh_km"]
@@ -203,14 +203,14 @@ def _emission_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int, str]]:
 
 
 def _burners(cfg) -> list[int]:
-    """Tipos que participan y queman combustible (tienen `fuel` y emiten CO2)."""
+    """Participating types that burn fuel (they have `fuel` and emit CO2)."""
     return [k for k, sp in enumerate(cfg.specs) if cfg.rates[k] > 0 and sp.burns]
 
 
 def _fuel_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int, str]]:
-    """Consumo (del CO2 emitido) y su costo: por km, por recorrido completo del tramo, lo que se gasta de más frente
-    al mismo recorrido a velocidad constante y el total de la corrida. «—» en los tipos sin combustible o sin
-    precio."""
+    """Fuel (from the CO2 emitted) and its cost: per km, per full trip along the segment, the extra spent over
+    the same trip at constant speed and the total of the run. «—» for the types without fuel or without a
+    price."""
     burners = _burners(cfg)
     if not burners:
         return []
@@ -242,8 +242,8 @@ def _fuel_rows(cfg, s: dict) -> list[tuple[str, np.ndarray, int, str]]:
 
 
 def _cruise_lines(cfg) -> list[str]:
-    """Tabla de referencia: rendimiento de cada tipo a velocidad constante con el modelo (del CO2) y con la curva
-    física (con `mass_kg`), en L/100 km, km/L y costo por km."""
+    """Reference table: fuel economy of each type at constant speed with the model (from CO2) and with the physical
+    curve (with `mass_kg`), in L/100 km, km/L and cost per km."""
     burners = _burners(cfg)
     if not burners:
         return []
@@ -267,8 +267,8 @@ def _cruise_lines(cfg) -> list[str]:
 
 
 def _acceleration_lines(cfg) -> list[str]:
-    """Tabla de referencia: lo que emite cada tipo al acelerar de 0 a 20, 20 a 40, 40 a 60 y 60 a 80 km/h a su
-    accel, y, entre paréntesis, a velocidad constante en el mismo tiempo y distancia."""
+    """Reference table: what each type emits when accelerating from 0 to 20, 20 to 40, 40 to 60 and 60 to 80 km/h at
+    its accel and, in parentheses, at constant speed over the same time and distance."""
     _, types = emitted(cfg)
     if not types:
         return []
@@ -294,8 +294,8 @@ def _acceleration_lines(cfg) -> list[str]:
 
 
 def write_emissions_csv(agg: Aggregate, path: Path) -> None:
-    """g/(m·h) de cada contaminante emitido, por carril, en intervalos de EMIS_BIN m a lo largo del tramo (media
-    entre réplicas)."""
+    """g/(m·h) of each emitted pollutant, per lane, in EMIS_BIN m bins along the segment (mean
+    across replicas)."""
     cfg = agg.cfg
     pols, _ = emitted(cfg)
     pos = agg.summary["emissions_pos"].mean / EMIS_BIN / (cfg.sim_seconds / 3600.0)
@@ -320,13 +320,13 @@ def write_csv(agg: Aggregate, path: Path) -> None:
             cols += [mean[:, k], std[:, k]]
             header += [f"{key}_{sp.name}_mean", f"{key}_{sp.name}_sd"]
     pols, types = emitted(cfg)
-    for p in pols:  # g/min de cada contaminante emitido, por tipo que lo emite
+    for p in pols:  # g/min of each emitted pollutant, per type that emits it
         stats = agg.series[EMIS_SERIES[p]]
         for k in types:
             if cfg.specs[k].emission_coefs(POLLUTANTS[p]) is not None:
                 cols += [stats.mean[:, k], stats.std[:, k]]
                 header += [f"{EMIS_SERIES[p]}_g_min_{cfg.specs[k].name}_mean", f"{EMIS_SERIES[p]}_g_min_{cfg.specs[k].name}_sd"]
-    if "co2" in [POLLUTANTS[p] for p in pols]:  # L/min de combustible, del CO2
+    if "co2" in [POLLUTANTS[p] for p in pols]:  # L/min of fuel, from CO2
         stats = agg.series[EMIS_SERIES[POLLUTANTS.index("co2")]]
         for k in _burners(cfg):
             g_per_l = FUEL_CO2_G_PER_L[cfg.specs[k].fuel]
@@ -347,14 +347,14 @@ def write_csv(agg: Aggregate, path: Path) -> None:
 
 
 def _rate_text(rate) -> str:
-    """Una tasa variable o fija, p. ej. «1.5 ± 1 en [0.5, 3], media 1.6»."""
+    """A variable or fixed rate, e.g. «1.5 ± 1 in [0.5, 3], mean 1.6»."""
     if not rate.variable:
         return f"{rate.expected:g}"
     return f"{rate.mean:g} ± {rate.std:g} in [{rate.min:g}, {rate.max:g}], mean {rate.expected:.3g}"
 
 
 def _lane_lines(cfg) -> list[str]:
-    """Límite de velocidad, carriles sin semáforo, paradas y demás ajustes por carril o por tipo."""
+    """Speed limit, lanes without a traffic light, stops and other per-lane or per-type settings."""
     lines = []
     if cfg.lane_speed_limit is not None:
         limits = " · ".join(f"{i}: {v:g}" for i, v in enumerate(cfg.lane_max_kmh))
@@ -442,8 +442,8 @@ def _lane_lines(cfg) -> list[str]:
 
 
 def _fuel_label(cfg) -> str | None:
-    """Línea de la cabecera: combustible y precio de cada tipo que quema combustible, y los que tienen `fuel`
-    pero no CO2."""
+    """Header line: fuel and price of each type that burns fuel, and those that have `fuel`
+    but no CO2."""
     burners = _burners(cfg)
     if not burners:
         return None
@@ -459,8 +459,8 @@ def _fuel_label(cfg) -> str | None:
 
 
 def _json_aware(command):
-    """Añade `--json` a un comando: lo que imprime pasa a stderr y en stdout queda solo el `resultados.json` de la
-    carpeta que devuelve (sin `--json` no cambia nada). El comando recibe siempre la lista de argumentos."""
+    """Add `--json` to a command: what it prints goes to stderr and stdout gets only the `results.json` of the
+    folder it returns (without `--json` nothing changes). The command always receives the argument list."""
 
     @functools.wraps(command)
     def wrapper(argv: list[str] | None = None) -> Path:
@@ -482,8 +482,8 @@ def _add_json(parser: argparse.ArgumentParser) -> None:
 
 
 def run_metrics(agg: Aggregate) -> dict:
-    """Métricas de `resultados.json` de una corrida de `traffic`: por tipo los mismos estadísticos de la tabla del
-    resumen (media entre réplicas), por carril, peatones y la ejecución."""
+    """`results.json` metrics of a `traffic` run: per type the same statistics as the summary table (mean across
+    replicas), per lane, pedestrians and the execution."""
     cfg = agg.cfg
     rows, stats = summary_rows(agg)
     s = stats["s"]
@@ -512,7 +512,7 @@ def run_metrics(agg: Aggregate) -> dict:
 
 @_json_aware
 def run(argv: list[str] | None = None) -> Path:
-    """Ejecuta una corrida completa y devuelve su carpeta de resultados."""
+    """Run a full simulation and return its results folder."""
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
@@ -521,7 +521,7 @@ def run(argv: list[str] | None = None) -> Path:
     except ConfigError as exc:
         parser.error(str(exc))
     cfg, opts = settings.sim, settings.run
-    # Prioridad del nombre: el del comando, [output] name, y si no el de la carpeta leída.
+    # Name priority: the command's, [output] name, and otherwise that of the folder read.
     name = safe_name(target.name or opts.name or target.fallback_name)
     seed = opts.seed if opts.seed is not None else secrets.randbelow(2**32)
     workers = min(opts.workers or os.process_cpu_count() or 1, opts.replicas)
@@ -552,7 +552,7 @@ def run(argv: list[str] | None = None) -> Path:
     if opts.series_csv:
         write_csv(agg, run_dir / CSV_NAME)
 
-    from trafico.plotting import plot_mobility, plot_passenger_distribution
+    from traffic.plotting import plot_mobility, plot_passenger_distribution
 
     footer = f"run {run_dir.name} · seed {seed}"
     if opts.passengers_plot and any(rate > 0 and sp.carries_passengers for sp, rate in zip(cfg.specs, cfg.rates)):
@@ -563,11 +563,11 @@ def run(argv: list[str] | None = None) -> Path:
         if opts.emisiones_csv:
             write_emissions_csv(agg, run_dir / EMIS_CSV_NAME)
         if opts.emissions_plot:
-            from trafico.plotting import plot_emissions_by_position
+            from traffic.plotting import plot_emissions_by_position
 
             plot_emissions_by_position(agg, run_dir / EMIS_PLOT_NAME, footer=footer)
     if opts.animation:
-        from trafico.movement import visualize
+        from traffic.movement import visualize
 
         print()
         for path in visualize(cfg, seed, settings.animation, run_dir, run_dir.name):
@@ -613,7 +613,7 @@ def build_viewer_parser() -> argparse.ArgumentParser:
 
 
 def latest_run_dir(base: Path) -> Path | None:
-    """Carpeta de corrida más reciente (los nombres empiezan con la fecha y hora)."""
+    """Most recent run folder (names start with the date and time)."""
     runs = sorted(p for p in base.glob("*") if (p / CONFIG_NAME).is_file()) if base.is_dir() else []
     return runs[-1] if runs else None
 
@@ -621,8 +621,8 @@ def latest_run_dir(base: Path) -> Path | None:
 def view(argv: list[str] | None = None) -> list[Path]:
     import dataclasses
 
-    from trafico.movement import visualize
-    from trafico.settings import validate_animation
+    from traffic.movement import visualize
+    from traffic.settings import validate_animation
 
     parser = build_viewer_parser()
     args = parser.parse_args(argv)
@@ -702,7 +702,7 @@ def build_variants_parser() -> argparse.ArgumentParser:
 
 
 def _lights(values: list[str] | None, red: float, green: float) -> tuple[tuple[float, float], ...]:
-    if values is None:  # tres repartos del mismo ciclo: rojo 2/3, 1/2 y 1/3
+    if values is None:  # three splits of the same cycle: red 2/3, 1/2 and 1/3
         cycle = red + green
         return tuple((round(round(cycle * f / DT) * DT, 6), round(round(cycle * (1 - f) / DT) * DT, 6))
                      for f in (2 / 3, 1 / 2, 1 / 3))  # fmt: skip
@@ -719,15 +719,15 @@ def _lights(values: list[str] | None, red: float, green: float) -> tuple[tuple[f
 
 @_json_aware
 def variants(argv: list[str] | None = None) -> Path:
-    """Corre una comparación de variantes (o la redibuja) y devuelve su carpeta."""
-    from trafico.movement import _free_path
-    from trafico.plotting import plot_variants
-    from trafico.settings import _set_key
-    from trafico.variants import (
+    """Run a variant comparison (or redraw it) and return its folder."""
+    from traffic.movement import _free_path
+    from traffic.plotting import plot_variants
+    from traffic.settings import _set_key
+    from traffic.variants import (
         BASE_CONFIG_NAME, PLOT_NAME as VARIANTS_PLOT, SUMMARY_NAME as VARIANTS_SUMMARY, Variants, load, metadata,
         run_variants, write_outputs,
     )  # fmt: skip
-    from trafico.variants import results_metrics as variants_metrics
+    from traffic.variants import results_metrics as variants_metrics
 
     argv = sys.argv[1:] if argv is None else argv
     parser = build_variants_parser()
@@ -763,7 +763,7 @@ def variants(argv: list[str] | None = None) -> Path:
         if len(v.lights) > MAX_TYPES:
             raise ConfigError(f"--lights: up to {MAX_TYPES} splits are allowed (plot colours)")
         seed = opts.seed if opts.seed is not None else secrets.randbelow(2**32)
-        meta = metadata(base, v, seed, argv)  # valida carriles y tipos antes de crear la carpeta
+        meta = metadata(base, v, seed, argv)  # validates lanes and types before creating the folder
     except ConfigError as exc:
         parser.error(str(exc))
 
@@ -879,7 +879,7 @@ def build_emissions_parser() -> argparse.ArgumentParser:
 
 # --light values: traffic light in every scenario (None = as in the configuration)
 LIGHT_MODES = {"config": (None,), "yes": (True,), "no": (False,), "both": (True, False)}
-# --offset values on the command line -> internal offsets of bump_spacing.OFFSETS (stored in escenarios.json)
+# --offset values on the command line -> internal offsets of bump_spacing.OFFSETS (stored in scenarios.json)
 OFFSET_MODES = {"red": "rojo", "green": "verde", "same": "igual"}
 
 
@@ -893,8 +893,8 @@ def _offset_mode(text: str | None) -> str:
 
 
 def _bumps(values: list[str] | None, config_positions, length: float) -> tuple[tuple[float, ...], ...]:
-    """Topes de cada escenario: «none» (ninguno), una posición en m o varias separadas por comas (p. ej. 35,70).
-    Por defecto, sin tope y con los de [[speed_bump]] (o uno a la mitad del tramo si no hay)."""
+    """Bumps of each scenario: «none» (no bump), a position in m or several separated by commas (e.g. 35,70).
+    By default, no bump and those of [[speed_bump]] (or one at the middle of the segment if there are none)."""
     if values is None:
         configured = as_positions(config_positions)
         return ((), configured or (length / 2,))
@@ -913,16 +913,16 @@ def _bumps(values: list[str] | None, config_positions, length: float) -> tuple[t
 
 @_json_aware
 def emissions(argv: list[str] | None = None) -> Path:
-    """Corre una comparación de emisiones entre escenarios (o la redibuja) y devuelve su carpeta."""
-    from trafico.emission_scenarios import (
+    """Run an emission comparison between scenarios (or redraw it) and return its folder."""
+    from traffic.emission_scenarios import (
         BASE_CONFIG_NAME, PLOT_NAME as EMIS_PLOT, SUMMARY_NAME as EMIS_SUMMARY, Scenarios, build_configs, load,
         metadata, run_scenarios, write_outputs,
     )  # fmt: skip
-    from trafico.emission_scenarios import results_metrics as emission_metrics
-    from trafico.movement import _free_path
-    from trafico.plotting import plot_emission_comparison
-    from trafico.settings import _set_key
-    from trafico.variants import reduce_config
+    from traffic.emission_scenarios import results_metrics as emission_metrics
+    from traffic.movement import _free_path
+    from traffic.plotting import plot_emission_comparison
+    from traffic.settings import _set_key
+    from traffic.variants import reduce_config
 
     argv = sys.argv[1:] if argv is None else argv
     parser = build_emissions_parser()
@@ -932,8 +932,8 @@ def emissions(argv: list[str] | None = None) -> Path:
             folder = Path(args.redibujar).expanduser()
             meta, data = load(folder)
             if meta.get("modo") == "separacion":
-                from trafico.bump_spacing import analyze, plot_name
-                from trafico.plotting import plot_bump_spacing
+                from traffic.bump_spacing import analyze, plot_name
+                from traffic.plotting import plot_bump_spacing
 
                 path = _free_path(folder / plot_name(meta))
                 plot_bump_spacing(path, meta, data, analyze(meta, data))
@@ -974,7 +974,7 @@ def emissions(argv: list[str] | None = None) -> Path:
             raise ConfigError("--replicas must be at least 1")
         if len(s.bumps) * len(s.lights) > MAX_TYPES:
             raise ConfigError(f"up to {MAX_TYPES} scenarios are allowed (plot colours)")
-        configs = build_configs(base, s)  # valida todos los escenarios antes de correr
+        configs = build_configs(base, s)  # validates every scenario before running
         seed = opts.seed if opts.seed is not None else secrets.randbelow(2**32)
         meta = metadata(base, s, configs, seed, argv)
     except ConfigError as exc:
@@ -1009,8 +1009,8 @@ def emissions(argv: list[str] | None = None) -> Path:
 
 
 def _cycle(text: str):
-    """`--cycle RED/GREEN[/YELLOW]` en s, como semáforo de plantilla (la posición no se usa)."""
-    from trafico.config import Light
+    """`--cycle RED/GREEN[/YELLOW]` in s, as a template traffic light (the position is not used)."""
+    from traffic.config import Light
 
     try:
         values = [float(v) for v in text.split("/")]
@@ -1022,19 +1022,19 @@ def _cycle(text: str):
 
 
 def _spacing(kind, args, argv, parser, target, settings, reduced, lanes, length) -> Path:
-    """`traffic-emissions --spacing` (kind «tope») o `--light-spacing` (kind «semaforo»): barrido de la
-    distancia entre dos topes o dos semáforos (ver bump_spacing.py)."""
-    from trafico.bump_spacing import (
+    """`traffic-emissions --spacing` (kind «tope») or `--light-spacing` (kind «semaforo»): sweep of the
+    distance between two bumps or two traffic lights (see bump_spacing.py)."""
+    from traffic.bump_spacing import (
         DEFAULT_DISTANCES, LIGHT, LIGHT_CYCLE, LIGHT_DISTANCES, LIGHT_FIRST, LIGHT_ROOM, NOUNS,
         SUMMARY_NAME as SPACING_SUMMARY, Spacing, analyze, build_configs, metadata, plot_name, write_outputs,
     )  # fmt: skip
-    from trafico.bump_spacing import results_metrics as spacing_metrics
-    from trafico.emission_scenarios import BASE_CONFIG_NAME, Scenarios
-    from trafico.emission_scenarios import metadata as base_metadata
-    from trafico.emission_scenarios import run_scenarios
-    from trafico.movement import _free_path
-    from trafico.plotting import plot_bump_spacing
-    from trafico.settings import _set_key
+    from traffic.bump_spacing import results_metrics as spacing_metrics
+    from traffic.emission_scenarios import BASE_CONFIG_NAME, Scenarios
+    from traffic.emission_scenarios import metadata as base_metadata
+    from traffic.emission_scenarios import run_scenarios
+    from traffic.movement import _free_path
+    from traffic.plotting import plot_bump_spacing
+    from traffic.settings import _set_key
 
     base, opts = settings.sim, settings.run
     light = kind == LIGHT
@@ -1169,11 +1169,11 @@ def build_calibration_parser() -> argparse.ArgumentParser:
 
 @_json_aware
 def calibrate(argv: list[str] | None = None) -> Path:
-    """Corre una calibración y devuelve su carpeta."""
-    from trafico.calibration import FLOW_RATES, PLOT_NAME as CAL_PLOT, compare, measure, results_metrics, write_outputs
-    from trafico.emission_scenarios import BASE_CONFIG_NAME
-    from trafico.plotting import plot_calibration
-    from trafico.settings import _set_key
+    """Run a calibration and return its folder."""
+    from traffic.calibration import FLOW_RATES, PLOT_NAME as CAL_PLOT, compare, measure, results_metrics, write_outputs
+    from traffic.emission_scenarios import BASE_CONFIG_NAME
+    from traffic.plotting import plot_calibration
+    from traffic.settings import _set_key
 
     argv = sys.argv[1:] if argv is None else argv
     parser = build_calibration_parser()

@@ -1,6 +1,6 @@
 # sim — traffic and train simulations
 
-**traffic** (Python package `trafico`) is a microscopic traffic simulation: each vehicle is simulated on its own. Cars, bikes, buses and any
+**traffic** is a traffic microsimulation: each vehicle is simulated on its own. Cars, bikes, buses and any
 other type defined in the configuration drive along a straight road with configurable length and lanes, speed bumps,
 pedestrian crossings and a traffic light. It runs on the CPU only (NumPy, no GPU) and spreads Monte Carlo replicas
 across processes. **rail** simulates the Chepe train (Los Mochis ↔ Chihuahua, Copper Canyon) and renders a

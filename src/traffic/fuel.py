@@ -1,14 +1,14 @@
-"""Consumo y costo de combustible a partir del CO2 del modelo de emisiones.
+"""Fuel consumption and cost from the CO2 of the emission model.
 
-Todo el carbono del combustible sale como CO2, así que los litros son el CO2 emitido entre los g de CO2 por litro
-de su combustible (`FUEL_CO2_G_PER_L`); el carbono del CO y del HC (menos de 1 %) no se cuenta. Por eso el
-consumo hereda la forma del CO2 de Int Panis (ajustado con manejo urbano: a velocidad constante, su consumo por
-km baja al subir la velocidad y pasa por debajo de lo que exige vencer el aire arriba de ≈ 70–80 km/h).
+All the carbon in the fuel leaves as CO2, so the litres are the CO2 emitted divided by the g of CO2 per litre
+of its fuel (`FUEL_CO2_G_PER_L`); the carbon in CO and HC (under 1 %) is not counted. So consumption inherits
+the shape of the Int Panis CO2 (fitted to urban driving: at constant speed its consumption per km falls as
+speed rises and drops below what overcoming air drag requires above ≈ 70–80 km/h).
 
-Como contraste, la tabla de rendimiento a velocidad constante da también una curva física (línea de Willans):
-el ralentí del modelo más la potencia en la rueda para vencer la rodadura y el aire, VSP(v, 0) = 0.132·v +
-0.000302·v³ kW/t, por la masa del tipo, entre la eficiencia marginal del motor y el poder calorífico del
-combustible.
+For contrast, the constant-speed fuel economy table also gives a physical curve (Willans line): the model's
+idling plus the power at the wheel to overcome rolling resistance and drag, VSP(v, 0) = 0.132·v +
+0.000302·v³ kW/t, times the type's mass, divided by the engine's marginal efficiency and the fuel's heating
+value.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from trafico.config import FUEL_CO2_G_PER_L, FUEL_MJ_PER_L, SimConfig, VehicleSpec
-from trafico.emissions import emission_rate
+from traffic.config import FUEL_CO2_G_PER_L, FUEL_MJ_PER_L, SimConfig, VehicleSpec
+from traffic.emissions import emission_rate
 
 WILLANS_EFFICIENCY = 0.246
 """Eficiencia marginal del motor (energía en la rueda / energía del combustible) de la curva física: con ella, el
@@ -30,26 +30,26 @@ CRUISE_KMH = (20.0, 40.0, 60.0, 80.0)
 
 
 def liters(spec: VehicleSpec, co2_g):
-    """Litros de combustible que emiten `co2_g` gramos de CO2 (NaN si el tipo no quema combustible)."""
+    """Litres of fuel that emit `co2_g` grams of CO2 (NaN if the type burns no fuel)."""
     if not spec.burns:
         return np.full_like(np.asarray(co2_g, dtype=np.float64), np.nan)
     return np.asarray(co2_g, dtype=np.float64) / FUEL_CO2_G_PER_L[spec.fuel]
 
 
 def cost(cfg: SimConfig, spec: VehicleSpec, l):
-    """Costo de `l` litros al precio del combustible del tipo (NaN si no tiene precio)."""
+    """Cost of `l` litres at the price of the type's fuel (NaN if it has no price)."""
     price = cfg.price(spec.fuel)
     return np.asarray(l, dtype=np.float64) * (np.nan if price is None else price)
 
 
 def vsp(v, a=0.0):
-    """Potencia específica (kW/t) a v m/s y a m/s² en plano."""
+    """Specific power (kW/t) at v m/s and a m/s² on flat ground."""
     return v * (1.1 * a + 0.132) + 0.000302 * v**3
 
 
 @dataclass(frozen=True, slots=True)
 class CruiseRow:
-    """Rendimiento a `kmh` constantes: L/100 km del modelo (del CO2) y de la curva física (None sin masa)."""
+    """Fuel economy at a constant `kmh`: L/100 km from the model (from CO2) and from the physical curve (None without mass)."""
 
     kmh: float
     l_100km: float
@@ -57,7 +57,7 @@ class CruiseRow:
 
 
 def constant_speed_table(spec: VehicleSpec, speeds=CRUISE_KMH) -> list[CruiseRow]:
-    """L/100 km a cada velocidad constante de `speeds` que el tipo alcanza. Vacía si no quema combustible."""
+    """L/100 km at each constant speed in `speeds` that the type reaches. Empty if it burns no fuel."""
     if not spec.burns:
         return []
     acc, dec = spec.emission_coefs("co2")
