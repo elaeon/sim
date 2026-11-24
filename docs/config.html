@@ -113,7 +113,7 @@
 
 <header>
   <h1>Configuration parameters</h1>
-  <p>Reference of <code>config.toml</code> for <strong>traffic</strong> (the <code>traffic</code> commands; Python package <code>trafico</code>), the simulation of vehicle flow on a road
+  <p>Reference of <code>config.toml</code> for <strong>traffic</strong> (the <code>traffic</code> commands and Python package), the simulation of vehicle flow on a road
     segment with a traffic light. Every parameter of a run is read from this file.
     The train simulation (<code>rail</code>) is documented separately, in <a href="rail.html">rail.html</a>.</p>
 </header>
@@ -257,14 +257,14 @@ uv run traffic-emissions --bumps none 100 --light no --length 200 --lanes 1 2 --
       scenarios over a single process pool and honours <code>[execution] workers = 0</code> (as many as CPUs; before
       it ran in a single process), and each engine step is ~20 % faster with gradual acceleration and braking. The
       results are identical to the previous ones with the same seed.</li>
-    <li>Compiled engine: the simulation step (<code>src/trafico/kernel.py</code>) is compiled with
+    <li>Compiled engine: the simulation step (<code>src/traffic/kernel.py</code>) is compiled with
       <a href="https://numba.pydata.org/">numba</a> and runs ~40 times faster (one replica of 9,000 simulated s with
       two lanes, a pedestrian light and two speed bumps: from 24 s to 0.6 s; 4 replicas in parallel: from 49 s to
       1.8 s). The results are bit-for-bit identical to the previous ones with the same seed. The first run after
       installing or after changing <code>kernel.py</code> compiles the engine (~1 min) and saves it in
-      <code>src/trafico/__pycache__</code>; later runs load it in under 1 s. See
+      <code>src/traffic/__pycache__</code>; later runs load it in under 1 s. See
       <a href="#execution">[execution]</a>.</li>
-    <li>New <a href="#api">Python API (<code>trafico.api</code>) and <code>results.json</code></a>: each run writes
+    <li>New <a href="#api">Python API (<code>traffic.api</code>) and <code>results.json</code></a>: each run writes
       a JSON summary with a stable format and the commands accept <code>--json</code> (prints that JSON to stdout);
       the API runs the same as the commands with named arguments and returns the result already parsed.</li>
     <li>New option <a href="#spacing"><code>traffic-emissions --spacing</code></a>: sweep of the distance between
@@ -523,7 +523,7 @@ uv run traffic-emissions --redraw results/&lt;ID&gt;_bump_emissions</code></pre>
   <h2>Python API and <code>results.json</code></h2>
   <p>To use the simulator from a program (a script, a notebook, an agent) without parsing text or opening CSV files,
     there are two things that do not change between versions as long as their number does not go up: the
-    <code>results.json</code> file in each results folder and the <code>trafico.api</code> module.</p>
+    <code>results.json</code> file in each results folder and the <code>traffic.api</code> module.</p>
 
   <h3 id="results-json"><code>results.json</code> and <code>--json</code></h3>
   <p>Each command (<code>traffic</code>, <code>traffic-variants</code>, <code>traffic-emissions</code>, with or without
@@ -574,8 +574,8 @@ uv run traffic-emissions --redraw results/&lt;ID&gt;_bump_emissions --json    # 
     comparisons and sweeps made before this version do not have it: the API rebuilds it from their raw data without
     writing anything; old <code>traffic</code> runs have to be run again. Folders written before the output files were renamed to English keep their Spanish names (<code>resultados.json</code>, <code>escenarios.json</code>, <code>variantes.json</code>, <code>datos.npz</code>, <code>resumen.txt</code>, <code>calibracion.csv</code>): they are still read, listed and redrawn.</p>
 
-  <h3 id="python-api"><code>trafico.api</code></h3>
-  <pre><code>from trafico import api
+  <h3 id="python-api"><code>traffic.api</code></h3>
+  <pre><code>from traffic import api
 
 run = api.simulate()                                                   # like `uv run traffic`
 run.results["metricas"]["tipos"]["car"]["tiempo_recorrido_s"]
@@ -1195,9 +1195,9 @@ bottleneck_time_std = 30.0</code></pre>
         <td>≥ 0.</td></tr>
     </tbody>
   </table></div>
-  <p>The simulation step is compiled with numba (<code>src/trafico/kernel.py</code>). The first run after installing or
+  <p>The simulation step is compiled with numba (<code>src/traffic/kernel.py</code>). The first run after installing or
     after changing that file compiles it, ~1 min without showing progress; numba saves it in
-    <code>src/trafico/__pycache__</code> and later runs load it in under 1 s. With several processes, the main one
+    <code>src/traffic/__pycache__</code> and later runs load it in under 1 s. With several processes, the main one
     compiles (or loads) it before spreading the replicas, so each process only loads it. To debug the step with
     <code>pdb</code> or <code>print</code>, <code>NUMBA_DISABLE_JIT=1 uv run traffic …</code> runs the same code as
     pure Python: it gives the same results, about 100 times slower.</p>
@@ -1815,7 +1815,7 @@ mass_kg = 1250.0</code></pre>
   </div>
 </section>
 
-<footer>trafico 0.1.0 · <code>config.toml</code> documentation</footer>
+<footer>traffic 0.1.0 · <code>config.toml</code> documentation</footer>
 </div>
 </body>
 </html>

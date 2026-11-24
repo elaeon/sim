@@ -1,8 +1,8 @@
-"""API de Python de `trafico`: las mismas corridas que los comandos, con argumentos con nombre y resultados estructurados.
+"""Python API of `traffic`: the same runs as the commands, with named arguments and structured results.
 
-    from trafico import api
+    from traffic import api
 
-    run = api.simulate()                                   # como `uv run traffic`
+    run = api.simulate()                                   # like `uv run traffic`
     run.results["metricas"]["tipos"]["car"]["tiempo_recorrido_s"]
     run = api.compare_emissions(bumps=["none", 35, (35, 70)], replicas=4)
     run = api.bump_spacing(distances=[20, 40, 60], chain=3)
@@ -10,23 +10,22 @@
     run = api.light_spacing(distances=[25, 50], chain=3, fixed=[150], offset=["green", "red"])
     api.list_runs(mode="separacion", limit=5)
 
-Contrato (`API_VERSION`):
+Contract (`API_VERSION`):
 
-  * Cada función de corrida (`simulate`, `compare_emissions`, `bump_spacing`, `light_spacing`, `compare_variants`,
-    `calibrate`) hace lo
-    mismo que su comando, escribe la misma carpeta de resultados y devuelve un `Run` con el contenido de su
-    `resultados.json` (formato en `trafico.results`). No imprime nada ni lee `sys.argv`; lo que el comando habría impreso queda en
-    `Run.log`.
-  * Los errores de configuración o de argumentos son `ConfigError` (subclase de `ValueError`); una carpeta que no
-    existe o no es de resultados, `FileNotFoundError`.
-  * `config` es None (el `config.toml` de la raíz del proyecto), una carpeta con su `config.toml` (p. ej. una carpeta
-    de resultados, para repetir una corrida) o la ruta de un `config.toml`. `name` (el sufijo de la carpeta de
-    resultados) solo se admite sin `config`, como en la línea de comandos.
-  * Los nombres y el significado de los argumentos y de las claves de `resultados.json` no cambian dentro de la misma
-    `API_VERSION`; se pueden añadir argumentos opcionales y claves nuevas. Una corrida que cambia o quita algo sube la
-    versión.
-  * Las funciones de corrida capturan stdout y stderr del proceso mientras corren: no las llame desde varios hilos a
-    la vez (varios procesos sí).
+  * Each run function (`simulate`, `compare_emissions`, `bump_spacing`, `light_spacing`, `compare_variants`,
+    `calibrate`) does the same as its command, writes the same results folder and returns a `Run` with the
+    contents of its `results.json` (format in `traffic.results`). It prints nothing and does not read `sys.argv`;
+    what the command would have printed goes to `Run.log`.
+  * Configuration or argument errors are `ConfigError` (a subclass of `ValueError`); a folder that does not
+    exist or is not a results folder, `FileNotFoundError`.
+  * `config` is None (the `config.toml` at the project root), a folder with its `config.toml` (e.g. a results
+    folder, to repeat a run) or the path of a `config.toml`. `name` (the suffix of the results folder) is only
+    accepted without `config`, as on the command line.
+  * The names and meaning of the arguments and of the `results.json` keys do not change within the same
+    `API_VERSION`; optional arguments and new keys may be added. A release that changes or removes something bumps
+    the version.
+  * The run functions capture the process's stdout and stderr while they run: do not call them from several
+    threads at once (several processes are fine).
 """
 
 from __future__ import annotations
@@ -38,8 +37,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from trafico.results import MODES, RESULTS_NAME, SCHEMA, list_runs, mode_of, read_results
-from trafico.settings import ConfigError, default_config_path, load_settings, resolve_target
+from traffic.results import MODES, RESULTS_NAME, SCHEMA, list_runs, mode_of, read_results
+from traffic.settings import ConfigError, default_config_path, load_settings, resolve_target
 
 API_VERSION = 1
 
@@ -52,24 +51,24 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class Run:
-    """Una corrida terminada."""
+    """A finished run."""
 
     folder: Path
     mode: str  # "corrida" | "variantes" | "emisiones" | "separacion"
-    results: dict  # el resultados.json de la carpeta
-    log: str  # lo que el comando habría impreso
+    results: dict  # the folder's results.json
+    log: str  # what the command would have printed
 
     @property
     def files(self) -> list[str]:
         return list(self.results["archivos"])
 
     def path(self, name: str) -> Path:
-        """Ruta de un archivo de la carpeta (p. ej. `run.path("summary.txt")`)."""
+        """Path of a file in the folder (e.g. `run.path("summary.txt")`)."""
         return self.folder / name
 
 
 def _call(command, argv: list[str]) -> tuple[Path, str]:
-    """Corre un comando de `trafico.cli` sin imprimir: (carpeta, texto impreso). `parser.error` pasa a ConfigError."""
+    """Run a `traffic.cli` command without printing: (folder, printed text). `parser.error` becomes ConfigError."""
     out, err = io.StringIO(), io.StringIO()
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -90,7 +89,7 @@ def _target(config: str | Path | None, name: str | None) -> list[str]:
 
 
 def _opt(flag: str, value) -> list[str]:
-    """`--flag valor` (o `--flag v1 v2 …` con una lista); nada si el valor es None o una lista vacía."""
+    """`--flag value` (or `--flag v1 v2 …` with a list); nothing if the value is None or an empty list."""
     if value is None:
         return []
     if isinstance(value, (list, tuple)):
@@ -104,7 +103,7 @@ def _finish(command, argv: list[str], mode: str) -> Run:
 
 
 def _bump(b) -> str:
-    """Un escenario de topes de `compare_emissions` como lo pide `--bumps`."""
+    """A bump scenario of `compare_emissions` as `--bumps` expects it."""
     if b is None:
         return "none"
     if isinstance(b, str):
@@ -121,8 +120,8 @@ def _light(value) -> str:
 
 
 def simulate(config: str | Path | None = None, *, name: str | None = None) -> Run:
-    """Corrida completa de `traffic`: réplicas Monte Carlo con la configuración, gráficas, tablas y resumen."""
-    from trafico.cli import run
+    """Full `traffic` run: Monte Carlo replicas with the configuration, plots, tables and summary."""
+    from traffic.cli import run
 
     return _finish(run, _target(config, name), "corrida")
 
@@ -132,14 +131,14 @@ def compare_emissions(
     lanes: list[int] | None = None, without: list[str] = (), length: float | None = None,
     bump_lanes: list[int] | None = None, replicas: int | None = None, run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`traffic-emissions`: emisiones, consumo y tiempo de cada escenario con la misma semilla.
+    """`traffic-emissions`: emissions, fuel and travel time of each scenario with the same seed.
 
-    `bumps`: topes de cada escenario; cada elemento es None o "none" (sin tope), un número (posición en m) o una lista
-    de posiciones (varios topes); None = sin tope y con los de la configuración. `lights`: "config", "yes", "no",
-    "both" (o True/False). `lanes`: carriles que se conservan; `without`: claves de tipos que no participan;
-    `length`: largo del tramo; `bump_lanes`: carriles con tope; `replicas` y `run` (s de proceso) reemplazan a los de la
-    configuración."""
-    from trafico.cli import emissions
+    `bumps`: the bumps of each scenario; each item is None or "none" (no bump), a number (position in m) or a list
+    of positions (several bumps); None = no bump and the configuration's own. `lights`: "config", "yes", "no",
+    "both" (or True/False). `lanes`: lanes that are kept; `without`: keys of types that do not take part;
+    `length`: segment length; `bump_lanes`: lanes with a bump; `replicas` and `run` (process s) replace those of the
+    configuration."""
+    from traffic.cli import emissions
 
     argv = _target(config, name) + _opt("--bumps", None if bumps is None else [_bump(b) for b in bumps])
     argv += ["--light", _light(lights)] + _opt("--lanes", lanes) + _opt("--without", list(without))
@@ -155,12 +154,12 @@ def bump_spacing(
     length: float | None = None, bump_lanes: list[int] | None = None, replicas: int | None = None,
     run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`traffic-emissions --spacing`: separación mínima entre topes para diluir la huella de emisiones.
+    """`traffic-emissions --spacing`: minimum spacing between bumps for the emission footprint to dilute.
 
-    `distances`: separaciones en m (None = 10 15 20 25 30 40 50 60 80 100); `chain`: topes por cadena (2 = una pareja);
-    `first`: posición del primer tope; `tolerance` y `threshold`: ver la documentación. Los demás argumentos, como en
-    `compare_emissions` (aquí `lights` no admite "both")."""
-    from trafico.cli import emissions
+    `distances`: spacings in m (None = 10 15 20 25 30 40 50 60 80 100); `chain`: bumps per chain (2 = a pair);
+    `first`: position of the first bump; `tolerance` and `threshold`: see the documentation. The other arguments, as in
+    `compare_emissions` (here `lights` does not accept "both")."""
+    from traffic.cli import emissions
 
     argv = _target(config, name) + ["--spacing"] + [str(d) for d in distances or ()]
     argv += _opt("--chain", chain) + _opt("--first-bump", first) + _opt("--tolerance", tolerance)
@@ -178,16 +177,16 @@ def light_spacing(
     lanes: list[int] | None = None, without: list[str] = (), length: float | None = None,
     bump_lanes: list[int] | None = None, replicas: int | None = None, run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`traffic-emissions --light-spacing`: separación mínima entre semáforos de ciclo fijo para que la huella de
-    emisiones del primero no cambie al alejar el segundo.
+    """`traffic-emissions --light-spacing`: minimum spacing between fixed-cycle traffic lights for the emission
+    footprint of the first one to stop changing as the second moves away.
 
-    `distances`: separaciones en m (None = 25 50 75 100 150 200 250 300); `first`: posición del primer semáforo (None =
-    100 m); `cycle`: (rojo, verde[, amarillo]) en s o un texto "30/30/3" (None = el primer semáforo de ciclo fijo de la
-    configuración o 30/30/3); `offset`: "red" (el siguiente en rojo al llegar el pelotón; por omisión), "green" (onda
-    verde) o "same", o una lista con uno por tramo de la cadena; `fixed`: separaciones fijas (m) de los tramos después
-    del primero, con `chain` ≥ 3; `bumps`: topes fijos en todos los escenarios (m; None = sin topes). Los demás, como en
+    `distances`: spacings in m (None = 25 50 75 100 150 200 250 300); `first`: position of the first light (None =
+    100 m); `cycle`: (red, green[, yellow]) in s or a text "30/30/3" (None = the configuration's first fixed-cycle
+    light, or 30/30/3); `offset`: "red" (the next one is red when the platoon arrives; the default), "green" (green
+    wave) or "same", or a list with one per gap of the chain; `fixed`: fixed spacings (m) of the gaps after the
+    first one, with `chain` ≥ 3; `bumps`: bumps fixed in every scenario (m; None = no bumps). The rest, as in
     `bump_spacing`."""
-    from trafico.cli import emissions
+    from traffic.cli import emissions
 
     text = cycle if cycle is None or isinstance(cycle, str) else "/".join(f"{v:g}" for v in cycle)
     argv = _target(config, name) + ["--light-spacing"] + [str(d) for d in distances or ()]
@@ -209,11 +208,11 @@ def compare_variants(
     lights: list | None = None, lanes: list[int] | None = None, without: list[str] = (),
     queue: list[str] | None = None, replicas: int | None = None, run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`traffic-variants`: velocidad por carril y cola de entrada con cada largo de tramo y reparto del semáforo.
+    """`traffic-variants`: speed per lane and entry queue for each segment length and traffic light split.
 
-    `lights`: repartos como pares (rojo, verde) en s o textos "40/20" (None = tres repartos del ciclo de la
-    configuración); `queue`: claves de los tipos que se cuentan en la cola de entrada."""
-    from trafico.cli import variants
+    `lights`: splits as (red, green) pairs in s or texts "40/20" (None = three splits of the configuration's
+    cycle); `queue`: keys of the types counted in the entry queue."""
+    from traffic.cli import variants
 
     split = None if lights is None else [x if isinstance(x, str) else f"{x[0]:g}/{x[1]:g}" for x in lights]
     argv = _target(config, name) + _opt("--lengths", lengths) + _opt("--lights", split) + _opt("--lanes", lanes)
@@ -224,19 +223,19 @@ def compare_variants(
 def calibrate(
     config: str | Path | None = None, *, name: str | None = None, vehicle: str = "car", queues: int | None = None,
 ) -> Run:  # fmt: skip
-    """`traffic-calibrate`: mide el tipo `vehicle` (su clave) en situaciones estándar (descarga de una cola en verde, flujo
-    continuo, cola detenida) y compara con referencias publicadas para autos; `queues`: colas que se descargan (por
-    omisión 30). En `results["metricas"]["medidas"]` va cada medida con su valor, su rango y su estado."""
-    from trafico.cli import calibrate as command
+    """`traffic-calibrate`: measures the type `vehicle` (its key) in standard situations (discharge of a queue on green,
+    continuous flow, stopped queue) and compares with published references for cars; `queues`: queues that are
+    discharged (30 by default). `results["metricas"]["medidas"]` holds each measurement with its value, range and status."""
+    from traffic.cli import calibrate as command
 
     argv = _target(config, name) + ["--vehicle", vehicle] + _opt("--queues", queues)
     return _finish(command, argv, "calibracion")
 
 
 def redraw(folder: str | Path) -> Path:
-    """Dibuja de nuevo la gráfica de una comparación o de un barrido ya corridos, sin simular ni sobrescribir; devuelve
-    la ruta del archivo nuevo."""
-    from trafico.cli import emissions, variants
+    """Redraw the plot of a comparison or sweep that has already run, without simulating or overwriting; returns
+    the path of the new file."""
+    from traffic.cli import emissions, variants
 
     folder = Path(folder).expanduser()
     mode = mode_of(folder)
@@ -254,8 +253,8 @@ def redraw(folder: str | Path) -> Path:
 
 
 def describe_config(config: str | Path | None = None) -> dict:
-    """La configuración ya leída y validada, en un diccionario: tramo, ejecución, tipos de vehículo, semáforos y topes.
-    Sirve para revisar una configuración antes de correrla (los errores salen como `ConfigError`)."""
+    """The configuration, read and validated, as a dictionary: segment, run, vehicle types, traffic lights and bumps.
+    Useful to check a configuration before running it (errors come out as `ConfigError`)."""
     target = resolve_target(None if config is None else str(config))
     settings = load_settings(target.config)
     cfg, opts = settings.sim, settings.run
@@ -276,5 +275,5 @@ def describe_config(config: str | Path | None = None) -> dict:
 
 
 def default_config() -> Path:
-    """Ruta del `config.toml` que usan las funciones cuando `config` es None."""
+    """Path of the `config.toml` the functions use when `config` is None."""
     return default_config_path()

@@ -1,4 +1,4 @@
-"""Gráfica de la capacidad de movilidad de pasajeros por tipo de vehículo."""
+"""Plot of the passenger mobility capacity per vehicle type."""
 
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ import numpy as np
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-from trafico.config import POLLUTANT_LABELS, POLLUTANTS, as_positions
-from trafico.emissions import EMIS_BIN, emitted
-from trafico.emissions import unit as pollutant_unit
-from trafico.metrics import EMIS_SERIES, ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, SPEED_BIN
-from trafico.runner import Aggregate
+from traffic.config import POLLUTANT_LABELS, POLLUTANTS, as_positions
+from traffic.emissions import EMIS_BIN, emitted
+from traffic.emissions import unit as pollutant_unit
+from traffic.metrics import EMIS_SERIES, ENTRY_QUEUE, EXIT_QUEUE, LANE_EXIT_FLOW, LANE_SATURATION, SPEED_BIN
+from traffic.runner import Aggregate
 
-# Paleta categórica validada, en orden fijo: el color sigue al tipo (su posición en la
-# configuración), no a su rango, así que no cambia al desactivar otros tipos.
+# Validated categorical palette, in a fixed order: the colour follows the type (its position in the
+# configuration), not its rank, so it does not change when other types are disabled.
 TYPE_COLORS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948")
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
@@ -26,22 +26,22 @@ GRID = "#e1e0d9"
 BASELINE = "#c3c2b7"
 RED_PHASE = "#d03b3b"
 YELLOW_PHASE = "#e0a800"
-LEGEND_COLS = 5  # entradas por fila de la leyenda
-VIOLIN_WIDTH = 0.8  # ancho máximo de un violín (en carriles)
-VIOLIN_SMOOTH = 1.0  # km/h, desviación del núcleo gaussiano que suaviza el histograma del violín
-VIOLIN_GAP = 0.2  # alto (en paneles) del espacio antes del panel de violines, para el eje de tiempo
-LEGEND_CHARS = 150  # caracteres que caben en una fila de la leyenda a lo ancho de la figura
-LEGEND_ROW = 0.017  # alto de una fila de leyenda (fracción de la figura)
-MAX_END_LABELS = 4  # con más tipos, las etiquetas finales convergen: la leyenda basta
-# Color fijo de cada carril (0 = derecho): la misma paleta empezando por los colores que los tipos
-# usan al final (rosa, verde, violeta, rojo), para no confundir un carril con los primeros tipos.
-# Con más de 8 carriles, una rampa viridis.
+LEGEND_COLS = 5  # entries per legend row
+VIOLIN_WIDTH = 0.8  # maximum width of a violin (in lanes)
+VIOLIN_SMOOTH = 1.0  # km/h, deviation of the Gaussian kernel that smooths the violin's histogram
+VIOLIN_GAP = 0.2  # height (in panels) of the space before the violin panel, for the time axis
+LEGEND_CHARS = 150  # characters that fit in a legend row across the figure
+LEGEND_ROW = 0.017  # height of a legend row (fraction of the figure)
+MAX_END_LABELS = 4  # with more types, the end labels converge: the legend is enough
+# Fixed colour of each lane (0 = right): the same palette starting with the colours the types
+# use last (pink, green, violet, red), so a lane is not confused with the first types.
+# With more than 8 lanes, a viridis ramp.
 LANE_COLORS = tuple(TYPE_COLORS[k] for k in (4, 5, 6, 7, 3, 2, 1, 0))
 LANE_COLORMAP = "viridis"
-BASE_HEIGHT = 13.0  # alto (pulgadas) para el que están ajustadas las posiciones de la cabecera
-BASE_PANELS = 4  # paneles que caben en BASE_HEIGHT; cada panel extra agrega su parte proporcional
-LANE_PANELS = 4  # saturación, cruces contra capacidad de salida, colas de entrada y salida, violines de velocidad
-EXIT_DASH = (0, (4, 3))  # trazo de la cola de salida y de las capacidades de salida
+BASE_HEIGHT = 13.0  # height (inches) the header positions are tuned for
+BASE_PANELS = 4  # panels that fit in BASE_HEIGHT; each extra panel adds its proportional share
+LANE_PANELS = 4  # saturation, crossings against exit capacity, entry and exit queues, speed violins
+EXIT_DASH = (0, (4, 3))  # line style of the exit queue and of the exit capacities
 
 PANELS = (
     ("cum_pax", "passengers", "{:,.0f}"),
@@ -57,18 +57,18 @@ def _titles(cfg) -> dict[str, str]:
 
 
 def _lane_colors(n: int) -> list[str]:
-    """Color de cada carril (0 = derecho); no depende de qué tipos participan."""
+    """Colour of each lane (0 = right); it does not depend on which types take part."""
     if n <= len(LANE_COLORS):
         return list(LANE_COLORS[:n])
     from matplotlib import colormaps
     from matplotlib.colors import to_hex
 
     cmap = colormaps[LANE_COLORMAP]
-    return [to_hex(cmap(0.9 * i / (n - 1))) for i in range(n)]  # sin el amarillo más claro
+    return [to_hex(cmap(0.9 * i / (n - 1))) for i in range(n)]  # without the lightest yellow
 
 
 def _lane_label(lane: int, lanes: int, assigned: list[str] = ()) -> str:
-    """Nombre del carril; `assigned` son los tipos con ese carril fijo en la configuración."""
+    """Name of the lane; `assigned` are the types with that fixed lane in the configuration."""
     if lanes == 1:
         return "single lane"
     notes = (["right"] if lane == 0 else ["left"] if lane == lanes - 1 else []) + list(assigned)
@@ -76,8 +76,8 @@ def _lane_label(lane: int, lanes: int, assigned: list[str] = ()) -> str:
 
 
 def _lane_assignments(cfg, active: list[int]) -> list[list[str]]:
-    """Tipos que participan y tienen configurado un carril fijo ([vehicles.<tipo>] lane), por carril;
-    en un carril exclusivo se anteponen con "solo". Un carril sin semáforo lo indica al final."""
+    """Participating types that have a fixed lane configured ([vehicles.<type>] lane), per lane;
+    in an exclusive lane they are prefixed with "only". A lane without a traffic light says so at the end."""
     out: list[list[str]] = [[] for _ in range(cfg.lanes)]
     for k in active:
         spec = cfg.specs[k]
@@ -92,7 +92,7 @@ def _lane_assignments(cfg, active: list[int]) -> list[list[str]]:
 
 
 def phase_spans(cfg) -> list[tuple[float, float, str]]:
-    """(inicio, fin, color) de las fases en rojo y en amarillo, para sombrearlas en las gráficas."""
+    """(start, end, colour) of the red and yellow phases, to shade them in the plots."""
     return [(a, b, RED_PHASE) for a, b in cfg.red_intervals()] + [
         (a, b, YELLOW_PHASE) for a, b in cfg.yellow_intervals()
     ]
@@ -104,9 +104,9 @@ def shade_phases(ax, spans) -> None:
 
 
 def phase_handles(cfg, per_light: bool = False) -> list:
-    """Entradas de leyenda de las fases sombreadas (ninguna sin semáforo). Con varios semáforos, el sombreado es el
-    del último de ciclo fijo; `per_light` (el diagrama espacio-tiempo, que marca las fases de cada semáforo y de cada
-    paso peatonal en su línea) no nombra cuál."""
+    """Legend entries of the shaded phases (none without a traffic light). With several lights, the shading is that of
+    the last fixed-cycle one; `per_light` (the space-time diagram, which marks the phases of each light and each
+    pedestrian crossing on its line) does not name which."""
     if per_light:
         lights = cfg.lights
         crossings = bool(cfg.crossings)
@@ -129,7 +129,7 @@ def phase_handles(cfg, per_light: bool = False) -> list:
 
 def _lane_panel(ax, agg: Aggregate, t: np.ndarray, red_spans, key: str, title: str, unit: str,
                 fmt: str, scale: float, labels: list[str], legend_loc: str, colors: list[str]) -> None:  # fmt: skip
-    """Panel con una línea (media ± 1σ entre réplicas) por carril."""
+    """Panel with one line (mean ± 1σ across replicas) per lane."""
     cfg = agg.cfg
     _style_axis(ax, fmt)
     shade_phases(ax, red_spans)
@@ -151,14 +151,14 @@ def _lane_panel(ax, agg: Aggregate, t: np.ndarray, red_spans, key: str, title: s
 
 
 def _speed_refs(cfg, active: list[int]) -> dict[float, str]:
-    """Etiqueta de la velocidad máxima de cada tipo (la media, con su rango si es variable); los tipos
-    con la misma velocidad comparten una."""
+    """Label of each type's maximum speed (the mean, with its range if it varies); types
+    with the same speed share one."""
     by_speed: dict[float, dict[str, list[str]]] = {}
     for k in active:
         spec = cfg.specs[k]
         spread = f" ({spec.slowest_kmh:g}–{spec.fastest_kmh:g})" if spec.speed_std > 0 else ""
         by_speed.setdefault(spec.speed_kmh, {}).setdefault(spread, []).append(spec.name)
-    # Un renglón por grupo: con velocidades variables la etiqueta sería demasiado ancha en una sola línea.
+    # One row per group: with variable speeds the label would be too wide on a single line.
     return {
         v: "\n".join(f"{' · '.join(names)} {v:g}{spread}" for spread, names in groups.items())
         for v, groups in by_speed.items()
@@ -181,7 +181,7 @@ def _lane_panels(axes, agg: Aggregate, t: np.ndarray, red_spans, active: list[in
 
 
 def _exit_labels(cfg) -> dict[float, str]:
-    """Etiqueta de la capacidad de la cola de salida, una por valor (los carriles con la misma la comparten)."""
+    """Label of the exit queue capacity, one per value (lanes with the same one share it)."""
     by_cap: dict[float, list[int]] = {}
     for lane, cap in enumerate(cfg.lane_exit_capacity):
         if cap > 0:
@@ -193,8 +193,8 @@ def _exit_labels(cfg) -> dict[float, str]:
 
 
 def _exit_panel(ax, agg: Aggregate, t: np.ndarray, red_spans, names: list[str], colors: list[str]) -> None:
-    """Demanda en la línea (vehículos que cruzan por carril, ventana de un ciclo) contra la capacidad de la
-    cola de salida de cada carril, como línea punteada del color del carril (neutra si la comparten)."""
+    """Demand at the line (vehicles crossing per lane, one-cycle window) against the exit queue capacity
+    of each lane, as a dotted line in the lane's colour (neutral if they share it)."""
     cfg = agg.cfg
     limited = any(c > 0 for c in cfg.lane_exit_capacity)
     title = f"Vehicles crossing {cfg.line_name} per lane ({cfg.flow_window_label})"
@@ -213,7 +213,7 @@ def _exit_panel(ax, agg: Aggregate, t: np.ndarray, red_spans, names: list[str], 
 
 
 def _storage_labels(cfg) -> dict[float, str]:
-    """Etiqueta de los m que mide la cola de salida, una por valor, solo de los carriles con salida limitada."""
+    """Label of the m the exit queue measures, one per value, only for the lanes with a limited exit."""
     by_size: dict[float, list[int]] = {}
     for lane, (cap, size) in enumerate(zip(cfg.lane_exit_capacity, cfg.lane_exit_storage)):
         if cap > 0:
@@ -225,10 +225,10 @@ def _storage_labels(cfg) -> dict[float, str]:
 
 
 def _queue_panels(axes, agg: Aggregate, t: np.ndarray, red_spans, names: list[str], colors: list[str]) -> None:
-    """Lado a lado, cada una con su escala: la cola de entrada al tramo (vehículos que llegaron y aún no caben) y
-    la cola de salida después del semáforo (m ocupados por los que cruzaron y aún no salen), por carril (media
-    ± 1σ entre réplicas). La de entrada puede crecer sin límite y la de salida no pasa de lo que mide. Lo que mide
-    la salida va como línea punteada del color del carril (neutra si la comparten)."""
+    """Side by side, each with its own scale: the entry queue to the segment (vehicles that arrived and do not fit yet) and
+    the exit queue after the traffic light (m occupied by those that crossed and have not left yet), per lane (mean
+    ± 1σ across replicas). The entry queue can grow without limit and the exit queue cannot exceed its length. The
+    exit's length is a dotted line in the lane's colour (neutral if they share it)."""
     cfg = agg.cfg
     limited = [lane for lane, c in enumerate(cfg.lane_exit_capacity) if c > 0]
     entry_ax, exit_ax = axes
@@ -243,9 +243,9 @@ def _queue_panels(axes, agg: Aggregate, t: np.ndarray, red_spans, names: list[st
             ax.plot(t, m, color=colors[lane], linewidth=2, solid_capstyle="round", solid_joinstyle="round")
         ax.set_ylim(0, max(ax.get_ylim()[1], 1.0))
         ax.set_ylabel(unit, color=INK_2, fontsize=9)
-    entry_ax.yaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=3, integer=True))  # vehículos enteros
+    entry_ax.yaxis.set_major_locator(MaxNLocator(nbins=5, min_n_ticks=3, integer=True))  # whole vehicles
     entry_ax.set_title("Entry queue to the segment per lane", loc="left", fontsize=11, color=INK, pad=8)
-    # Lugar arriba para la leyenda: la cola de entrada suele crecer hacia la esquina superior derecha.
+    # Room at the top for the legend: the entry queue tends to grow towards the upper right corner.
     entry_ax.set_ylim(0, entry_ax.get_ylim()[1] * 1.45)
     entry_ax.legend(
         handles=[Patch(facecolor=colors[k], label=names[k]) for k in range(cfg.lanes)], loc="upper left",
@@ -270,8 +270,8 @@ def _queue_panels(axes, agg: Aggregate, t: np.ndarray, red_spans, names: list[st
 
 
 def _emission_panels(axes, agg: Aggregate, t: np.ndarray, red_spans, pols: list[int], types: list[int]) -> None:
-    """Lado a lado, los dos primeros contaminantes emitidos (CO2 y NOx si están) por minuto y por tipo, en la
-    misma ventana que el flujo (media ± 1σ entre réplicas)."""
+    """Side by side, the first two emitted pollutants (CO2 and NOx if present) per minute and per type, over the
+    same window as the flow (mean ± 1σ across replicas)."""
     cfg = agg.cfg
     for ax, p in zip(axes, [*pols[:2], None]):
         if p is None:
@@ -298,8 +298,8 @@ def _emission_panels(axes, agg: Aggregate, t: np.ndarray, red_spans, pols: list[
 
 
 def plot_emissions_by_position(agg: Aggregate, path: Path, footer: str | None = None) -> None:
-    """Emisiones a lo largo del tramo: un panel por contaminante emitido, g/(m·h) (mg para los que no son CO2)
-    por intervalo de EMIS_BIN m y una línea por carril, con el tope, las paradas y la línea final marcados."""
+    """Emissions along the segment: one panel per emitted pollutant, g/(m·h) (mg for those that are not CO2)
+    per EMIS_BIN m bin and one line per lane, with the bump, the stops and the end line marked."""
     from matplotlib.figure import Figure
 
     cfg = agg.cfg
@@ -334,7 +334,7 @@ def plot_emissions_by_position(agg: Aggregate, path: Path, footer: str | None = 
                         solid_joinstyle="round")  # fmt: skip
         for at, label, color in marks:
             ax.axvline(at, color=color, linewidth=1.2, linestyle=(0, (4, 3)), zorder=1)
-            end = at >= cfg.length  # la línea final: etiqueta hacia adentro
+            end = at >= cfg.length  # the end line: label towards the inside
             ax.annotate(label, (at, 1.0), xycoords=("data", "axes fraction"), xytext=(-3 if end else 3, -3),
                         textcoords="offset points", ha="right" if end else "left", va="top", fontsize=8,
                         color=INK_2)  # fmt: skip
@@ -362,8 +362,8 @@ def plot_emissions_by_position(agg: Aggregate, path: Path, footer: str | None = 
 
 
 def _speed_violins(ax, agg: Aggregate, active: list[int], names: list[str], colors: list[str]) -> None:
-    """Un violín por carril con la distribución de su velocidad media: todas las muestras de todas las
-    réplicas en que el carril tenía vehículos. Adentro, el rango intercuartil y la mediana."""
+    """One violin per lane with the distribution of its mean speed: every sample of every
+    replica in which the lane had vehicles. Inside, the interquartile range and the median."""
     cfg = agg.cfg
     _style_axis(ax, "{:,.0f}")
     hist = agg.lane_speed_hist
@@ -383,7 +383,7 @@ def _speed_violins(ax, agg: Aggregate, active: list[int], names: list[str], colo
             ax.text(lane, 0.5, "no vehicles", transform=ax.get_xaxis_transform(), ha="center", fontsize=8,
                     color=MUTED)  # fmt: skip
             continue
-        # Densidad suavizada, recortada al rango observado (como violinplot con cut = 0).
+        # Smoothed density, clipped to the observed range (like violinplot with cut = 0).
         density = np.convolve(counts, kernel, mode="same")
         seen = np.flatnonzero(counts)
         keep = slice(seen[0], seen[-1] + 1)
@@ -404,10 +404,10 @@ def _speed_violins(ax, agg: Aggregate, active: list[int], names: list[str], colo
         f"with vehicles (all replicas)", loc="left", fontsize=11, color=INK, pad=8,
     )  # fmt: skip
     ax.set_ylabel("km/h", color=INK_2, fontsize=9)
-    # Referencia: velocidad a flujo libre de los tipos que participan (una línea por velocidad).
+    # Reference: free-flow speed of the participating types (one line per speed).
     for v, label in _speed_refs(cfg, active).items():
         ax.axhline(v, color=BASELINE, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
-        # Una etiqueta de varios renglones crece hacia arriba desde su línea, sin tapar las de abajo.
+        # A multi-row label grows upwards from its line, without covering the ones below.
         multi = "\n" in label
         ax.annotate(
             label, (1.0, v), xycoords=("axes fraction", "data"),
@@ -419,7 +419,7 @@ def _speed_violins(ax, agg: Aggregate, active: list[int], names: list[str], colo
 
 
 def _fit_format(ax) -> None:
-    """Sin decimales si el eje llega a 10 o más; con dos, si no."""
+    """No decimals if the axis reaches 10 or more; two otherwise."""
     fmt = "{:,.0f}" if ax.get_ylim()[1] >= 10 else "{:,.2f}"
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: fmt.format(v)))
 
@@ -439,7 +439,7 @@ def _style_axis(ax, fmt: str) -> None:
 
 
 def _crossed_vehicles(ax, agg: Aggregate, active: list[int]) -> None:
-    """Recuadro con los vehículos de cada tipo que cruzaron el semáforo (media entre réplicas)."""
+    """Box with the vehicles of each type that crossed the traffic light (mean across replicas)."""
     mean = agg.summary["crossed_veh"].mean
     std = agg.summary["crossed_veh"].std
     handles = [
@@ -456,7 +456,7 @@ def _crossed_vehicles(ax, agg: Aggregate, active: list[int]) -> None:
 
 
 def _duration(seconds: float) -> str:
-    """Duración legible: 1000 s -> '16 min 40 s', 5000 s -> '1 h 23 min', 7200 s -> '2 h'."""
+    """Readable duration: 1000 s -> '16 min 40 s', 5000 s -> '1 h 23 min', 7200 s -> '2 h'."""
     total = round(seconds)
     if total >= 3600:
         hours, minutes = divmod(round(total / 60), 60)
@@ -468,7 +468,7 @@ def _duration(seconds: float) -> str:
 
 
 def _type_label(spec, rate: float) -> str:
-    """Etiqueta de leyenda: nombre, tasa y, si aplica, la parte que lleva mercancía."""
+    """Legend label: name, rate and, if it applies, the share that carries freight."""
     extra = ""
     if spec.cargo_prob >= 1:
         extra = ", goods only"
@@ -478,21 +478,21 @@ def _type_label(spec, rate: float) -> str:
 
 
 def _rate_label(rate: float) -> str:
-    """Tasa de llegada legible: 20 -> '20/min'; menos de 1 veh/min -> '1 cada x min' con x = 1/rate
-    redondeado (0.15 -> '1 cada 7 min')."""
+    """Readable arrival rate: 20 -> '20/min'; under 1 veh/min -> '1 every x min' with x = 1/rate
+    rounded (0.15 -> '1 every 7 min')."""
     if rate >= 1:
         return f"{rate:.3g}/min"
     return f"1 every {max(1, round(1 / rate))} min"
 
 
 def _row_major(handles: list, ncol: int) -> list:
-    """Reordena para que la leyenda (que matplotlib llena por columnas) se lea por filas."""
+    """Reorder so the legend (which matplotlib fills by columns) reads by rows."""
     rows = math.ceil(len(handles) / ncol)
     return [handles[r * ncol + c] for c in range(ncol) for r in range(rows) if r * ncol + c < len(handles)]
 
 
 def _end_labels(ax, t_end: float, ends: list[tuple[float, str]], fmt: str) -> None:
-    """Valor al final de cada línea; si chocan, se separan con una línea guía fina."""
+    """Value at the end of each line; if they collide, they are separated with a thin leader line."""
     if not ends:
         return
     lo, hi = ax.get_ylim()
@@ -526,20 +526,20 @@ def plot_mobility(agg: Aggregate, path: Path | None, footer: str | None = None) 
     cfg = agg.cfg
     t = agg.times
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0]
-    passengers = [k for k in active if cfg.specs[k].carries_passengers]  # los que solo llevan mercancía no se grafican
+    passengers = [k for k in active if cfg.specs[k].carries_passengers]  # those that only carry freight are not plotted
 
     emis_pols, emis_types = emitted(cfg)
-    # El último panel (velocidad por carril) no es una serie de tiempo; con emisiones, una fila más (CO2 | NOx).
+    # The last panel (speed per lane) is not a time series; with emissions, one more row (CO2 | NOx).
     n_panels = len(PANELS) + LANE_PANELS + (1 if emis_pols else 0)
     height = BASE_HEIGHT * (n_panels + VIOLIN_GAP) / BASE_PANELS
 
     def fy(y: float) -> float:
-        """Posición vertical de la cabecera: misma distancia en pulgadas al borde superior."""
+        """Vertical position of the header: the same distance in inches from the top edge."""
         return 1 - (1 - y) * BASE_HEIGHT / height
 
     fig = plt.figure(figsize=(11, height), facecolor=SURFACE)
     grid = fig.add_gridspec(n_panels + 1, 1, hspace=0.42, height_ratios=[1] * (n_panels - 1) + [VIOLIN_GAP, 1])
-    # Filas de tiempo; las de colas (entrada | salida) y emisiones (CO2 | NOx) llevan dos paneles lado a lado.
+    # Time rows; the queue rows (entry | exit) and emission rows (CO2 | NOx) have two panels side by side.
     queue_row = len(PANELS) + 2
     pair_rows = {queue_row, queue_row + 1} if emis_pols else {queue_row}
     axes: list = []
@@ -549,10 +549,10 @@ def plot_mobility(agg: Aggregate, path: Path | None, footer: str | None = None) 
             axes.append(tuple(fig.add_subplot(pair[j], sharex=axes[0]) for j in range(2)))
         else:
             axes.append(fig.add_subplot(grid[i], sharex=axes[0] if axes else None))
-    for row in axes[:-1]:  # solo la última fila de tiempo lleva el eje x
+    for row in axes[:-1]:  # only the last time row has the x axis
         for ax in row if isinstance(row, tuple) else (row,):
             ax.tick_params(labelbottom=False)
-    axes.append(fig.add_subplot(grid[n_panels]))  # violines: eje x propio (carriles)
+    axes.append(fig.add_subplot(grid[n_panels]))  # violins: own x axis (lanes)
     red_spans = phase_spans(cfg)
     titles = _titles(cfg)
     for ax, (key, unit, fmt) in zip(axes, PANELS):
@@ -578,7 +578,7 @@ def plot_mobility(agg: Aggregate, path: Path | None, footer: str | None = None) 
     if emis_pols:
         _emission_panels(axes[queue_row + 1], agg, t, red_spans, emis_pols, emis_types)
 
-    for bottom in axes[-2]:  # última fila de tiempo (dos paneles)
+    for bottom in axes[-2]:  # last time row (two panels)
         bottom.set_xlabel("Simulated time (s)", color=INK_2, fontsize=9)
         bottom.set_xlim(0, cfg.sim_seconds)
         proc = bottom.secondary_xaxis(
@@ -588,12 +588,12 @@ def plot_mobility(agg: Aggregate, path: Path | None, footer: str | None = None) 
         proc.tick_params(colors=MUTED, labelcolor=MUTED, labelsize=9, length=0)
         proc.spines["bottom"].set_color(BASELINE)
 
-    # Leyenda con la tasa de llegada de cada tipo, en filas de hasta LEGEND_COLS entradas.
+    # Legend with each type's arrival rate, in rows of up to LEGEND_COLS entries.
     handles = [
         Patch(facecolor=TYPE_COLORS[k], label=_type_label(cfg.specs[k], cfg.rates[k])) for k in active
     ] + phase_handles(cfg)
-    # Columnas del mismo ancho (la etiqueta más larga): tantas como quepan en una fila, hasta LEGEND_COLS.
-    widest = max(len(h.get_label()) for h in handles) + 6  # + recuadro de color y separación
+    # Columns of the same width (the longest label): as many as fit in a row, up to LEGEND_COLS.
+    widest = max(len(h.get_label()) for h in handles) + 6  # + colour box and spacing
     ncol = max(1, min(len(handles), LEGEND_COLS, LEGEND_CHARS // widest))
     rows = math.ceil(len(handles) / ncol)
     fig.legend(
@@ -613,8 +613,8 @@ def plot_mobility(agg: Aggregate, path: Path | None, footer: str | None = None) 
     )  # fmt: skip
     if footer:
         fig.text(0.075, fy(0.944), footer, ha="left", fontsize=8, color=MUTED)
-    # El margen derecho deja lugar a la etiqueta más larga a la derecha de los paneles: los
-    # valores finales del primer panel y las velocidades de referencia del último.
+    # The right margin leaves room for the longest label to the right of the panels: the
+    # end values of the first panel and the reference speeds of the last one.
     labels = [*_speed_refs(cfg, active).values(), *_exit_labels(cfg).values(), *_storage_labels(cfg).values()]
     longest = max(len(line) for label in labels for line in label.split("\n"))
     if len(passengers) <= MAX_END_LABELS:
@@ -631,18 +631,18 @@ def plot_mobility(agg: Aggregate, path: Path | None, footer: str | None = None) 
     plt.close(fig)
 
 
-MAX_PAX_BARS = 30  # con más valores posibles de pasajeros, el histograma agrupa en intervalos
+MAX_PAX_BARS = 30  # with more possible passenger values, the histogram groups them into bins
 PAX_BIN_WIDTHS = (1, 2, 5, 10, 20, 50, 100)
 
 
 def _pax_bin_width(n_values: int) -> int:
-    """Ancho de intervalo (en pasajeros) para que el histograma tenga como mucho MAX_PAX_BARS barras."""
+    """Bin width (in passengers) so the histogram has at most MAX_PAX_BARS bars."""
     return next((w for w in PAX_BIN_WIDTHS if math.ceil(n_values / w) <= MAX_PAX_BARS), PAX_BIN_WIDTHS[-1])
 
 
 def _pax_bins(values: np.ndarray, weights: np.ndarray, width: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Agrupa `weights` (uno por valor entero consecutivo) en intervalos de `width` valores.
-    Devuelve (primer valor, último valor, suma) de cada intervalo; el último puede ser más corto."""
+    """Group `weights` (one per consecutive integer value) into bins of `width` values.
+    Returns (first value, last value, sum) of each bin; the last one may be shorter."""
     starts = np.arange(0, values.size, width)
     lo = values[starts]
     hi = values[np.minimum(starts + width, values.size) - 1]
@@ -650,17 +650,17 @@ def _pax_bins(values: np.ndarray, weights: np.ndarray, width: int) -> tuple[np.n
 
 
 def plot_passenger_distribution(agg: Aggregate, path: Path, footer: str | None = None) -> None:
-    """Distribución de pasajeros por vehículo de cada tipo: histograma de todos los vehículos que
-    llegaron durante la simulación, sumando las réplicas, frente a la distribución esperada según
-    la configuración. Un panel por tipo, con su propio eje x; un rango ancho se agrupa en intervalos."""
-    from matplotlib.figure import Figure  # sin pyplot: no depende del backend
+    """Distribution of passengers per vehicle of each type: histogram of all the vehicles that
+    arrived during the simulation, summing the replicas, against the distribution expected from
+    the configuration. One panel per type, with its own x axis; a wide range is grouped into bins."""
+    from matplotlib.figure import Figure  # no pyplot: it does not depend on the backend
     from matplotlib.lines import Line2D
 
-    from trafico.distributions import passenger_pmf
+    from traffic.distributions import passenger_pmf
 
     cfg = agg.cfg
     hist = agg.pax_hist
-    # Solo los tipos que llevan pasajeros; los vehículos con mercancía no entran en el histograma.
+    # Only the types that carry passengers; vehicles with freight are not in the histogram.
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0 and cfg.specs[k].carries_passengers]
     ncols = 1 if len(active) == 1 else 2
     nrows = math.ceil(len(active) / ncols)
@@ -695,7 +695,7 @@ def plot_passenger_distribution(agg: Aggregate, path: Path, footer: str | None =
             f"μ {spec.pax_mean:g}, σ {spec.pax_std:g}",
             transform=ax.transAxes, fontsize=8.5, color=MUTED,
         )  # fmt: skip
-        # Esperada: escalones sobre los mismos intervalos que las barras.
+        # Expected: steps over the same bins as the bars.
         edges = np.append(lo - 0.5, hi[-1] + 0.5)
         ax.stairs(expected, edges, color=INK, linewidth=1.5, baseline=None, zorder=4)
         if total == 0:
@@ -747,19 +747,19 @@ def plot_passenger_distribution(agg: Aggregate, path: Path, footer: str | None =
 
 
 def plot_variants(path: Path, meta: dict, data: dict) -> None:
-    """Comparación de variantes (traffic-variants): arriba, la velocidad media de cada carril por
-    semáforo (barras, media ± 1σ entre réplicas); abajo, los vehículos en la cola de entrada a lo
-    largo del tiempo, una línea por semáforo. Una columna por largo de tramo."""
-    from matplotlib.figure import Figure  # sin pyplot: no depende del backend
+    """Variant comparison (traffic-variants): on top, the mean speed of each lane per traffic light
+    (bars, mean ± 1σ across replicas); below, the vehicles in the entry queue over
+    time, one line per light. One column per segment length."""
+    from matplotlib.figure import Figure  # no pyplot: it does not depend on the backend
     from matplotlib.lines import Line2D
 
     speed, t = data["speed"], data["t"]
-    queue = data["queue"][:, :, :, meta["cola_tipos"]].sum(axis=3)  # (largo, semáforo, réplica, muestra)
+    queue = data["queue"][:, :, :, meta["cola_tipos"]].sum(axis=3)  # (length, light, replica, sample)
     lengths, lights, lane_names = meta["largos_m"], meta["semaforos"], meta["carriles"]
     n_len, n_light, n_lanes = len(lengths), len(lights), len(lane_names)
     queue_label = ", ".join(meta["nombres"][k] for k in meta["cola_tipos"])
     lane_colors = _lane_colors(n_lanes)
-    light_colors = TYPE_COLORS[:n_light]  # orden fijo; los tres primeros validados en todos los pares
+    light_colors = TYPE_COLORS[:n_light]  # fixed order; the first three validated in every pair
 
     fig = Figure(figsize=(max(7.0, 4.7 * n_len), 9.2), facecolor=SURFACE)
     axes = fig.subplots(2, n_len, sharey="row", squeeze=False, gridspec_kw={"hspace": 0.62, "wspace": 0.3})
@@ -775,7 +775,7 @@ def plot_variants(path: Path, meta: dict, data: dict) -> None:
             pos = x + (lane - (n_lanes - 1) / 2) * width
             ax.bar(pos, m, width=width * 0.94, color=lane_colors[lane], linewidth=0, zorder=2)
             ax.errorbar(pos, m, yerr=sd, fmt="none", ecolor=INK_2, elinewidth=1, capsize=3, zorder=3)
-            for p, v, e in zip(pos, m, sd):  # etiquetas visibles: algunos tonos tienen poco contraste
+            for p, v, e in zip(pos, m, sd):  # visible labels: some hues have little contrast
                 ax.annotate(f"{v:.1f}", (p, v + e), xytext=(0, 3), textcoords="offset points", ha="center",
                             va="bottom", fontsize=8, color=INK_2)  # fmt: skip
         ax.set_xticks(x, [f"{s['nombre']}\n{s['rojo_s']:g} s / {s['verde_s']:g} s" for s in lights])
@@ -787,7 +787,7 @@ def plot_variants(path: Path, meta: dict, data: dict) -> None:
 
     q_mean = queue.mean(axis=2)
     q_sd = queue.std(axis=2, ddof=1) if queue.shape[2] > 1 else np.zeros_like(q_mean)
-    q_top = float((q_mean + q_sd).max()) * 1.06 or 1.0  # mismo eje para todos los tramos, sin cortar líneas
+    q_top = float((q_mean + q_sd).max()) * 1.06 or 1.0  # the same axis for all segments, without cutting lines
     for li, L in enumerate(lengths):
         ax = axes[1, li]
         _style_axis(ax, "{:,.0f}")
@@ -803,7 +803,7 @@ def plot_variants(path: Path, meta: dict, data: dict) -> None:
         ax.set_xlabel("simulated time (s)", color=INK_2, fontsize=9)
         ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}"))
         ax.tick_params(axis="x", labelcolor=MUTED)
-        if n_light <= 4:  # etiquetas directas al final de cada línea, separadas para no encimarse
+        if n_light <= 4:  # direct labels at the end of each line, separated so they do not overlap
             gap = 0.07 * q_top
             ys: list[float] = []
             for v, _ in sorted(ends):
@@ -827,7 +827,7 @@ def plot_variants(path: Path, meta: dict, data: dict) -> None:
     )  # fmt: skip
     fig.text(0.06, 0.905, "Mean speed of each lane over the whole run (including stopped vehicles)",
              ha="left", fontsize=10.5, color=INK, fontweight="bold")  # fmt: skip
-    # Cada leyenda en su propia línea, debajo del título de su fila, para no encimarse con él.
+    # Each legend on its own line, under its row's title, so they do not overlap.
     fig.legend(handles=[Patch(facecolor=lane_colors[i], label=lane_names[i]) for i in range(n_lanes)],
                loc="upper left", bbox_to_anchor=(0.055, 0.9), ncol=min(n_lanes, 6), frameon=False, fontsize=9,
                labelcolor=INK_2)  # fmt: skip
@@ -842,11 +842,11 @@ def plot_variants(path: Path, meta: dict, data: dict) -> None:
     fig.savefig(path, dpi=150, facecolor=SURFACE)
 
 
-SMOOTH_FLOW_MIN = 5.0  # min de la media móvil del flujo en la comparación de emisiones
+SMOOTH_FLOW_MIN = 5.0  # min of the flow's moving average in the emission comparison
 
 
 def _scenario_bars(ax, values: list[float], colors: list[str], labels: list[str], unit: str, fmt: str) -> None:
-    """Una barra por escenario con su valor y, sobre las demás, el cambio frente a la primera."""
+    """One bar per scenario with its value and, over the others, the change from the first."""
     _style_axis(ax, "{:,.0f}")
     x = np.arange(len(values))
     ax.bar(x, values, width=0.65, color=colors, edgecolor=SURFACE, linewidth=2, zorder=2)
@@ -867,14 +867,14 @@ def _scenario_bars(ax, values: list[float], colors: list[str], labels: list[str]
 
 
 def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
-    """Comparación de escenarios de traffic-emissions: flujo que sale del tramo en el tiempo, vehículos por minuto
-    de cada tipo, emisiones por km de cada tipo y contaminante, y emisiones a lo largo de la calle."""
+    """traffic-emissions scenario comparison: flow leaving the segment over time, vehicles per minute
+    of each type, emissions per km of each type and pollutant, and emissions along the street."""
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
     scenarios = meta["escenarios"]
     colors = [TYPE_COLORS[i] for i in range(len(scenarios))]
-    short = [f"{i + 1}" for i in range(len(scenarios))]  # rótulos cortos bajo las barras; la leyenda los nombra
+    short = [f"{i + 1}" for i in range(len(scenarios))]  # short labels under the bars; the legend names them
     names, minutes = meta["nombres"], meta["s_simulados"] / 60
     ncols = 4
     active = meta["activos"]
@@ -890,14 +890,14 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
     fig = Figure(figsize=(12, 2.3 + 3.0 * len(heights)), facecolor=SURFACE)
     grid = fig.add_gridspec(len(heights), ncols, height_ratios=heights, hspace=0.75, wspace=0.45)
 
-    # Flujo que sale del tramo (todos los carriles), con media móvil.
+    # Flow leaving the segment (all lanes), with a moving average.
     ax = fig.add_subplot(grid[0, :])
     _style_axis(ax, "{:,.0f}")
     t = data["t"] / 60
     dt = (data["t"][1] - data["t"][0]) if data["t"].size > 1 else 1.0
     w = max(1, round(SMOOTH_FLOW_MIN * 60 / dt))
     for i, flow in enumerate(data["flow"]):
-        # Media móvil hacia atrás; al inicio, con el historial disponible.
+        # Trailing moving average; at the start, with the available history.
         cum = np.concatenate(([0.0], np.cumsum(np.nan_to_num(flow))))
         idx = np.arange(1, flow.size + 1)
         lo = np.maximum(idx - w, 0)
@@ -921,12 +921,12 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
         _scenario_bars(ax, list(km[:, k, p]), colors, short, f"{name}/km", "{:,.0f}")
         ax.set_title(f"{POLLUTANT_LABELS[POLLUTANTS[p]]}: {names[k]}", loc="left", fontsize=10.5, color=INK, pad=8)
 
-    pos = data["emissions_pos"].sum(axis=2) / EMIS_BIN / (meta["s_simulados"] / 3600.0)  # (escenario, pol, x)
+    pos = data["emissions_pos"].sum(axis=2) / EMIS_BIN / (meta["s_simulados"] / 3600.0)  # (scenario, pol, x)
     x = (np.arange(pos.shape[2]) + 0.5) * EMIS_BIN
-    # topes_m: por escenario, una lista de posiciones (en los datos anteriores, una posición o null)
+    # topes_m: per scenario, a list of positions (in older data, one position or null)
     marks = [(m, "bump") for m in sorted({p for b in meta["topes_m"] for p in as_positions(b)})]
     marks_bumps = {len(as_positions(b)) for b in meta["topes_m"]}
-    marks_bumps = range(max(marks_bumps, default=0))  # cuántos topes tiene el escenario con más
+    marks_bumps = range(max(marks_bumps, default=0))  # how many bumps the scenario with the most has
     marks += [(m, f"stop {name}") for name, m in meta["paradas_m"].items()]
     span = ncols // max(1, len(pos_pols))
     for n, p in enumerate(pos_pols):
@@ -955,7 +955,7 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
     lanes = meta["carriles_tope"]
     where = "all lanes" if lanes is None or len(lanes) == len(meta["carriles"]) else (
         ("lane " if len(lanes) == 1 else "lanes ") + ", ".join(map(str, lanes)))
-    ped = meta.get("peatones_tope")  # ausente en los datos anteriores
+    ped = meta.get("peatones_tope")  # missing in older data
     walkers = (f" · with pedestrians ({ped['peatones_min']:.3g}/min, crossing in {ped['s_cruce']:g} s: vehicles stop "
                "completely)") if ped else ""  # fmt: skip
     lines = [
@@ -977,14 +977,14 @@ def plot_emission_comparison(path: Path, meta: dict, data: dict) -> None:
 
 
 def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
-    """Resultados de `traffic-emissions --spacing` (o `--light-spacing`): cuánto deben separarse dos topes o
-    semáforos (o los de una cadena) para que la huella de emisiones del primero se diluya. Cinco métricas contra la
-    separación (aditividad, media en el tramo, exceso entre ellos, gradiente y costo de cada uno añadido, total y por
-    metro), una línea por contaminante, y el perfil a lo largo de la calle para algunas separaciones."""
+    """Results of `traffic-emissions --spacing` (or `--light-spacing`): how far apart two bumps or traffic lights
+    (or those of a chain) must be for the first one's emission footprint to dilute. Five metrics against the
+    spacing (additivity, mean over the stretch, excess between them, gradient and cost of each added one, total and per
+    metre), one line per pollutant, and the profile along the street for some spacings."""
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
-    from trafico.bump_spacing import (
+    from traffic.bump_spacing import (
         LIGHT, NOUNS, chain_span, cycle_text, equivalence_text, first_position, kind_of, profiles, worst_case,
     )  # fmt: skip
 
@@ -995,7 +995,7 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
     pols = list(result["pollutants"])
     colors = {pol: TYPE_COLORS[i] for i, pol in enumerate(pols)}
     height = 12.6
-    k = 9.4 / height  # los márgenes y el encabezado se calcularon para 9.4 in de alto: se conservan en pulgadas
+    k = 9.4 / height  # the margins and the header were computed for a height of 9.4 in: they are kept in inches
     n = int(meta.get("topes_por_cadena", 2))
     fig = Figure(figsize=(13.5, height), facecolor=SURFACE)
     grid = fig.add_gridspec(3, 3, hspace=0.5, wspace=0.28, left=0.06, right=0.98, top=1 - 0.22 * k, bottom=0.07 * k,
@@ -1012,14 +1012,14 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
         for pol in pols:
             y = np.array(result["pollutants"][pol][key]) * scale
             ax.plot(dist, y, color=colors[pol], linewidth=2, marker="o", markersize=4, markeredgewidth=0)
-            if blocked.any():  # la cola llega a la entrada: punto hueco, no comparable
+            if blocked.any():  # the queue reaches the entry: hollow point, not comparable
                 ax.plot(dist[blocked], y[blocked], linestyle="none", marker="o", markersize=7, markerfacecolor=SURFACE,
                         markeredgecolor=colors[pol], markeredgewidth=1.5, zorder=3)  # fmt: skip
         xmax = dist.max() * 1.02
         for at, label, color in marks:
             if at is not None and dist.min() * 0.9 <= at <= xmax:
                 ax.axvline(at, color=color, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
-                left = at > 0.7 * xmax  # cerca del borde derecho, el rótulo va a la izquierda de la línea
+                left = at > 0.7 * xmax  # near the right edge, the label goes to the left of the line
                 ax.annotate(label, (at, 1.0), xycoords=("data", "axes fraction"), xytext=(-4 if left else 4, -3),
                             textcoords="offset points", ha="right" if left else "left", va="top", fontsize=8,
                             color=INK_2)  # fmt: skip
@@ -1031,13 +1031,13 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
     tol, thr = meta["tolerancia"], meta["umbral"]
     r_add = [r["d_aditiva"] for r in result["pollutants"].values() if r["d_aditiva"] is not None]
     add_mark = [(max(r_add) if r_add else None, "stable" if light else "additive", INK_2)]
-    before = (result.get("huella_antes_m") or 0.0) if light else 0.0  # con semáforos, la cola y el frenado antes de él
-    # El segundo sale de la huella del primero cuando su propia huella antes (cola) no alcanza la estela del primero.
+    before = (result.get("huella_antes_m") or 0.0) if light else 0.0  # with traffic lights, the queue and braking before it
+    # The second leaves the first one's footprint when its own footprint before (queue) does not reach the first one's wake.
     flat_mark = [(None if huella is None else huella + before, "end of the footprint", INK_2)]
     ax = fig.add_subplot(grid[0, 0])
     green = light and not worst_case(meta)
     hidden = n - meta.get("desfase", "rojo").split(",").count("verde") if green else n
-    if green:  # onda verde: cuántos semáforos aislados vale la cadena, frente a «cada onda verde oculta uno»
+    if green:  # green wave: how many isolated lights the chain is worth, against «each green wave hides one»
         for pol in pols:
             r = result["pollutants"][pol]
             r["equivalente"] = n * np.array(r["aditividad"])
@@ -1045,7 +1045,7 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
               "extra emission ÷ a single light", "{:.2f}", ref=float(hidden))  # fmt: skip
         ax.annotate(f"{hidden} = each green wave hides one light", (dist.min(), hidden), xytext=(2, 4),
                     textcoords="offset points", fontsize=8, color=INK_2)  # fmt: skip
-    elif light:  # con el desfase en rojo la cadena no tiende a semáforos aislados: se compara con la más separada
+    elif light:  # with the red offset the chain does not tend to isolated lights: it is compared with the widest spacing
         title = (f"The pair against the most separated one (d = {dist[-1]:g} m)" if n == 2
                  else f"The chain against the most separated one (d = {dist[-1]:g} m)")  # fmt: skip
         panel(ax, "estabilidad", title, f"extra emission ÷ that of d = {dist[-1]:g} m", "{:.2f}", marks=add_mark,
@@ -1062,7 +1062,7 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
     panel(ax, "exceso_entre", f"Mean excess between the {nn.many}", f"% of the peak of {nn.a} alone", "{:.0f}", scale=100,
           marks=flat_mark, ref=100 * thr)  # fmt: skip
     ax = fig.add_subplot(grid[1, 0])
-    for pol in pols:  # cada contaminante en su unidad: se normaliza por la pendiente máxima de un tope solo
+    for pol in pols:  # each pollutant in its unit: normalized by the maximum slope of a single bump
         r = result["pollutants"][pol]
         r["gradiente_rel"] = np.array(r["gradiente_tramo"]) / r["pendiente_tope_solo"] * 100
     panel(ax, "gradiente_rel", f"Mean gradient over the segment of the {nn.many}", f"% of the maximum slope of {nn.a} alone",
@@ -1073,7 +1073,7 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
     ax = fig.add_subplot(grid[1, 2])
     panel(ax, "costo_por_m", "Cost per metre of spacing", f"% of {nn.a} isolated per m", "{:.2f}")
 
-    # Perfil del primer contaminante (CO2 si se emite) para algunas separaciones, con el tope solo y la línea base.
+    # Profile of the first pollutant (CO2 if emitted) for some spacings, with the single bump and the baseline.
     ax = fig.add_subplot(grid[2, :])
     _style_axis(ax, "{:,.0f}")
     pi = pols.index("co2") if "co2" in pols else 0
@@ -1081,7 +1081,7 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
     x = result["x_m"]
     picks = sorted({int(np.argmin(np.abs(dist - target))) for target in np.quantile(dist, [0.15, 0.4, 0.65, 0.9])})
     first = first_position(meta)
-    if light and huella is not None:  # la huella del semáforo solo, a los dos lados de su línea de alto
+    if light and huella is not None:  # the footprint of the single light, on both sides of its stop line
         ax.axvspan(first - before, first + huella, color=GRID, alpha=0.6, linewidth=0, zorder=0)
     ax.plot(x, prof[0, pi], color=MUTED, linewidth=1.5, label=nn.none)
     ax.plot(x, prof[1, pi], color=INK_2, linewidth=1.5, linestyle=(0, (4, 3)), label=nn.a)
@@ -1090,7 +1090,7 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
     if light and huella is not None:
         handles.append(Patch(facecolor=GRID, alpha=0.6, label="footprint of one traffic light"))
     ax.axvline(first, color=BASELINE, linewidth=1, zorder=1)
-    ramp = ("#b9aee6", "#8d7fd1", "#6656bd", "#3d2f94")  # rampa de un tono: la separación es una magnitud
+    ramp = ("#b9aee6", "#8d7fd1", "#6656bd", "#3d2f94")  # single-hue ramp: the spacing is a magnitude
     for i, j in enumerate(picks):
         color = ramp[i + len(ramp) - len(picks)]
         ax.plot(x, prof[2 + j, pi], color=color, linewidth=1.8)
@@ -1105,7 +1105,7 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
     ax.set_ylabel(f"{POLLUTANT_LABELS[pols[pi]]}, g/(m·h) (all lanes)", color=INK_2, fontsize=9)
     ax.set_title(f"{POLLUTANT_LABELS[pols[pi]]} profile along the street by spacing", loc="left",
                  fontsize=10.5, color=INK, pad=8)  # fmt: skip
-    if light:  # los perfiles llegan hasta el final del tramo: la leyenda va arriba del panel, a la derecha del título
+    if light:  # the profiles reach the end of the segment: the legend goes above the panel, to the right of the title
         ax.legend(handles=handles, loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=8.5,
                   labelcolor=INK_2, ncol=4)  # fmt: skip
     else:
@@ -1117,7 +1117,7 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
     flag = "--light-spacing" if light else "--spacing"
     verdict = (f"Minimum spacing between {nn.many} ≈ {rec:g} m" if rec is not None
                else f"No spacing in the list dilutes the footprint: widen {flag}")
-    if light and not worst_case(meta):  # con onda verde la pregunta es cuántos semáforos aislados vale la cadena
+    if light and not worst_case(meta):  # with a green wave the question is how many isolated lights the chain is worth
         verdict = equivalence_text(meta, result)
     fig.suptitle(verdict, x=0.06, y=1 - 0.025 * k, ha="left", fontsize=15, color=INK, fontweight="bold")
     rates = " · ".join(f"{meta['nombres'][k]} {meta['tasas'][k]:.3g} veh/min" for k in meta["activos"])
@@ -1158,8 +1158,8 @@ def plot_bump_spacing(path: Path, meta: dict, data: dict, result: dict) -> None:
 
 
 def _chain_marks(meta: dict, first: float, d: float) -> list[float]:
-    """Posiciones que se marcan en el perfil de una cadena: el último elemento o, con separaciones fijas, todos tras el
-    primero."""
+    """Positions marked on a chain's profile: the last element or, with fixed spacings, all of them after the
+    first."""
     fixed = meta.get("separaciones_fijas_m") or []
     if not fixed:
         n = int(meta.get("topes_por_cadena", 2))
@@ -1168,12 +1168,12 @@ def _chain_marks(meta: dict, first: float, d: float) -> list[float]:
 
 
 def plot_calibration(path: Path, m: dict, rows: list[dict]) -> None:
-    """Resultados de `traffic-calibrate`: el intervalo entre cruces por posición en la cola contra el de saturación de
-    referencia, y el flujo contra la densidad en flujo continuo contra la capacidad y la densidad de embotellamiento de
-    referencia. El titular cuenta cuántas medidas quedan fuera de su rango."""
+    """Results of `traffic-calibrate`: the headway between crossings per queue position against the reference saturation
+    headway, and flow against density in continuous flow against the reference capacity and jam
+    density. The headline counts how many measurements are outside their range."""
     from matplotlib.figure import Figure
 
-    from trafico.calibration import LABELS, REFERENCES
+    from traffic.calibration import LABELS, REFERENCES
 
     fig = Figure(figsize=(13.5, 6.6), facecolor=SURFACE)
     grid = fig.add_gridspec(1, 2, wspace=0.22, left=0.06, right=0.98, top=0.70, bottom=0.11)
@@ -1182,14 +1182,14 @@ def plot_calibration(path: Path, m: dict, rows: list[dict]) -> None:
     def band(ax, ref, axis: str, label: str) -> None:
         span = ax.axhspan if axis == "y" else ax.axvspan
         span(ref.low, ref.high, color=GRID, alpha=0.7, linewidth=0, zorder=0)
-        if axis == "y":  # rótulo a la izquierda, debajo de la banda
+        if axis == "y":  # label on the left, below the band
             ax.annotate(label, (0.0, ref.low), xycoords=("axes fraction", "data"), xytext=(4, -3),
                         textcoords="offset points", ha="left", va="top", fontsize=8.5, color=INK_2)  # fmt: skip
         else:
             ax.annotate(label, (ref.low, 1.0), xycoords=("data", "axes fraction"), xytext=(4, -3),
                         textcoords="offset points", ha="left", va="top", fontsize=8.5, color=INK_2)  # fmt: skip
 
-    # Intervalo por posición en la cola.
+    # Headway per queue position.
     ax = fig.add_subplot(grid[0, 0])
     _style_axis(ax, "{:.1f}")
     pos = np.arange(1, len(m["intervalo_por_posicion_s"]) + 1)
@@ -1207,7 +1207,7 @@ def plot_calibration(path: Path, m: dict, rows: list[dict]) -> None:
     ax.set_ylabel("s since the previous one crossed (mean ± σ)", color=INK_2, fontsize=9)
     ax.set_title("Queue discharge on green", loc="left", fontsize=10.5, color=INK, pad=8)
 
-    # Flujo contra densidad en flujo continuo.
+    # Flow against density in continuous flow.
     ax = fig.add_subplot(grid[0, 1])
     _style_axis(ax, "{:,.0f}")
     k, q = np.asarray(m["densidad_veh_km"]), np.asarray(m["flujo_veh_h"])

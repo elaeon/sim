@@ -4,11 +4,11 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from trafico import api, calibration
-from trafico.calibration import REFERENCES, compare, measure
-from trafico.cli import CONFIG_NAME
-from trafico.config import DEFAULT_SPECS, Behavior, SimConfig
-from trafico.settings import ConfigError
+from traffic import api, calibration
+from traffic.calibration import REFERENCES, compare, measure
+from traffic.cli import CONFIG_NAME
+from traffic.config import DEFAULT_SPECS, Behavior, SimConfig
+from traffic.settings import ConfigError
 
 CAR = DEFAULT_SPECS[0]
 FAST = dict(queues=4, rates=(20, 120), flow_seconds=240.0, workers=1)
@@ -20,17 +20,17 @@ def _cfg(spec=CAR, reaction=1.5, **kw) -> SimConfig:
 
 
 def test_measurements_are_consistent():
-    """Sin aceleración ni frenado graduales: con poca demanda todos van a 50 km/h (flujo / densidad), la densidad de
-    embotellamiento es 1000 / (largo + gap_stop) y, en marcha a gap_run fijo, la capacidad queda muy por encima de la
-    de referencia (más de 5,000 veh/h)."""
+    """Without gradual acceleration or braking: with little demand all go at 50 km/h (flow / density), the jam
+    density is 1000 / (length + gap_stop) and, moving at a fixed gap_run, the capacity is far above the
+    reference (more than 5,000 veh/h)."""
     spec = replace(CAR, speed_kmh=50.0, speed_std=0.0, length_std=0.0, accel=None, decel=None)
     m = measure(_cfg(spec), "car", **FAST)
     assert m["velocidad_kmh"][0] == pytest.approx(50.0, rel=0.03)
     assert m["densidad_embotellamiento_veh_km"] == pytest.approx(1000 / (spec.length + spec.gap_stop))
     assert m["capacidad_marcha_veh_h"] > 5000 and m["flujo_veh_h"][1] == m["capacidad_marcha_veh_h"]
     assert m["intervalo_marcha_s"] == pytest.approx(3600 / m["capacidad_marcha_veh_h"])
-    # Con reacción fija, cada auto arranca su reacción después de que se mueve el de adelante: el intervalo de
-    # saturación es al menos la reacción.
+    # With a fixed reaction, each car starts its reaction after the one ahead moves: the saturation
+    # headway is at least the reaction.
     assert 1.5 <= m["intervalo_saturacion_s"] < 2.5
     assert m["flujo_saturacion_veh_h"] == pytest.approx(3600 / m["intervalo_saturacion_s"])
     assert len(m["intervalo_por_posicion_s"]) == calibration.QUEUE and m["colas"] == 4
@@ -62,7 +62,7 @@ def test_measure_errors():
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    monkeypatch.setattr("trafico.settings.project_root", lambda: tmp_path)
+    monkeypatch.setattr("traffic.settings.project_root", lambda: tmp_path)
     monkeypatch.setattr(calibration, "FLOW_RATES", (20, 120))
     monkeypatch.setattr(calibration, "FLOW_SECONDS", 240.0)
     (tmp_path / CONFIG_NAME).write_text(
@@ -90,11 +90,11 @@ def test_command_and_api(root, capsys):
     assert api.list_runs(mode="calibracion")[0]["id"] == r.folder.name
     with pytest.raises(api.ConfigError, match="there is no vehicle type"):
         api.calibrate(vehicle="avion", queues=3)
-    from trafico.cli import calibrate
+    from traffic.cli import calibrate
 
     capsys.readouterr()
     calibrate(["--queues", "3", "--vehicle", "bike", "--json"])
     doc = json.loads(capsys.readouterr().out)
     assert doc["modo"] == "calibracion" and doc["metricas"]["tipo"] == "bike"
-    assert all(x["estado"] is None for x in doc["metricas"]["medidas"])  # referencias solo de autos
+    assert all(x["estado"] is None for x in doc["metricas"]["medidas"])  # references only for cars
     assert np.isfinite(doc["metricas"]["capacidad_marcha_veh_h"])

@@ -1,81 +1,81 @@
-"""Motor microscópico: tramo de `lanes` carriles con un semáforo en x = length.
+"""Microsimulation engine: a segment of `lanes` lanes with a traffic light at x = length.
 
-Estado en estructura de arreglos (SoA) compacta: los vehículos activos ocupan
-las posiciones [0, n) de cada arreglo; los que salen se eliminan compactando.
-La capacidad inicial es la cota física de vehículos que caben en el tramo, así
-que la memoria no crece con la duración de la corrida.
+State in a compact structure of arrays (SoA): the active vehicles occupy
+positions [0, n) of each array; those that leave are removed by compacting.
+The initial capacity is the physical bound on the vehicles that fit in the segment, so
+memory does not grow with the length of the run.
 
-Modelo por paso de DT segundos (actualización paralela con posiciones previas):
-  * Cada vehículo avanza a su velocidad máxima (sorteada al llegar si la del tipo
-    es variable) sin rebasar el límite del carril; el avance está limitado por el
-    espacio al líder del carril y, en rojo, por la línea de alto.
-  * Semáforo: ciclo verde → amarillo → rojo. En amarillo la línea de alto sigue
-    abierta, pero quien está a menos de `yellow_approach` m de ella avanza a
-    `yellow_speed_factor` de su velocidad; en rojo, se detiene. Los tipos con
-    carril exclusivo en uno de `free_lanes` no obedecen ni el rojo ni el
-    amarillo (no cambian de carril, así que siempre van por él). Además del
-    semáforo del final del tramo puede haber otros a `position` m (`Light`),
-    cada uno con sus fases, su fase inicial y sus `free_lanes`: se detienen en
-    su línea como en la del final, pero el flujo y las colas se miden en la
-    del final del tramo.
-  * Peatones (opcionales, `pedestrian`): un semáforo peatonal es verde para los vehículos hasta que hay peatones
-    esperando; un tope puede ser paso peatonal. Su calendario de fases (verde/amarillo/rojo) se calcula al crear la
-    réplica (pedestrians.py) y los vehículos lo obedecen como a un semáforo intermedio, en los carriles del tope.
-  * Condición inicial (opcional): los carriles empiezan con vehículos en marcha
-    que ocupan una fracción del tramo, para no esperar a que se llene.
-  * Compresión: detrás de un líder detenido basta `gap_stop` (< `gap_run`).
-  * Estiramiento: un vehículo detenido que queda libre (se puso verde o arrancó
-    su líder) espera un tiempo de reacción U[1,5] s antes de avanzar, y además
-    necesita reabrir `gap_run` detrás del líder en marcha.
-  * Aceleración y frenado graduales (tipos con `accel`/`decel`): la velocidad
-    sube a lo más `accel`·DT por paso hacia la deseada y baja a lo más `decel`·DT
-    si la deseada baja; el gap detrás de un líder en marcha va de `gap_stop`
-    (casi detenido) a `gap_run` (a su velocidad deseada). Además no rebasa la velocidad a la que aún puede
-    detenerse, frenando a `decel` (con un paso de reacción), detrás del de
-    adelante (contando lo que éste necesita para detenerse), antes de la línea en
-    rojo o de una parada; en amarillo se detiene si todavía puede hacerlo y, si
-    no, cruza sin bajar la velocidad (no aplica `yellow_speed_factor`). El
-    espacio al de adelante sigue siendo un límite duro (frenado de emergencia).
-    Al arrancar tras la reacción parte de 0.
-  * Cola de salida (opcional, [exit]): quien cruza la línea entra a la cola de
-    salida de su carril, que acepta a lo más `capacity` veh/min y mide
-    `storage` m; cada vehículo ocupa en ella su largo + su gap detenido. Si el
-    siguiente no cabe, la línea de ese carril se cierra para él como en rojo
-    (aunque esté en verde): se detiene en ella y arranca con su reacción cuando
-    hay lugar; si llegan más de los que acepta, el carril se satura. Una cola
-    vacía acepta a cualquiera.
-  * Topes (opcionales, una sección [[speed_bump]] cada uno): en sus carriles `lanes`, a `position` m del
-    inicio, quien lo pisa (del frente a la parte trasera) no rebasa el
-    `speed_bump_kmh` de su tipo; sin `decel` baja de golpe, con `decel` frena
-    antes para llegar a esa velocidad. Los tipos sin `speed_bump_kmh` no frenan.
-  * Cola de entrada: los vehículos que no caben esperan fuera del tramo y entran
-    en marcha en cuanto hay lugar. Con `queue_reaction`, si la cola del tramo
-    llega detenida hasta la entrada, la cola de entrada también está detenida:
-    cada vehículo arranca con su tiempo de reacción cuando se mueve el de
-    adelante, como en el resto de la cola.
-  * Cambio de carril (solo tipos que pueden): la maniobra dura U[1,4] s, el
-    vehículo ocupa ambos carriles a velocidad reducida y los seguidores de los
-    dos carriles se comprimen detrás de él. Se cambia para rebasar a un líder
-    lento o para subir a un carril adyacente de mayor límite cuando hay lugar.
-    Los tipos con `overtake` (p. ej. motos) juzgan al líder por su velocidad
-    real y bajan incluso a un carril de menor límite si ahí avanzan más; cada
-    tipo puede fijar sus umbrales (`lookahead`, `min_advantage`, enfriamiento).
-  * Lado a lado (tipos con `abreast` > 1, p. ej. bicis): quien llega detrás de
-    un vehículo detenido de su mismo tipo se detiene a su lado, con los frentes
-    alineados, mientras la fila tenga lugar; el siguiente hace fila detrás. Al
-    arrancar salen uno tras otro (reacción y gap en marcha habituales).
-  * Rebase dentro del carril (tipos con `pass_in_lane`, p. ej. bicis): en marcha,
-    quien tiene una velocidad máxima mayor (acotada por el límite del carril) que
-    el de adelante de su mismo tipo lo rebasa por un lado sin cambiar de carril;
-    solo respeta al siguiente vehículo. El rebasado no frena por quien se le
-    adelanta hasta que éste le saca `gap_run`. Nunca van más de dos lado a lado.
-  * Parada (tipos con `stop_position`, p. ej. el autobús): el vehículo se detiene
-    con el frente en esa posición durante un tiempo normal(μ, σ) de descenso y
-    ascenso de pasajeros, y luego arranca sin tiempo de reacción adicional. Quien
-    viene detrás en su carril espera y se comprime.
+Model per step of DT seconds (parallel update with the previous positions):
+  * Each vehicle advances at its maximum speed (drawn on arrival if the type's
+    varies) without exceeding the lane's limit; the advance is limited by the
+    space to the lane's leader and, on red, by the stop line.
+  * Traffic light: cycle green → yellow → red. On yellow the stop line stays
+    open, but a vehicle less than `yellow_approach` m from it advances at
+    `yellow_speed_factor` of its speed; on red, it stops. Types with an
+    exclusive lane in one of `free_lanes` obey neither the red nor the
+    yellow (they do not change lanes, so they always use it). Besides the
+    light at the end of the segment there can be others at `position` m (`Light`),
+    each with its phases, its initial phase and its `free_lanes`: vehicles stop at
+    their line as at the end one, but flow and queues are measured at the
+    end of the segment.
+  * Pedestrians (optional, `pedestrian`): a pedestrian light is green for vehicles until pedestrians are
+    waiting; a bump can be a pedestrian crossing. Its phase schedule (green/yellow/red) is computed when the
+    replica is created (pedestrians.py) and vehicles obey it like an intermediate light, in the bump's lanes.
+  * Initial condition (optional): the lanes start with moving vehicles
+    occupying a fraction of the segment, so as not to wait for it to fill up.
+  * Compression: behind a stopped leader `gap_stop` (< `gap_run`) is enough.
+  * Stretching: a stopped vehicle that becomes free (the light turned green or its
+    leader started) waits a reaction time U[1,5] s before advancing, and also
+    needs to reopen `gap_run` behind the moving leader.
+  * Gradual acceleration and braking (types with `accel`/`decel`): the speed
+    rises by at most `accel`·DT per step towards the desired one and falls by at most `decel`·DT
+    if the desired one falls; the gap behind a moving leader goes from `gap_stop`
+    (almost stopped) to `gap_run` (at its desired speed). It also does not exceed the speed at which it can
+    still stop, braking at `decel` (with one reaction step), behind the one
+    ahead (counting what that one needs to stop), before the line on
+    red or before a stop; on yellow it stops if it still can and, if
+    not, crosses without slowing down (`yellow_speed_factor` does not apply). The
+    space to the one ahead is still a hard limit (emergency braking).
+    When starting after the reaction it starts from 0.
+  * Exit queue (optional, [exit]): a vehicle crossing the line enters the exit
+    queue of its lane, which accepts at most `capacity` veh/min and measures
+    `storage` m; each vehicle takes its length + its stopped gap in it. If the
+    next one does not fit, that lane's line closes for it as on red
+    (even if it is green): it stops at it and starts with its reaction when
+    there is room; if more arrive than it accepts, the lane saturates. An empty
+    queue accepts anyone.
+  * Bumps (optional, one [[speed_bump]] section each): in its lanes `lanes`, at `position` m from the
+    start, a vehicle on it (from the front to the rear) does not exceed its
+    type's `speed_bump_kmh`; without `decel` it slows down at once, with `decel` it brakes
+    beforehand to reach that speed. Types without `speed_bump_kmh` do not brake.
+  * Entry queue: vehicles that do not fit wait outside the segment and enter
+    moving as soon as there is room. With `queue_reaction`, if the segment's queue
+    reaches the entry stopped, the entry queue is stopped too:
+    each vehicle starts with its reaction time when the one ahead moves,
+    as in the rest of the queue.
+  * Lane change (only types that can): the manoeuvre lasts U[1,4] s, the
+    vehicle occupies both lanes at reduced speed and the followers in the
+    two lanes compress behind it. Vehicles change to overtake a slow leader
+    or to move up to an adjacent lane with a higher limit when there is room.
+    Types with `overtake` (e.g. motorcycles) judge the leader by its actual
+    speed and move even to a lane with a lower limit if they advance more there; each
+    type can set its thresholds (`lookahead`, `min_advantage`, cooldown).
+  * Side by side (types with `abreast` > 1, e.g. bikes): a vehicle arriving behind
+    a stopped vehicle of the same type stops beside it, with the fronts
+    aligned, while the row has room; the next one queues behind. When
+    starting they leave one after another (usual reaction and moving gap).
+  * Overtaking within the lane (types with `pass_in_lane`, e.g. bikes): while moving,
+    a vehicle with a higher maximum speed (bounded by the lane's limit) than
+    the one ahead of the same type passes it on one side without changing lanes;
+    it only respects the next vehicle. The overtaken one does not brake for the one passing it
+    until it pulls `gap_run` ahead. Never more than two side by side.
+  * Stop (types with `stop_position`, e.g. the bus): the vehicle stops
+    with its front at that position for a normal(μ, σ) time of passengers getting
+    off and on, and then starts without additional reaction time. Those
+    behind it in its lane wait and compress.
 
-El cálculo de cada paso está en kernel.py, compilado con numba. Aquí se arman las tablas y el estado de la réplica,
-la condición inicial, los calendarios de peatones, las llegadas por bloques y el resumen.
+The computation of each step is in kernel.py, compiled with numba. This module builds the tables and the state of
+the replica, the initial condition, the pedestrian schedules, the arrivals in chunks and the summary.
 """
 
 from __future__ import annotations
@@ -85,25 +85,25 @@ from dataclasses import replace
 
 import numpy as np
 
-from trafico import kernel
-from trafico.config import DT, MAX_TYPES, PEDESTRIAN_YIELD, RED, SimConfig
-from trafico.distributions import sample_lengths, sample_passengers, sample_rates, sample_speeds
-from trafico.emissions import EMIS_BIN, coefficient_table
-from trafico.kernel import ARRIVAL_CHUNK, EPS, INF, NAN, Occupancy
-from trafico.metrics import Recorder
-from trafico.pedestrians import Schedule, arrivals, bump_schedule, fixed_phases, light_schedule
+from traffic import kernel
+from traffic.config import DT, MAX_TYPES, PEDESTRIAN_YIELD, RED, SimConfig
+from traffic.distributions import sample_lengths, sample_passengers, sample_rates, sample_speeds
+from traffic.emissions import EMIS_BIN, coefficient_table
+from traffic.kernel import ARRIVAL_CHUNK, EPS, INF, NAN, Occupancy
+from traffic.metrics import Recorder
+from traffic.pedestrians import Schedule, arrivals, bump_schedule, fixed_phases, light_schedule
 
-PER_TYPE_STREAMS = 5  # generadores aleatorios por tipo de vehículo
-MAX_PAX = 255  # cota de pasajeros por vehículo (pax es uint8)
-INITIAL_MISSES = 30  # sorteos seguidos que no caben antes de dar por lleno un carril en la condición inicial
-# Series del Recorder que escribe el paso (State.r_<nombre>).
+PER_TYPE_STREAMS = 5  # random generators per vehicle type
+MAX_PAX = 255  # bound on passengers per vehicle (pax is uint8)
+INITIAL_MISSES = 30  # consecutive draws that do not fit before a lane counts as full in the initial condition
+# Recorder series written by the step (State.r_<name>).
 RECORDER_FIELDS = ("cum_pax", "pax_m", "pax_on", "footprint", "lane_sat", "lane_dist", "lane_time", "lane_cross",
                    "exit_q", "entry_q", "emis")  # fmt: skip
 
 
 def compile_kernel(cfg: SimConfig) -> None:
-    """Compila el kernel en este proceso, o lo carga de la caché de numba, con una réplica corta de `cfg`. Lleva
-    condición inicial para compilar también lo que la arma."""
+    """Compile the kernel in this process, or load it from numba's cache, with a short replica of `cfg`. It has an
+    initial condition so that what builds it is compiled too."""
     Simulation(replace(cfg, run=1.0, time_scale=1.0, initial_occupancy=0.5), np.random.default_rng(0)).advance(1)
 
 
@@ -119,29 +119,29 @@ class Simulation:
 
     def __init__(self, cfg: SimConfig, rng: np.random.Generator):
         self.cfg = cfg
-        # Un generador por proceso aleatorio y por tipo, hijos de la semilla de la réplica (rng.spawn
-        # no consume sorteos). Así, cambiar un proceso —la parada, la tasa o los pasajeros de un
-        # tipo— no desplaza los sorteos de los demás: dos escenarios con la misma semilla comparten
-        # los números aleatorios donde el cambio no interviene. Los de cada tipo van después de los
-        # comunes y en el orden de los tipos, así que agregar un tipo nuevo no altera los anteriores.
+        # One generator per random process and per type, children of the replica's seed (rng.spawn
+        # consumes no draws). That way, changing a process —the stop, the rate or the passengers of a
+        # type— does not shift the draws of the others: two scenarios with the same seed share
+        # the random numbers where the change is not involved. Those of each type come after the
+        # common ones and in the order of the types, so adding a new type does not alter the earlier ones.
         streams = rng.spawn(1 + PER_TYPE_STREAMS * cfg.n_types)
-        self.rng_lane_change = streams[0]  # orden de decisión y duración de los cambios de carril
+        self.rng_lane_change = streams[0]  # decision order and duration of lane changes
         per_type = streams[1:]
-        self.rng_arrivals = per_type[0::PER_TYPE_STREAMS]  # llegadas Poisson
-        self.rng_pax = per_type[1::PER_TYPE_STREAMS]  # pasajeros por vehículo
-        self.rng_react = per_type[2::PER_TYPE_STREAMS]  # tiempos de reacción
-        self.rng_entry = per_type[3::PER_TYPE_STREAMS]  # carril de entrada (desempates)
-        self.rng_stop = per_type[4::PER_TYPE_STREAMS]  # duración de la parada
-        # Hijos del generador de pasajeros (spawn no consume sus sorteos): si lleva mercancía y su
-        # largo. Agregarlos no altera los sorteos anteriores ni dependen del número de tipos.
+        self.rng_arrivals = per_type[0::PER_TYPE_STREAMS]  # Poisson arrivals
+        self.rng_pax = per_type[1::PER_TYPE_STREAMS]  # passengers per vehicle
+        self.rng_react = per_type[2::PER_TYPE_STREAMS]  # reaction times
+        self.rng_entry = per_type[3::PER_TYPE_STREAMS]  # entry lane (tie-breaks)
+        self.rng_stop = per_type[4::PER_TYPE_STREAMS]  # duration of the stop
+        # Children of the passenger generator (spawn consumes none of its draws): whether it carries freight and its
+        # length. Adding them does not alter the earlier draws and they do not depend on the number of types.
         self.rng_cargo, self.rng_length = zip(*(g.spawn(2) for g in self.rng_pax))
-        # Cuellos de botella: si se detiene y dónde (al llegar) y cuánto tiempo (al detenerse).
+        # Bottlenecks: whether it stops and where (on arrival) and for how long (when stopping).
         self.rng_bottleneck, self.rng_bottleneck_time = zip(*(g.spawn(2) for g in self.rng_pax))
-        # Hijo del generador de llegadas: la tasa de cada intervalo de los tipos con tasa variable.
+        # Child of the arrival generator: the rate of each interval for the types with a variable rate.
         self.rng_rate = [g.spawn(1)[0] for g in self.rng_arrivals]
-        # Hijo del generador de pasajeros: la velocidad máxima de cada vehículo (si es variable).
+        # Child of the passenger generator: the maximum speed of each vehicle (if it varies).
         self.rng_speed = [g.spawn(1)[0] for g in self.rng_pax]
-        # Hijo del generador de reacción: la reacción de quien arranca en la cola de entrada detenida.
+        # Child of the reaction generator: the reaction of a vehicle starting in the stopped entry queue.
         self.rng_queue_react = [g.spawn(1)[0] for g in self.rng_react]
         specs = cfg.specs
         b = cfg.behavior
@@ -149,25 +149,25 @@ class Simulation:
         self.n_lanes = cfg.lanes
         self.n_types = cfg.n_types
 
-        # Tablas por tipo de vehículo (indexadas por vtype).
-        self.v_step = np.array([s.speed * DT for s in specs])  # velocidad media; la de cada vehículo está en vmax
-        self.length_t = np.array([s.length for s in specs])  # largo medio; el de cada vehículo está en vlen
+        # Tables per vehicle type (indexed by vtype).
+        self.v_step = np.array([s.speed * DT for s in specs])  # mean speed; each vehicle's is in vmax
+        self.length_t = np.array([s.length for s in specs])  # mean length; each vehicle's is in vlen
         self.gap_run_t = np.array([s.gap_run for s in specs])
         self.gap_stop_t = np.array([s.gap_stop for s in specs])
-        # Intervalo de seguimiento (s) de los tipos con time_headway: en marcha, gap_stop + time_headway · v.
+        # Car-following headway (s) of the types with time_headway: when moving, gap_stop + time_headway · v.
         self.has_headway_t = np.array([s.time_headway is not None for s in specs])
         self.headway_t = np.array([s.time_headway or 0.0 for s in specs])
         self.any_headway = bool(self.has_headway_t.any())
         self.can_change = np.array([s.can_change_lane for s in specs])
         self.stop_x = np.array([np.inf if s.stop_position is None else s.stop_position for s in specs])
         self.has_stop = np.isfinite(self.stop_x)
-        # Probabilidad y duración (media, σ) de la detención de cada tipo: la propia o la de [bottleneck].
+        # Probability and duration (mean, σ) of each type's halt: its own or that of [bottleneck].
         self.bn_prob = np.array([cfg.bottleneck_prob(k) for k in range(self.n_types)])
         self.bn_time = [cfg.bottleneck_time(k) for k in range(self.n_types)]
-        self.bn_type = self.bn_prob > 0  # tipos que pueden detenerse en un cuello de botella
-        self.free_type = np.array([cfg.ignores_light(k) for k in range(self.n_types)], np.bool_)  # sin semáforo
-        # Líneas de alto intermedias (semáforos intermedios y pasos peatonales de los topes): posición, tipos que no
-        # las obedecen (carril exclusivo en los free_lanes del semáforo) y carriles donde rigen (todos si no dice).
+        self.bn_type = self.bn_prob > 0  # types that can stop at a bottleneck
+        self.free_type = np.array([cfg.ignores_light(k) for k in range(self.n_types)], np.bool_)  # no traffic light
+        # Intermediate stop lines (intermediate traffic lights and the bumps' pedestrian crossings): position, types that do
+        # not obey them (exclusive lane in the light's free_lanes) and lanes where they apply (all if unspecified).
         self.lines = cfg.stop_lines
         self.inner_x = np.array([s.position for s in self.lines], np.float64)
         self.inner_free = np.zeros((len(self.lines), self.n_types), np.bool_)
@@ -182,27 +182,27 @@ class Simulation:
         self.any_stop = bool(self.has_stop.any() or self.bn_type.any())
         self.abreast = np.array([s.abreast for s in specs])
         self.any_abreast = bool((self.abreast > 1).any())
-        self.pass_in_lane = np.array([s.pass_in_lane for s in specs])  # rebasan dentro del carril
+        self.pass_in_lane = np.array([s.pass_in_lane for s in specs])  # overtake within the lane
         self.any_pass_in_lane = bool(self.pass_in_lane.any())
-        self.allowed = np.zeros((self.n_types, cfg.lanes), np.bool_)  # carriles que puede usar cada tipo
+        self.allowed = np.zeros((self.n_types, cfg.lanes), np.bool_)  # lanes each type can use
         for k in range(self.n_types):
             self.allowed[k, list(cfg.allowed_lanes(k))] = True
-        # Carriles de entrada de cada tipo (los primeros entry_count de su fila).
+        # Entry lanes of each type (the first entry_count of its row).
         self.entry_count = np.array([len(cfg.entry_lanes(k)) for k in range(self.n_types)], np.int64)
         self.entry_lanes = np.zeros((self.n_types, cfg.lanes), np.int64)
         for k in range(self.n_types):
             self.entry_lanes[k, : self.entry_count[k]] = cfg.entry_lanes(k)
         self.rate_tick = np.array(cfg.rates, dtype=np.float64) / 60.0 * DT
-        # Tasas variables: llegadas por paso en cada intervalo de rate_interval, sorteadas al inicio.
+        # Variable rates: arrivals per step in each rate_interval interval, drawn at the start.
         n_intervals = -(-cfg.n_ticks // cfg.rate_ticks)
         self.rate_by_interval = {
             k: sample_rates(self.rng_rate[k], cfg.rate(k), n_intervals) / 60.0 * DT
             for k in range(self.n_types) if cfg.rate(k).variable
         }  # fmt: skip
 
-        self.lane_vmax = np.array(cfg.lane_max_kmh) / 3.6 * DT  # límite de cada carril, m/paso
+        self.lane_vmax = np.array(cfg.lane_max_kmh) / 3.6 * DT  # limit of each lane, m/step
         self.lc_every = max(1, round(b.lane_change_interval / DT))
-        # Umbrales de cambio de carril por tipo: los del tipo o, si no los fija, los de [behavior].
+        # Lane change thresholds per type: the type's own or, if it does not set them, those of [behavior].
         def own(field: str) -> np.ndarray:
             return np.array([getattr(b, field) if getattr(s, field) is None else getattr(s, field) for s in specs])
 
@@ -210,27 +210,27 @@ class Simulation:
         self.min_adv_t = own("min_advantage")
         self.cooldown_ticks_t = np.round(own("lane_change_cooldown") / DT).astype(np.int16)
         self.overtake = np.array([s.overtake for s in specs])
-        # Aceleración y frenado por tipo en m/paso² (inf = instantáneos, sin anticipación).
+        # Acceleration and braking per type in m/step² (inf = instantaneous, no anticipation).
         self.acc_t = np.array([INF if s.accel is None else s.accel * DT * DT for s in specs])
         self.dec_t = np.array([INF if s.decel is None else s.decel * DT * DT for s in specs])
-        self.dyn_t = np.isfinite(self.acc_t) | np.isfinite(self.dec_t)  # tipos con dinámica gradual
+        self.dyn_t = np.isfinite(self.acc_t) | np.isfinite(self.dec_t)  # types with gradual dynamics
         self.dec_fin_t = np.isfinite(self.dec_t)
-        self.dec_safe_t = np.where(self.dec_fin_t, self.dec_t, 1.0)  # sin infinitos, para kernel.gipps
+        self.dec_safe_t = np.where(self.dec_fin_t, self.dec_t, 1.0)  # without infinities, for kernel.gipps
         self.any_dynamics = bool(self.dyn_t.any())
-        # Tope ([speed_bump]): posición, carriles donde está y velocidad máxima de cada tipo al pisarlo (m/paso).
-        self.bump_x = np.array([b.position for b in cfg.bumps], dtype=np.float64)  # uno o varios topes
-        self.bump_lane = np.zeros((len(cfg.bumps), cfg.lanes), np.bool_)  # carriles de cada tope
+        # Bump ([speed_bump]): position, lanes where it is and maximum speed of each type when on it (m/step).
+        self.bump_x = np.array([b.position for b in cfg.bumps], dtype=np.float64)  # one or several bumps
+        self.bump_lane = np.zeros((len(cfg.bumps), cfg.lanes), np.bool_)  # lanes of each bump
         for i, b in enumerate(cfg.bumps):
             self.bump_lane[i, list(cfg.bump_lanes(b))] = True
         self.bump_v_t = np.array([INF if s.speed_bump_kmh is None else s.speed_bump_kmh / 3.6 * DT for s in specs])
         self.any_bump = bool(self.bump_x.size and self.bump_lane.any() and np.isfinite(self.bump_v_t).any())
-        # Emisiones (Int Panis et al., 2006): coeficientes por tipo y contaminante, límites de la aceleración que
-        # entra al modelo (m/s²) y gramos acumulados: en la corrida, a flujo libre (mismo recorrido a velocidad
-        # constante), en el intervalo de muestreo y por posición (contaminante × carril × intervalo de EMIS_BIN m).
+        # Emissions (Int Panis et al., 2006): coefficients per type and pollutant, bounds of the acceleration that
+        # enters the model (m/s²) and accumulated grams: over the run, at free flow (the same trip at constant
+        # speed), in the sampling interval and by position (pollutant × lane × EMIS_BIN m bin).
         self.emis_coef, self.emis_on = coefficient_table(specs)
         self.any_emissions = bool(self.emis_on.any())
-        self.emits_t = self.emis_on.any(axis=1)  # el tipo emite algún contaminante
-        # Coeficientes por (tipo, juego): la fila 2·tipo es la de a ≥ −0.5 y la 2·tipo + 1 la de a < −0.5.
+        self.emits_t = self.emis_on.any(axis=1)  # the type emits some pollutant
+        # Coefficients per (type, set): row 2·type is the one for a ≥ −0.5 and 2·type + 1 the one for a < −0.5.
         self._coef_sets = np.ascontiguousarray(self.emis_coef.transpose(0, 2, 1, 3)).reshape(-1, *self.emis_coef.shape[1::2])
         self.emis_amax = np.array([s.accel or 0.0 for s in specs])
         self.emis_dmax = np.array([s.decel or 0.0 for s in specs])
@@ -239,17 +239,17 @@ class Simulation:
         self.emis_free_g = np.zeros((self.n_types, n_pol))
         self.emis_interval = np.zeros((self.n_types, n_pol))
         self.emis_pos = np.zeros((n_pol, cfg.lanes, max(1, math.ceil(cfg.length / EMIS_BIN))))
-        self.veh_m = np.zeros(self.n_types)  # m recorridos dentro del tramo, por tipo
-        # Sin límites distintos entre carriles no hay a dónde subir.
+        self.veh_m = np.zeros(self.n_types)  # m travelled within the segment, per type
+        # Without different limits between lanes there is nowhere to move up to.
         self.any_rise = len(set(cfg.lane_max_kmh)) > 1
-        self._key_stride = self.L + 1e4  # separa los carriles en la clave de orden
+        self._key_stride = self.L + 1e4  # separates the lanes in the sort key
 
-        self._ints = np.zeros(5, np.int64)  # n, paso, cambios de carril, muestras, posición en el bloque de llegadas
+        self._ints = np.zeros(5, np.int64)  # n, step, lane changes, samples, position in the arrival chunk
         min_slot = min(s.shortest + s.gap_stop for s in specs)
         per_lane = math.ceil((self.L + max(s.longest for s in specs)) / min_slot) + 2
         self._alloc(cfg.lanes * per_lane)
-        # Cola de entrada de cada carril (anillo): (tipo, pax, largo, posición de su detención de [bottleneck],
-        # velocidad máxima km/h, paso de llegada a la cola).
+        # Entry queue of each lane (ring): (type, pax, length, position of its [bottleneck] halt,
+        # maximum speed km/h, step of arrival at the queue).
         queue_cap = 64
         self.q_vt = np.zeros((cfg.lanes, queue_cap), np.int64)
         self.q_pax = np.zeros((cfg.lanes, queue_cap), np.int64)
@@ -259,56 +259,56 @@ class Simulation:
         self.q_arrived = np.zeros((cfg.lanes, queue_cap), np.int64)
         self.q_head = np.zeros(cfg.lanes, np.int64)
         self.q_count = np.zeros(cfg.lanes, np.int64)
-        # Cola de entrada detenida por carril y pasos de reacción que le faltan a su primero (-1 = sin empezar).
+        # Stopped entry queue per lane and reaction steps its first vehicle still needs (-1 = not started).
         self.queue_stopped = np.zeros(cfg.lanes, np.bool_)
         self.queue_react = np.full(cfg.lanes, -1, np.int32)
-        # Bloque de llegadas en curso (ninguno: se sortea al empezar).
+        # Current arrival chunk (none: it is drawn at the start).
         self._arr = kernel.Arrivals(-1, *(np.zeros(0, d) for d in (np.int64,) * 3 + (np.float64,) * 3))
 
         self.arrived_veh = np.zeros(self.n_types)
         self.arrived_pax = np.zeros(self.n_types)
-        self.arrived_cargo = np.zeros(self.n_types)  # llegadas con mercancía (pax = 0)
+        self.arrived_cargo = np.zeros(self.n_types)  # arrivals with freight (pax = 0)
         self.entered_veh = np.zeros(self.n_types)
         self.cum_veh = np.zeros(self.n_types)
         self.cum_pax = np.zeros(self.n_types)
         self.travel_ticks = np.zeros(self.n_types)
-        self.pax_m = np.zeros(self.n_types)  # pasajeros·m dentro del tramo en el intervalo de muestreo
-        self.lane_dist = np.zeros(cfg.lanes)  # m recorridos en cada carril en el intervalo de muestreo
-        self.lane_time = np.zeros(cfg.lanes)  # vehículo·s presentes en cada carril en el intervalo
-        self.type_dist = np.zeros(self.n_types)  # m recorridos dentro del tramo por tipo, en toda la corrida
-        self.type_time = np.zeros(self.n_types)  # vehículo·s dentro del tramo por tipo (con los detenidos)
-        self.lane_changes_t = np.zeros(self.n_types)  # cambios de carril por tipo
-        self.in_lane_passes = np.zeros(self.n_types)  # rebases dentro del carril, por tipo de quien rebasa
-        self.stops = np.zeros(self.n_types)  # paradas completadas por tipo
-        self.stop_time_ticks = np.zeros(self.n_types)  # pasos detenidos en la parada, por tipo
-        self.queue_wait_ticks = np.zeros(self.n_types)  # pasos en la cola de entrada de los que ya entraron
-        self.bn_stops = np.zeros(self.n_types)  # detenciones de [bottleneck] por tipo
-        self.bn_ticks = np.zeros(self.n_types)  # pasos detenidos en ellas, por tipo
-        self.pax_hist = np.zeros((self.n_types, MAX_PAX + 1), np.int64)  # vehículos llegados por nº de pasajeros
-        # Cola de salida por carril: vehículos que acepta por paso (inf = sin cola de salida).
+        self.pax_m = np.zeros(self.n_types)  # passengers·m within the segment in the sampling interval
+        self.lane_dist = np.zeros(cfg.lanes)  # m travelled in each lane in the sampling interval
+        self.lane_time = np.zeros(cfg.lanes)  # vehicle·s present in each lane in the interval
+        self.type_dist = np.zeros(self.n_types)  # m travelled within the segment per type, over the whole run
+        self.type_time = np.zeros(self.n_types)  # vehicle·s within the segment per type (including stopped ones)
+        self.lane_changes_t = np.zeros(self.n_types)  # lane changes per type
+        self.in_lane_passes = np.zeros(self.n_types)  # overtakes within the lane, per type of the overtaking vehicle
+        self.stops = np.zeros(self.n_types)  # completed stops per type
+        self.stop_time_ticks = np.zeros(self.n_types)  # steps stopped at the stop, per type
+        self.queue_wait_ticks = np.zeros(self.n_types)  # steps in the entry queue of those that already entered
+        self.bn_stops = np.zeros(self.n_types)  # [bottleneck] halts per type
+        self.bn_ticks = np.zeros(self.n_types)  # steps stopped in them, per type
+        self.pax_hist = np.zeros((self.n_types, MAX_PAX + 1), np.int64)  # vehicles arrived per number of passengers
+        # Exit queue per lane: vehicles it accepts per step (inf = no exit queue).
         exit_cap = np.array(cfg.lane_exit_capacity, dtype=np.float64)
         self.exit_rate = np.where(exit_cap > 0, exit_cap / 60.0 * DT, INF)
-        self._exit_limited = np.isfinite(self.exit_rate)  # carriles con cola de salida
-        self._exit_add = np.where(self._exit_limited, self.exit_rate, 0.0)  # salidas que acepta por paso
-        # m de cada cola de salida; sin cola de salida, sin límite.
+        self._exit_limited = np.isfinite(self.exit_rate)  # lanes with an exit queue
+        self._exit_add = np.where(self._exit_limited, self.exit_rate, 0.0)  # exits it accepts per step
+        # m of each exit queue; without an exit queue, no limit.
         self.exit_storage = np.where(exit_cap > 0, np.array(cfg.lane_exit_storage, dtype=np.float64), INF)
         self.any_exit = bool((exit_cap > 0).any())
-        self.exit_q = np.zeros(cfg.lanes)  # m ocupados en la cola de salida (largo + gap detenido de cada vehículo)
-        # Lo que ocupa cada vehículo en la cola de salida, en orden de llegada (anillo): sale el primero que entró.
+        self.exit_q = np.zeros(cfg.lanes)  # m occupied in the exit queue (length + stopped gap of each vehicle)
+        # What each vehicle takes in the exit queue, in order of arrival (ring): the first in is the first out.
         self.exit_ring = np.zeros((cfg.lanes, self.x.size))
         self.exit_head = np.zeros(cfg.lanes, np.int64)
         self.exit_count = np.zeros(cfg.lanes, np.int64)
-        self.exit_credit = np.zeros(cfg.lanes)  # fracción acumulada de la siguiente salida
-        self.exit_closed = np.zeros(cfg.lanes, np.bool_)  # el siguiente vehículo del carril no cabe en la salida
-        self.exit_blocked_ticks = np.zeros(cfg.lanes)  # pasos con la línea cerrada por la cola de salida
-        self.lane_cross = np.zeros(cfg.lanes)  # cruces de la línea por carril en el intervalo de muestreo
-        self.lane_crossed = np.zeros(cfg.lanes)  # cruces de la línea por carril en toda la corrida
+        self.exit_credit = np.zeros(cfg.lanes)  # accumulated fraction of the next exit
+        self.exit_closed = np.zeros(cfg.lanes, np.bool_)  # the lane's next vehicle does not fit in the exit
+        self.exit_blocked_ticks = np.zeros(cfg.lanes)  # steps with the line closed by the exit queue
+        self.lane_cross = np.zeros(cfg.lanes)  # line crossings per lane in the sampling interval
+        self.lane_crossed = np.zeros(cfg.lanes)  # line crossings per lane over the whole run
         self.recorder = Recorder(cfg.n_samples, cfg.n_types, cfg.lanes)
-        self.initial_veh = np.zeros(self.n_types)  # vehículos de la condición inicial
+        self.initial_veh = np.zeros(self.n_types)  # vehicles of the initial condition
         self.initial_pax = np.zeros(self.n_types)
-        self.timed_veh = np.zeros(self.n_types)  # cruces con tiempo de recorrido (sin los iniciales)
-        # Generadores propios (hijos nuevos: no alteran los anteriores): el relleno inicial y los peatones. Se crean
-        # siempre, para que el índice de cada uno no dependa de la configuración.
+        self.timed_veh = np.zeros(self.n_types)  # crossings with a travel time (without the initial ones)
+        # Own generators (new children: they do not alter the earlier ones): the initial filling and the pedestrians. They
+        # are always created, so that the index of each one does not depend on the configuration.
         fill_rng, ped_rng = rng.spawn(1)[0], rng.spawn(1)[0]
         self._init_pedestrians(ped_rng)
         self._p = kernel.as_ref(self._params())
@@ -321,7 +321,7 @@ class Simulation:
 
     @property
     def n(self) -> int:
-        """Vehículos en el tramo: ocupan las posiciones [0, n) de cada arreglo."""
+        """Vehicles in the segment: they occupy positions [0, n) of each array."""
         return int(self._ints[kernel.N])
 
     @property
@@ -334,8 +334,8 @@ class Simulation:
 
     @property
     def queues(self) -> list[list[tuple[int, int, float, float, float, int]]]:
-        """Cola de entrada de cada carril, del primero al último: (tipo, pax, largo, posición de su detención de
-        [bottleneck], velocidad máxima km/h, paso de llegada). Es una copia."""
+        """Entry queue of each lane, from the first to the last: (type, pax, length, position of its
+        [bottleneck] halt, maximum speed km/h, arrival step). It is a copy."""
         cap = self.q_vt.shape[1]
         out = []
         for ln in range(self.n_lanes):
@@ -347,24 +347,24 @@ class Simulation:
 
     @property
     def queue_len(self) -> np.ndarray:
-        """Vehículos en la cola de entrada de cada carril."""
+        """Vehicles in the entry queue of each lane."""
         return self.q_count.copy()
 
     def queued_types(self) -> np.ndarray:
-        """Vehículos de cada tipo en las colas de entrada."""
+        """Vehicles of each type in the entry queues."""
         cap = self.q_vt.shape[1]
         types = [self.q_vt[ln, (self.q_head[ln] + np.arange(self.q_count[ln])) % cap] for ln in range(self.n_lanes)]
         return np.bincount(np.concatenate(types), minlength=self.n_types).astype(np.float64)
 
     @property
     def exit_items(self) -> list[list[float]]:
-        """Lo que ocupa cada vehículo en la cola de salida de cada carril, del primero al último. Es una copia."""
+        """What each vehicle takes in the exit queue of each lane, from the first to the last. It is a copy."""
         cap = self.exit_ring.shape[1]
         return [self.exit_ring[ln, (self.exit_head[ln] + np.arange(self.exit_count[ln])) % cap].tolist()
                 for ln in range(self.n_lanes)]  # fmt: skip
 
     def _queue_exit(self, ln: int, size: float) -> None:
-        """Pone en la cola de salida del carril `ln` un vehículo que ocupa `size` m."""
+        """Put a vehicle that takes `size` m into the exit queue of lane `ln`."""
         cap = self.exit_ring.shape[1]
         self.exit_ring[ln, (self.exit_head[ln] + self.exit_count[ln]) % cap] = size
         self.exit_count[ln] += 1
@@ -382,18 +382,18 @@ class Simulation:
         self.stopped = np.zeros(cap, np.bool_)
         self.crossed = np.zeros(cap, np.bool_)
         self.entry_tick = np.zeros(cap, np.int32)
-        self.vid = np.zeros(cap, np.int32)  # identificador del vehículo (orden de entrada al tramo)
+        self.vid = np.zeros(cap, np.int32)  # vehicle identifier (order of entry into the segment)
         self.stop_state = np.zeros(cap, np.int8)  # NO_STOP | STOP_AHEAD | AT_STOP
-        self.dwell = np.zeros(cap, np.int32)  # pasos que le quedan en la parada
-        self.v_last = np.zeros(cap, np.float64)  # m avanzados en el último paso (velocidad real)
-        self.vcap_last = np.zeros(cap, np.float64)  # m que podía avanzar en él sin líder ni alto
-        self.vlen = np.zeros(cap, np.float64)  # largo del vehículo (m)
-        self.vmax = np.zeros(cap, np.float64)  # velocidad máxima del vehículo (m/paso)
-        self.stop_pos = np.full(cap, np.inf)  # posición de su parada o detención (frente); inf = ninguna
+        self.dwell = np.zeros(cap, np.int32)  # steps it has left at the stop
+        self.v_last = np.zeros(cap, np.float64)  # m advanced in the last step (actual speed)
+        self.vcap_last = np.zeros(cap, np.float64)  # m it could advance in it without a leader or a stop
+        self.vlen = np.zeros(cap, np.float64)  # length of the vehicle (m)
+        self.vmax = np.zeros(cap, np.float64)  # maximum speed of the vehicle (m/step)
+        self.stop_pos = np.full(cap, np.inf)  # position of its stop or halt (front); inf = none
         self.stop_kind = np.zeros(cap, np.int8)  # TYPE_STOP | BOTTLENECK_STOP
 
     def _make_room(self) -> None:
-        """Agranda al doble los arreglos que no alcanzan para el paso actual (ver kernel.has_room)."""
+        """Double the arrays that are not big enough for the current step (see kernel.has_room)."""
         n = self.n
         if n + self.n_lanes > self.x.size:
             old = {f: getattr(self, f) for f in self._FIELDS}
@@ -409,7 +409,7 @@ class Simulation:
         self._st = kernel.as_ref(self._state())
 
     def _grow_ring(self, fields: tuple[str, ...], head: np.ndarray, count: np.ndarray) -> None:
-        """Duplica los anillos `fields` (carriles × capacidad); cada carril queda en orden desde la posición 0."""
+        """Double the rings `fields` (lanes × capacity); each lane is left in order from position 0."""
         cap = getattr(self, fields[0]).shape[1]
         for f in fields:
             old = getattr(self, f)
@@ -427,7 +427,7 @@ class Simulation:
         else:
             react_mean = b.reaction_mean if b.reaction_mean is not None else (b.reaction_min + b.reaction_max) / 2
             react_mode = kernel.REACT_FIXED if b.reaction_std <= 0 else kernel.REACT_NORMAL
-        # Fases de las líneas de alto: la del final del tramo y las intermedias.
+        # Phases of the stop lines: the one at the end of the segment and the intermediate ones.
         n_lines = 1 + len(self.lines)
         kind = np.zeros(n_lines, np.int64)
         red, green, yellow, offset = (np.zeros(n_lines, np.int64) for _ in range(4))
@@ -479,14 +479,14 @@ class Simulation:
         )  # fmt: skip
 
     def _state(self) -> kernel.State:
-        """El estado para el kernel: los mismos arreglos de la simulación (sin copias)."""
+        """The state for the kernel: the simulation's own arrays (no copies)."""
         rec = {f"r_{name}": getattr(self.recorder, name) for name in RECORDER_FIELDS}
         return kernel.State(ints=self._ints, **{f: rec[f] if f in rec else getattr(self, f)
                                                 for f in kernel.State._fields if f != "ints"})  # fmt: skip
 
     def _kernel_rngs(self) -> kernel.Rngs:
-        """Los generadores del paso, MAX_TYPES por proceso (numba compila una sola vez para cualquier número de
-        tipos); los de relleno no se usan."""
+        """The step's generators, MAX_TYPES per process (numba compiles only once for any number of
+        types); the filler ones are not used."""
         spare = [np.random.default_rng(0) for _ in range(MAX_TYPES - self.n_types)]
 
         def full(gens) -> tuple:
@@ -499,7 +499,7 @@ class Simulation:
         self, vt: int, pax: int, lane: int, length: float | None = None, x: float | None = None,
         bottleneck_at: float = INF, speed_kmh: float | None = None, v0: float | None = None,
     ) -> None:  # fmt: skip
-        """Agrega un vehículo (ver kernel.add_vehicle); sin `x`, entra al inicio del tramo."""
+        """Add a vehicle (see kernel.add_vehicle); without `x`, it enters at the start of the segment."""
         if self.n == self.x.size:
             self._make_room()
         kernel.py_add_vehicle(self._p, self._st, int(vt), int(pax), int(lane), NAN if length is None else float(length),
@@ -507,15 +507,15 @@ class Simulation:
                            NAN if speed_kmh is None else float(speed_kmh), NAN if v0 is None else float(v0))  # fmt: skip
 
     def _initial_fill(self, rng: np.random.Generator) -> None:
-        """Condición inicial: cada carril empieza con vehículos que ocupan la fracción `occupancy`
-        de su largo, midiendo cada uno como largo + gap_stop (1 = cola compacta, sin más espacio que
-        el gap detenido). Los tipos se eligen en proporción a su tasa de llegada entre los que pueden
-        circular por ese carril; pasajeros, mercancía y largo se sortean como en las llegadas. Si un
-        vehículo no cabe se sortea otro, hasta INITIAL_MISSES intentos seguidos.
+        """Initial condition: each lane starts with vehicles occupying the fraction `occupancy`
+        of its length, each one measuring length + gap_stop (1 = compact queue, with no more space than
+        the stopped gap). Types are chosen in proportion to their arrival rate among those that can
+        use that lane; passengers, freight and length are drawn as on arrival. If a
+        vehicle does not fit another one is drawn, up to INITIAL_MISSES consecutive attempts.
 
-        El espacio libre se reparte primero para que cada uno tenga su gap_run (en marcha) y el resto
-        al azar. Si no alcanza, todos se comprimen por igual y empiezan detenidos, como un
-        embotellamiento: arrancan con su tiempo de reacción cuando se abre espacio."""
+        The free space is first shared so that each one has its gap_run (moving) and the rest
+        at random. If it is not enough, all compress equally and start stopped, like a
+        jam: they start with their reaction time when space opens up."""
         cfg = self.cfg
         for lane, occupancy in enumerate(cfg.lane_initial_occupancy):
             types = [k for k in range(self.n_types) if cfg.rates[k] > 0 and lane in cfg.entry_lanes(k)]
@@ -536,26 +536,26 @@ class Simulation:
                 if spec.cargo_prob > 0 and rng.random() < spec.cargo_prob:
                     pax = 0
                 at = rng.uniform(*self.bn_zone) if self.bn_type[k] and rng.random() < self.bn_prob[k] else INF
-                speed = float(sample_speeds(rng, spec, 1)[0])  # sin desviación no consume sorteos
+                speed = float(sample_speeds(rng, spec, 1)[0])  # without a deviation it consumes no draws
                 chosen.append((k, pax, length, at, speed))
                 used += length + self.gap_stop_t[k]
             if not chosen:
                 continue
-            # Espacio sobre el mínimo (gap_stop detrás de cada líder; el primero no tiene líder).
+            # Space above the minimum (gap_stop behind each leader; the first has no leader).
             kinds = np.array([k for k, *_ in chosen])
             pool = self.L - sum(length for _, _, length, *_ in chosen) - self.gap_stop_t[kinds[1:]].sum()
-            # hasta el gap en marcha (gap_run, o el de time_headway a su velocidad deseada)
+            # up to the moving gap (gap_run, or that of time_headway at its desired speed)
             run_gap = [kernel.py_run_gap(self._p, k, min(speed / 3.6 * DT, self.lane_vmax[lane]))
                        for k, *_, speed in chosen]  # fmt: skip
             need = np.r_[0.0, np.array(run_gap[1:]) - self.gap_stop_t[kinds[1:]]]
             if pool >= need.sum():
                 spare = np.diff(np.sort(rng.uniform(0.0, pool - need.sum(), len(chosen))), prepend=0.0)
                 extra = need + spare
-            else:  # no alcanza para ir en marcha: se comprimen por igual
+            else:  # not enough to be moving: they compress equally
                 extra = need * pool / need.sum()
-            # Se coloca del semáforo hacia atrás; quien queda a menos de su gap_run empieza detenido.
+            # Vehicles are placed from the traffic light backwards; one less than its gap_run behind starts stopped.
             rear = self.L
-            ahead = -1  # el colocado justo delante en este carril
+            ahead = -1  # the one placed just ahead in this lane
             for idx, ((k, pax, length, at, speed), free) in enumerate(zip(chosen, extra)):
                 gap = (self.gap_stop_t[k] if idx else 0.0) + free
                 self._add(k, pax, lane, length, x=rear - gap, bottleneck_at=at, speed_kmh=speed)
@@ -564,8 +564,8 @@ class Simulation:
                     self.stopped[i] = True
                     self.v_last[i] = 0.0
                 elif self.dyn_t[k]:
-                    # Con frenado gradual empieza a la velocidad con la que aún frena detrás del de adelante
-                    # (o antes de la línea si la corrida empieza en rojo), no de golpe en el primer paso.
+                    # With gradual braking it starts at the speed at which it can still brake behind the one ahead
+                    # (or before the line if the run starts on red), not all at once in the first step.
                     if ahead >= 0:
                         room = self.x[ahead] - self.vlen[ahead] - run_gap[idx] - self.x[i]
                         v_ahead, dec_ahead = float(self.v_last[ahead]), self.dec_t[self.vtype[ahead]]
@@ -576,7 +576,7 @@ class Simulation:
                         self.v_last[i] = min(self.v_last[i],
                                              kernel.py_safe_speed_1(room, v_ahead, self.dec_t[k], dec_ahead))  # fmt: skip
                     light = self._line_room(k, self.x[i], lane)
-                    if np.isfinite(light):  # línea de alto intermedia en rojo al empezar
+                    if np.isfinite(light):  # intermediate stop line on red at the start
                         self.v_last[i] = min(self.v_last[i], kernel.py_safe_speed_1(light, 0.0, self.dec_t[k], INF))
                     bump = kernel.py_bump_speed_1(self._p, k, lane, self.x[i], self.x[i] - length)
                     self.v_last[i] = min(self.v_last[i], bump)
@@ -584,17 +584,17 @@ class Simulation:
                 rear = self.x[i] - length
 
     def _line_room(self, k: int, x: float, lane: int) -> float:
-        """Distancia desde `x` hasta la línea de alto intermedia (semáforo o paso peatonal) en rojo al empezar la
-        corrida más cercana adelante que obedece el tipo k en ese carril; INF si no hay."""
+        """Distance from `x` to the closest intermediate stop line ahead (traffic light or pedestrian crossing) that is red at
+        the start of the run and that type k obeys in that lane; INF if there is none."""
         return min((pos - x for pos, free, ok, ph in zip(self.inner_x, self.inner_free, self.inner_lane, self.line_phases(0))
                     if ph == RED and x <= pos and not free[k] and ok[lane]), default=INF)  # fmt: skip
 
-    # ---------------------------------------------------------------- peatones
+    # ------------------------------------------------------------- pedestrians
 
     def _init_pedestrians(self, rng: np.random.Generator) -> None:
-        """Calendario de peatones de la réplica (ver pedestrians.py): uno por semáforo peatonal y por tope con
-        peatones. Los generadores van por índice fijo —el semáforo del final del tramo, cada semáforo intermedio y
-        cada tope— así que quitar uno de los demás elementos no mueve los sorteos del resto."""
+        """The replica's pedestrian schedule (see pedestrians.py): one per pedestrian light and per bump with
+        pedestrians. The generators go by fixed index —the light at the end of the segment, each intermediate light and
+        each bump— so removing one of the other elements does not move the draws of the rest."""
         cfg = self.cfg
         n = cfg.n_ticks
         lights_rng, bumps_rng = rng.spawn(2)
@@ -603,7 +603,7 @@ class Simulation:
 
         def light_schedule_of(light, gen) -> Schedule:
             before = cfg.previous_light(light)
-            prev_red = fixed_phases(before, n + 1) == RED if before else None  # espera al rojo del anterior
+            prev_red = fixed_phases(before, n + 1) == RED if before else None  # waits for the previous light's red
             counts = arrivals(*gen.spawn(2), light.pedestrian_crossing, cfg)
             return light_schedule(counts, light, prev_red, n)
 
@@ -616,26 +616,26 @@ class Simulation:
             if lt.active and lt.pedestrian:
                 self.ped_schedules[("semáforo", lt.position)] = light_schedule_of(lt, light_gens[1 + i])
         wait = round(PEDESTRIAN_YIELD / DT)
-        for bump, gen in zip(cfg.bumps, bump_gens):  # cada tope con peatones, con sus propios generadores
+        for bump, gen in zip(cfg.bumps, bump_gens):  # each bump with pedestrians, with its own generators
             if bump.pedestrian:
                 counts = arrivals(*gen.spawn(2), bump.pedestrian_crossing, cfg)
                 cross = round(bump.pedestrian_time / DT)
                 self.ped_schedules[("tope", bump.position)] = bump_schedule(counts, cross, wait, n)
-        # Calendario de cada línea de alto intermedia (None = semáforo de ciclo fijo: su fase sale de su ciclo).
+        # Schedule of each intermediate stop line (None = fixed-cycle light: its phase comes from its cycle).
         self._line_sched = [self.ped_schedules.get((s.kind, s.position)) if s.pedestrian else None for s in self.lines]
 
     def exit_phase(self, tick: int) -> int:
-        """Fase (RED, GREEN o YELLOW) del semáforo del final del tramo en el paso `tick`."""
+        """Phase (RED, GREEN or YELLOW) of the traffic light at the end of the segment at step `tick`."""
         return int(kernel.py_line_phase(self._p, 0, tick))
 
     def line_phases(self, tick: int) -> tuple[int, ...]:
-        """Fase de cada línea de alto intermedia (`cfg.stop_lines`) en el paso `tick`."""
+        """Phase of each intermediate stop line (`cfg.stop_lines`) at step `tick`."""
         return tuple(int(kernel.py_line_phase(self._p, 1 + j, tick)) for j in range(len(self.lines)))
 
-    # ------------------------------------------------------------------- paso
+    # ------------------------------------------------------------------- step
 
     def advance(self, until: int) -> None:
-        """Corre los pasos hasta el paso `until` (el kernel; aquí solo las llegadas de cada bloque y el lugar)."""
+        """Run the steps up to step `until` (the kernel; here only the arrivals of each chunk and the room)."""
         while (code := kernel.advance(self._p, self._st, self._rngs, self._arr, until)) != kernel.DONE:
             if code == kernel.NEED_ARRIVALS:
                 self._load_arrivals()
@@ -650,9 +650,9 @@ class Simulation:
         self.advance(self.tick + 1)
 
     def _load_arrivals(self) -> None:
-        """Sorteo de llegadas Poisson del bloque de ARRIVAL_CHUNK pasos que empieza en el paso actual, y de lo de cada
-        llegada (pasajeros, mercancía, largo, velocidad y detención), con los generadores de cada tipo y en orden de
-        paso: los mismos números que sorteando al llegar."""
+        """Draw the Poisson arrivals of the ARRIVAL_CHUNK-step chunk that starts at the current step, and what belongs to each
+        arrival (passengers, freight, length, speed and halt), with each type's generators and in step
+        order: the same numbers as drawing them on arrival."""
         start = self.tick
         chunk = np.column_stack([self._arrival_counts(k) for k in range(self.n_types)])
         cols: list[list[np.ndarray]] = [[], [], [], [], [], []]
@@ -662,11 +662,11 @@ class Simulation:
                 k = int(counts[vt])
                 spec = self.cfg.specs[vt]
                 paxs = sample_passengers(self.rng_pax[vt], spec, k)
-                if spec.cargo_prob > 0:  # los que llevan mercancía no llevan pasajeros
+                if spec.cargo_prob > 0:  # those carrying freight carry no passengers
                     paxs[self.rng_cargo[vt].random(k) < spec.cargo_prob] = 0
                 lengths = sample_lengths(self.rng_length[vt], spec, k)
                 speeds = sample_speeds(self.rng_speed[vt], spec, k)
-                at = np.full(k, INF)  # dónde se detendrá (cuello de botella); inf = no se detiene
+                at = np.full(k, INF)  # where it will stop (bottleneck); inf = it does not stop
                 if self.bn_type[vt]:
                     g = self.rng_bottleneck[vt]
                     stops = g.random(k) < self.bn_prob[vt]
@@ -679,7 +679,7 @@ class Simulation:
         self._ints[kernel.ARRIVAL_POS] = 0
 
     def _arrival_counts(self, k: int) -> np.ndarray:
-        """Llegadas del tipo k en cada paso del bloque que empieza en el paso actual."""
+        """Arrivals of type k at each step of the chunk that starts at the current step."""
         g = self.rng_arrivals[k]
         by_interval = self.rate_by_interval.get(k)
         if by_interval is None:
@@ -687,17 +687,17 @@ class Simulation:
         idx = (self.tick + np.arange(ARRIVAL_CHUNK)) // self.cfg.rate_ticks
         return g.poisson(by_interval[np.minimum(idx, by_interval.size - 1)])
 
-    # ------------------------------------------------------- consultas del estado
+    # ------------------------------------------------------- state queries
 
     def occupancy(self) -> Occupancy:
         return kernel.py_occupancy(self._p, self._st)
 
     def rows(self, occ: Occupancy) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Filas lado a lado en el orden de `occ` (ver kernel.rows)."""
+        """Side-by-side rows in the order of `occ` (see kernel.rows)."""
         return kernel.py_rows(self._st, occ)
 
     def row_positions(self) -> tuple[np.ndarray, np.ndarray]:
-        """Por vehículo [0, n): (lugar en su fila lado a lado, 0 = el de adelante; tamaño de la fila)."""
+        """Per vehicle [0, n): (place in its side-by-side row, 0 = the one in front; size of the row)."""
         n = self.n
         rank = np.zeros(n, np.int8)
         size = np.ones(n, np.int8)
@@ -707,23 +707,23 @@ class Simulation:
         _, rid, row_last = self.rows(occ)
         idx = np.arange(occ.order.size)
         first = np.concatenate(([True], rid[1:] != rid[:-1])).nonzero()[0][rid]
-        primary = occ.order < n  # quien cambia de carril aparece dos veces; se usa su carril actual
+        primary = occ.order < n  # a vehicle changing lanes appears twice; its current lane is used
         rank[occ.veh[primary]] = (row_last - idx)[primary]
         size[occ.veh[primary]] = (row_last - first + 1)[primary]
         return rank, size
 
     def _side_slot(self, occ: Occupancy, rows: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None) -> np.ndarray:
-        """Entradas que pueden detenerse al lado de su líder (ver kernel.side_slot)."""
+        """Entries that can stop beside their leader (see kernel.side_slot)."""
         return kernel.py_side_slot(self._p, self._st, occ, *(self.rows(occ) if rows is None else rows))
 
     def _lane_saturation(self, occ: Occupancy) -> np.ndarray:
         return kernel.py_lane_saturation(self._p, self._st, occ)
 
     def _lane_changes(self) -> None:
-        """Una ronda de decisiones de cambio de carril (ver kernel.lane_changes)."""
+        """One round of lane change decisions (see kernel.lane_changes)."""
         kernel.py_lane_changes(self._p, self._st, self._rngs)
 
-    # --------------------------------------------------------------- resumen
+    # --------------------------------------------------------------- summary
 
     def summary(self) -> dict[str, np.ndarray]:
         n = self.n
@@ -732,10 +732,10 @@ class Simulation:
         ).astype(np.float64)
         with np.errstate(invalid="ignore", divide="ignore"):
             travel_time = self.travel_ticks * DT / self.timed_veh
-            # Espera media en la cola de entrada de los que llegaron por la demanda y ya entraron al tramo.
+            # Mean wait in the entry queue of those that arrived from demand and already entered the segment.
             queue_wait = self.queue_wait_ticks * DT / (self.entered_veh - self.initial_veh)
-            pax_per_veh = self.arrived_pax / (self.arrived_veh - self.arrived_cargo)  # solo los de pasajeros
-            # Velocidad media dentro del tramo: distancia / tiempo de sus vehículos, con los detenidos.
+            pax_per_veh = self.arrived_pax / (self.arrived_veh - self.arrived_cargo)  # only the passenger ones
+            # Mean speed within the segment: distance / time of its vehicles, including stopped ones.
             mean_speed = self.type_dist / self.type_time * 3.6
         return {
             "arrived_veh": self.arrived_veh.copy(),
@@ -755,21 +755,21 @@ class Simulation:
             "lane_changes": np.array([float(self.lane_changes)]),
             "lane_changes_type": self.lane_changes_t.copy(),
             "in_lane_passes": self.in_lane_passes.copy(),
-            "lane_crossed": self.lane_crossed.copy(),  # cruces de la línea por carril
-            "exit_blocked": self.exit_blocked_ticks / max(self.tick, 1),  # fracción del tiempo con la línea cerrada
+            "lane_crossed": self.lane_crossed.copy(),  # line crossings per lane
+            "exit_blocked": self.exit_blocked_ticks / max(self.tick, 1),  # fraction of the time with the line closed
             "stop_time": self.stop_time_ticks * DT / np.where(self.stops > 0, self.stops, np.nan),
             "bottleneck_stops": self.bn_stops.copy(),
             "bottleneck_time": self.bn_ticks * DT / np.where(self.bn_stops > 0, self.bn_stops, np.nan),
-            "veh_km": self.veh_m / 1000.0,  # km recorridos dentro del tramo, por tipo
-            "emissions": self.emis_g.copy(),  # g por tipo y contaminante (POLLUTANTS)
-            "emissions_free": self.emis_free_g.copy(),  # g del mismo recorrido a velocidad constante
-            "emissions_pos": self.emis_pos.copy(),  # g por contaminante, carril e intervalo de EMIS_BIN m
+            "veh_km": self.veh_m / 1000.0,  # km travelled within the segment, per type
+            "emissions": self.emis_g.copy(),  # g per type and pollutant (POLLUTANTS)
+            "emissions_free": self.emis_free_g.copy(),  # g of the same trip at constant speed
+            "emissions_pos": self.emis_pos.copy(),  # g per pollutant, lane and EMIS_BIN m bin
             **self._pedestrian_summary(),
         }
 
     def _pedestrian_summary(self) -> dict[str, np.ndarray]:
-        """Una fila por punto con peatones (`cfg.pedestrian_spots`): peatones que cruzaron, cierres del paso, s de
-        paso cerrado y espera total de los peatones (s). Vacío si no hay peatones."""
+        """One row per point with pedestrians (`cfg.pedestrian_spots`): pedestrians that crossed, closures of the crossing, s
+        the crossing was closed and total wait of the pedestrians (s). Empty if there are no pedestrians."""
         spots = self.cfg.pedestrian_spots
         if not spots:
             return {}

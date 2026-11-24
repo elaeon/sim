@@ -1,14 +1,14 @@
-"""Visualización del movimiento de los vehículos de una réplica, para ajustar el modelo.
+"""Visualization of the vehicles' movement in one replica, to tune the model.
 
-Se vuelve a simular una réplica (misma semilla que en la corrida, así que es idéntica) grabando
-el estado de cada vehículo en una ventana de tiempo, y se generan:
+A replica is simulated again (same seed as in the run, so it is identical) recording
+the state of each vehicle in a time window, and it produces:
 
-  * un diagrama espacio-tiempo (PNG): una línea por vehículo, posición contra tiempo, un panel
-    por carril. La pendiente es la velocidad; un tramo horizontal, un vehículo detenido; el
-    abanico al ponerse verde muestra la reacción y el estiramiento.
-  * un video visto desde arriba: WebM (VP9) por defecto, MP4 (H.264) o GIF según
-    [animation] format. WebM es libre de patentes y se reproduce en Fedora sin códecs
-    adicionales (VLC de Fedora, GNOME Videos/Showtime, navegadores); sin ffmpeg, GIF.
+  * a space-time diagram (PNG): one line per vehicle, position against time, one panel
+    per lane. The slope is the speed; a horizontal stretch, a stopped vehicle; the
+    fan when the light turns green shows the reaction and the stretching.
+  * a top-down video: WebM (VP9) by default, MP4 (H.264) or GIF according to
+    [animation] format. WebM is patent-free and plays on Fedora without extra
+    codecs (Fedora's VLC, GNOME Videos/Showtime, browsers); without ffmpeg, GIF.
 """
 
 from __future__ import annotations
@@ -19,46 +19,46 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import DT, GREEN, RED, YELLOW, SimConfig, StopLine
-from trafico.engine import Simulation
-from trafico.plotting import (
+from traffic.config import DT, GREEN, RED, YELLOW, SimConfig, StopLine
+from traffic.engine import Simulation
+from traffic.plotting import (
     BASELINE, INK, INK_2, MUTED, RED_PHASE, SURFACE, TYPE_COLORS, YELLOW_PHASE,
     _lane_assignments, _lane_label, _style_axis, phase_handles, shade_phases,
 )  # fmt: skip
-from trafico.settings import AnimationOptions
+from traffic.settings import AnimationOptions
 
 GREEN_LIGHT = "#1f9d55"
-BOTTLENECK_COLOR = (0.0, 0.0, 0.0, 1.0)  # negro: detenido por un cuello de botella
-LIGHT_COLORS = {RED: RED_PHASE, GREEN: GREEN_LIGHT, YELLOW: YELLOW_PHASE}  # color del semáforo en el video
+BOTTLENECK_COLOR = (0.0, 0.0, 0.0, 1.0)  # black: stopped by a bottleneck
+LIGHT_COLORS = {RED: RED_PHASE, GREEN: GREEN_LIGHT, YELLOW: YELLOW_PHASE}  # colour of the traffic light in the video
 ROAD = "#ecebe6"
-MAX_PLOT_FRAMES = 1500  # instantes como máximo en el diagrama espacio-tiempo
+MAX_PLOT_FRAMES = 1500  # maximum number of instants in the space-time diagram
 
 
 @dataclass(slots=True)
 class Trajectories:
-    """Estado de los vehículos en cada instante grabado (arreglos concatenados, estilo CSR)."""
+    """State of the vehicles at each recorded instant (concatenated arrays, CSR style)."""
 
     cfg: SimConfig
-    t: np.ndarray  # (F,) s simulados de cada instante
-    phase: np.ndarray  # (F,) fase del semáforo del final del tramo (RED, GREEN o YELLOW)
-    inner_phase: np.ndarray  # (F, líneas de alto intermedias) fase de cada una (`cfg.stop_lines`)
-    offsets: np.ndarray  # (F+1,) filas del instante f: offsets[f]:offsets[f+1]
+    t: np.ndarray  # (F,) simulated s of each instant
+    phase: np.ndarray  # (F,) phase of the light at the end of the segment (RED, GREEN or YELLOW)
+    inner_phase: np.ndarray  # (F, intermediate stop lines) phase of each one (`cfg.stop_lines`)
+    offsets: np.ndarray  # (F+1,) rows of instant f: offsets[f]:offsets[f+1]
     vid: np.ndarray
     vtype: np.ndarray
     lane: np.ndarray
-    target: np.ndarray  # carril destino si está cambiando de carril; -1 si no
-    x: np.ndarray  # frente del vehículo (m)
+    target: np.ndarray  # target lane if changing lanes; -1 otherwise
+    x: np.ndarray  # front of the vehicle (m)
     stopped: np.ndarray
-    row_rank: np.ndarray  # lugar en su fila lado a lado (0 = el de adelante)
-    row_size: np.ndarray  # vehículos en esa fila (1 = solo)
-    vlen: np.ndarray  # largo del vehículo (m)
-    cargo: np.ndarray  # lleva mercancía (sin pasajeros)
-    bottleneck: np.ndarray  # detenido por un cuello de botella de [bottleneck]
-    crossed_pax: np.ndarray  # (F, tipos) pasajeros que cruzaron el semáforo desde el inicio de la ventana
-    crossed_veh: np.ndarray  # (F, tipos) vehículos que lo cruzaron desde el inicio de la ventana
-    queued: np.ndarray  # (F, carriles) vehículos en la cola de entrada de cada carril (aún fuera del tramo)
-    exit_queued: np.ndarray  # (F, carriles) m ocupados en la cola de salida de cada carril (ya cruzaron el semáforo)
-    exit_closed: np.ndarray  # (F, carriles) el siguiente del carril no cabe en la cola de salida: línea cerrada
+    row_rank: np.ndarray  # place in its side-by-side row (0 = the one in front)
+    row_size: np.ndarray  # vehicles in that row (1 = alone)
+    vlen: np.ndarray  # length of the vehicle (m)
+    cargo: np.ndarray  # carries freight (no passengers)
+    bottleneck: np.ndarray  # stopped by a [bottleneck]
+    crossed_pax: np.ndarray  # (F, types) passengers that crossed the light since the start of the window
+    crossed_veh: np.ndarray  # (F, types) vehicles that crossed it since the start of the window
+    queued: np.ndarray  # (F, lanes) vehicles in the entry queue of each lane (still outside the segment)
+    exit_queued: np.ndarray  # (F, lanes) m occupied in the exit queue of each lane (they already crossed the light)
+    exit_closed: np.ndarray  # (F, lanes) the lane's next vehicle does not fit in the exit queue: line closed
 
     @property
     def n_frames(self) -> int:
@@ -69,8 +69,8 @@ class Trajectories:
 
 
 def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) -> Trajectories:
-    """Simula la réplica `replica` (1 = la primera) de la corrida con semilla `seed` hasta `end` y
-    graba cada paso de DT en [start, end]. Es idéntica a la réplica de run_parallel."""
+    """Simulate replica `replica` (1 = the first) of the run with seed `seed` up to `end` and
+    record every DT step in [start, end]. It is identical to the run_parallel replica."""
     seq = np.random.SeedSequence(seed).spawn(replica)[replica - 1]
     sim = Simulation(cfg, np.random.default_rng(seq))
     first, last = round(start / DT), round(end / DT)
@@ -78,7 +78,7 @@ def record(cfg: SimConfig, seed: int, replica: int, start: float, end: float) ->
     inner = []
     base_pax, base_veh = sim.cum_pax.copy(), sim.cum_veh.copy()
     while sim.tick < last:
-        if sim.tick < first:  # lo cruzado antes de la ventana no cuenta en el video
+        if sim.tick < first:  # what crossed before the window does not count in the video
             base_pax, base_veh = sim.cum_pax.copy(), sim.cum_veh.copy()
         sim.step()
         if sim.tick < first:
@@ -118,8 +118,9 @@ def _active(cfg: SimConfig) -> list[int]:
 
 
 def _phase_spans(traj: Trajectories, phases: np.ndarray) -> list[tuple[float, float, str]]:
-    """Fases en rojo y en amarillo de `phases` (una por instante grabado) dentro de la ventana: (inicio, fin, color).
-    Salen de lo grabado, no del ciclo del config, porque la fase de un paso peatonal depende de los peatones."""
+    """Red and yellow phases of `phases` (one per recorded instant) within the window: (start, end, colour).
+    They come from what was recorded, not from the config's cycle, because a pedestrian crossing's phase depends on
+    the pedestrians."""
     if not phases.size:
         return []
     change = np.flatnonzero(np.diff(phases)) + 1
@@ -132,7 +133,7 @@ def _phase_spans(traj: Trajectories, phases: np.ndarray) -> list[tuple[float, fl
 
 
 def _stops(cfg: SimConfig, lane: int) -> list[tuple[int, float]]:
-    """(tipo, posición) de las paradas de los tipos que participan y pueden usar ese carril."""
+    """(type, position) of the stops of the participating types that can use that lane."""
     return [
         (k, cfg.specs[k].stop_position) for k in _active(cfg)
         if cfg.specs[k].stop_position is not None and lane in cfg.allowed_lanes(k)
@@ -150,7 +151,7 @@ def _type_legend(fig, cfg: SimConfig, y: float, extra: list | None = None) -> No
 
 
 def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
-    """Diagrama espacio-tiempo: un panel por carril (el izquierdo arriba, el derecho abajo)."""
+    """Space-time diagram: one panel per lane (the left one on top, the right one at the bottom)."""
     from matplotlib.collections import LineCollection
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
@@ -159,7 +160,7 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
     lanes = cfg.lanes
     step = max(1, -(-traj.n_frames // MAX_PLOT_FRAMES))
     frames = np.arange(0, traj.n_frames, step)
-    # Filas de los instantes elegidos; quien cambia de carril ocupa también el carril destino.
+    # Rows of the chosen instants; a vehicle changing lanes also occupies the target lane.
     rows = np.concatenate([np.arange(traj.offsets[f], traj.offsets[f + 1]) for f in frames])
     frame_of = np.repeat(frames, np.diff(traj.offsets)[frames])
     changing = traj.target[rows] >= 0
@@ -170,8 +171,8 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
     fig = Figure(figsize=(12, 1.5 + 2.2 * lanes), facecolor=SURFACE)
     axes = fig.subplots(lanes, 1, sharex=True, squeeze=False, gridspec_kw={"hspace": 0.35})[:, 0]
     assigned = _lane_assignments(cfg, _active(cfg))
-    # Con semáforos intermedios o pasos peatonales, las fases se marcan sobre la línea de cada uno (y la del final del
-    # tramo); con solo el del final, sombrean todo el panel.
+    # With intermediate traffic lights or pedestrian crossings, the phases are marked on each one's line (and that of the
+    # end of the segment); with only the one at the end, they shade the whole panel.
     marked = bool(cfg.stop_lines)
     exit_spans = _phase_spans(traj, traj.phase) if cfg.has_light else []
     line_spans = [(s, _phase_spans(traj, traj.inner_phase[:, j])) for j, s in enumerate(cfg.stop_lines)]
@@ -179,13 +180,13 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
         line_spans.append((StopLine(cfg.length, cfg.exit_light), exit_spans))
     crossings = {b.position for b in cfg.crossings}
     for lane in range(lanes):
-        ax = axes[lanes - 1 - lane]  # carril izquierdo arriba, como en una vista desde arriba
+        ax = axes[lanes - 1 - lane]  # left lane on top, as in a top-down view
         _style_axis(ax, "{:,.0f}")
-        if not marked and lane not in cfg.free_lanes:  # sin otras líneas, las fases del semáforo sombrean el panel
+        if not marked and lane not in cfg.free_lanes:  # without other lines, the light's phases shade the panel
             shade_phases(ax, exit_spans)
         ax.axhline(cfg.length, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
         for line, spans in line_spans if marked else ():
-            if line.light is not None:  # el paso peatonal de un tope se dibuja con él, abajo
+            if line.light is not None:  # a bump's pedestrian crossing is drawn with it, below
                 ax.axhline(line.position, color=INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=1)
             if lane in line.free_lanes or (line.lanes is not None and lane not in line.lanes):
                 continue
@@ -206,7 +207,7 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
         r, fr = occ_rows[sel], occ_frame[sel]
         order = np.lexsort((fr, traj.vid[r]))
         r, fr = r[order], fr[order]
-        # Segmento entre dos instantes consecutivos del mismo vehículo en este carril.
+        # Segment between two consecutive instants of the same vehicle in this lane.
         link = (traj.vid[r][1:] == traj.vid[r][:-1]) & (fr[1:] - fr[:-1] == step)
         a, b = r[:-1][link], r[1:][link]
         segs = np.stack(
@@ -238,15 +239,15 @@ def plot_space_time(traj: Trajectories, path: Path, title_note: str) -> None:
 
 
 def _vehicle_verts(traj: Trajectories, f: int, lane_h: float) -> tuple[np.ndarray, np.ndarray]:
-    """Rectángulos (N, 4, 2) de los vehículos del instante f y su tipo."""
+    """Rectangles (N, 4, 2) of the vehicles of instant f and their type."""
     s = traj.frame(f)
     vt = traj.vtype[s].astype(np.int64)
     front = traj.x[s].astype(np.float64)
     rear = front - traj.vlen[s].astype(np.float64)
     lane = traj.lane[s].astype(np.float64)
     tgt = traj.target[s]
-    y = np.where(tgt >= 0, (lane + tgt) / 2, lane)  # a medio camino mientras cambia de carril
-    # Fila lado a lado: el carril se reparte entre sus vehículos (el de adelante, a la derecha = abajo).
+    y = np.where(tgt >= 0, (lane + tgt) / 2, lane)  # halfway while changing lanes
+    # Side-by-side row: the lane is shared among its vehicles (the one in front on the right = below).
     size = traj.row_size[s].astype(np.float64)
     slot = 0.9 / size
     y = y + np.where(size > 1, (traj.row_rank[s] - (size - 1) / 2) * slot, 0.0)
@@ -260,10 +261,10 @@ def _vehicle_verts(traj: Trajectories, f: int, lane_h: float) -> tuple[np.ndarra
 
 
 def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_note: str) -> Path:
-    """Video visto desde arriba en `path` + extensión del formato ([animation] format), sin
-    sobrescribir. Con ffmpeg (WebM o MP4) solo se redibujan los vehículos, el semáforo y el reloj
-    sobre un fondo fijo; el GIF, o cualquier formato sin ffmpeg, usa el escritor de matplotlib.
-    Devuelve la ruta escrita."""
+    """Top-down video at `path` + the format's extension ([animation] format), without
+    overwriting. With ffmpeg (WebM or MP4) only the vehicles, the traffic light and the clock are redrawn
+    over a fixed background; GIF, or any format without ffmpeg, uses matplotlib's writer.
+    Returns the path written."""
     import shutil
     import subprocess
 
@@ -277,17 +278,17 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     lanes = cfg.lanes
     assigned = _lane_assignments(cfg, _active(cfg))
     labels = [_lane_label(k, lanes, assigned[k]) for k in range(lanes)]
-    lane_in = 0.34  # pulgadas por carril
+    lane_in = 0.34  # inches per lane
     width_in = 12.0
     fig = Figure(figsize=(width_in, 1.75 + lane_in * lanes), facecolor=SURFACE)
     FigureCanvasAgg(fig)
     fh = fig.get_figheight()
-    left = min(0.35, (0.2 + 0.062 * max(len(label) for label in labels)) / width_in)  # ~0.062 in por carácter
+    left = min(0.35, (0.2 + 0.062 * max(len(label) for label in labels)) / width_in)  # ~0.062 in per character
     ax = fig.add_axes((left, 0.75 / fh, 0.975 - left, lane_in * lanes / fh))
     ax.set_facecolor(SURFACE)
     margin = max(sp.longest for sp in cfg.specs) + 5
-    # A la izquierda del tramo, lugar para el contador de la cola de entrada (~0.45 in); a la derecha, si algún
-    # carril tiene cola de salida ([exit]), para su contador "m ocupados/mide" (~0.75 in).
+    # Left of the segment, room for the entry queue counter (~0.45 in); on the right, if some lane has
+    # an exit queue ([exit]), for its "m occupied/length" counter (~0.75 in).
     exit_lanes = [lane for lane, c in enumerate(cfg.lane_exit_capacity) if c > 0]
     axes_in = (0.975 - left) * width_in
     side_in = 0.45 + (0.75 if exit_lanes else 0.0)
@@ -307,10 +308,10 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
     ax.set_xlabel("position (m)", color=INK_2, fontsize=9)
     for bump in cfg.bumps:
         pos, bump_lanes = bump.position, cfg.bump_lanes(bump)
-        for lane in bump_lanes:  # tope: franja rayada a lo ancho del carril
+        for lane in bump_lanes:  # bump: hatched band across the width of the lane
             ax.add_patch(Rectangle((pos - 0.4, lane - 0.45), 0.8, 0.9, facecolor=YELLOW_PHASE, edgecolor=INK_2,
                                    hatch="////", linewidth=0.6, zorder=1))  # fmt: skip
-        if bump_lanes:  # una sola etiqueta por tope, sobre el carril con tope de más arriba
+        if bump_lanes:  # a single label per bump, over the topmost lane with a bump
             label = "bump · pedestrians" if bump.pedestrian else "bump"
             ax.annotate(label, (pos, max(bump_lanes) + 0.45), xytext=(0, 1),
                         textcoords="offset points", ha="center", va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
@@ -320,15 +321,15 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
                     solid_capstyle="butt")  # fmt: skip
             ax.annotate("stop", (pos, lane + 0.45), xytext=(0, 1), textcoords="offset points", ha="center",
                         va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
-    # Cola de entrada: vehículos que ya llegaron a cada carril pero aún no caben en el tramo.
+    # Entry queue: vehicles that already arrived at each lane but do not fit in the segment yet.
     queue_x = -0.12 * queue_pad
     ax.text(queue_x, lanes - 0.5, "queued", ha="right", va="bottom", fontsize=7, color=INK_2)
     queue_texts = [
         ax.text(queue_x, lane, "", ha="right", va="center", fontsize=9, color=INK, family="monospace", animated=True)
         for lane in range(lanes)
     ]  # fmt: skip
-    # Cola de salida: m ocupados por los que cruzaron y aún no salen, contra lo que mide; en rojo si el siguiente
-    # no cabe (la línea de ese carril se cierra aunque el semáforo esté en verde).
+    # Exit queue: m occupied by those that crossed and have not left yet, against its length; in red if the next one
+    # does not fit (that lane's line closes even if the light is green).
     exit_x = cfg.length + margin + exit_pad
     exit_texts = []
     if exit_lanes:
@@ -341,7 +342,7 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
         ax.annotate("exit: occupied m/length\nin red, the next one does not fit: line closed", (exit_x, -0.5), xytext=(0, -20),
                     textcoords="offset points", ha="right", va="top", fontsize=7, color=INK_2)  # fmt: skip
     storage = cfg.lane_exit_storage
-    # Semáforo: un tramo por carril; los carriles sin semáforo siempre en verde. Sin semáforo no se dibuja.
+    # Traffic light: one bar per lane; lanes without a light always green. Without a light nothing is drawn.
     light_w = max(1.5, cfg.length * 0.006)
     sources = [(line, traj.inner_phase[:, j]) for j, line in enumerate(cfg.stop_lines)]
     if cfg.has_light:
@@ -352,14 +353,14 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
               if line.lanes is None or lane in line.lanes]  # fmt: skip
     for light, *_ in lights:
         ax.add_patch(light)
-    # Leyenda de los semáforos peatonales (verde para los vehículos salvo con peatones esperando), sobre su línea.
+    # Legend of the pedestrian lights (green for vehicles except with pedestrians waiting), over their line.
     walkers = [line for line, _ in sources if line.light is not None and line.light.pedestrian]
     for line in walkers:
         ax.annotate("pedestrian light", (line.position, lanes - 0.5), xytext=(0, 1), textcoords="offset points",
                     ha="center", va="bottom", fontsize=7, color=INK_2, zorder=1)  # fmt: skip
     cars = PolyCollection([], linewidths=0.9, zorder=2, animated=True)
     ax.add_collection(cars)
-    # Reloj: tiempo simulado y tiempo real (de proceso) = simulado / time_scale, como en --run.
+    # Clock: simulated time and real (process) time = simulated / time_scale, as in --run.
     clock = fig.text(0.975, 1 - 0.3 / fh, "", ha="right", fontsize=11, color=INK, family="monospace",
                      animated=True)  # fmt: skip
     fig.text(0.02, 1 - 0.3 / fh, "Vehicle movement", ha="left", fontsize=13, color=INK,
@@ -381,8 +382,8 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
         verts, vt = _vehicle_verts(traj, f, 0.42)
         cars.set_verts(list(verts))
         face = colors[vt]
-        face[traj.cargo[traj.frame(f)], 3] = 0.4  # los que llevan mercancía, más claros
-        face[traj.bottleneck[traj.frame(f)]] = BOTTLENECK_COLOR  # detenidos por [bottleneck], mientras dura
+        face[traj.cargo[traj.frame(f)], 3] = 0.4  # those carrying freight, lighter
+        face[traj.bottleneck[traj.frame(f)]] = BOTTLENECK_COLOR  # stopped by [bottleneck], while it lasts
         cars.set_facecolor(face)
         edges = np.zeros((vt.size, 4))
         edges[traj.stopped[traj.frame(f)]] = edge_stop
@@ -425,12 +426,12 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
         sys.stderr.write("\n")
         return path
 
-    # Fondo fijo dibujado una vez; en cada cuadro se restaura y se dibujan solo los animados.
+    # Fixed background drawn once; each frame restores it and draws only the animated artists.
     canvas = fig.canvas
     canvas.draw()
     background = canvas.copy_from_bbox(fig.bbox)
     w, h = canvas.get_width_height()
-    if fmt == "webm":  # VP9 libre de patentes; 'realtime' para codificar tan rápido como se dibuja
+    if fmt == "webm":  # patent-free VP9; 'realtime' to encode as fast as it is drawn
         codec = ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "30", "-deadline", "realtime", "-cpu-used", "8",
                  "-row-mt", "1"]  # fmt: skip
     else:
@@ -459,7 +460,7 @@ def render_video(traj: Trajectories, path: Path, anim: AnimationOptions, title_n
 
 
 def _crossing_text(traj: Trajectories, f: int, k: int) -> str:
-    """Contador de un tipo en el cuadro f: pasajeros que cruzaron; vehículos si solo lleva mercancía."""
+    """Counter of a type in frame f: passengers that crossed; vehicles if it only carries freight."""
     spec = traj.cfg.specs[k]
     if not spec.carries_passengers:
         return f"{spec.name} {int(traj.crossed_veh[f, k]):,} veh"
@@ -467,8 +468,8 @@ def _crossing_text(traj: Trajectories, f: int, k: int) -> str:
 
 
 def _crossing_counters(fig, traj: Trajectories, width_in: float, y: float) -> list:
-    """Leyenda del video: un cuadro de color por tipo con su contador de cruces (texto animado).
-    Cada entrada reserva el ancho de su texto final para que el contador no se encime al crecer."""
+    """Video legend: a colour box per type with its crossing counter (animated text).
+    Each entry reserves the width of its final text so the counter does not overlap as it grows."""
     from matplotlib.patches import Rectangle
 
     fh = fig.get_figheight()
@@ -484,12 +485,12 @@ def _crossing_counters(fig, traj: Trajectories, width_in: float, y: float) -> li
         text = fig.text(x + (square + 0.06) / width_in, y, "", ha="left", va="center", fontsize=9, color=INK_2,
                         animated=True)  # fmt: skip
         counters.append((k, text))
-        x += (square + 0.06 + 0.075 * (len(widest) + 2) + 0.2) / width_in  # ~0.075 in por carácter a 9 pt
+        x += (square + 0.06 + 0.075 * (len(widest) + 2) + 0.2) / width_in  # ~0.075 in per character at 9 pt
     return counters
 
 
 def _h264_encoder(ffmpeg: str) -> str:
-    """Codificador H.264 disponible (libx264 o, p. ej. en Fedora, libopenh264); si no hay, MPEG-4."""
+    """Available H.264 encoder (libx264 or, e.g. on Fedora, libopenh264); if there is none, MPEG-4."""
     import subprocess
 
     listing = subprocess.run([ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
@@ -497,19 +498,19 @@ def _h264_encoder(ffmpeg: str) -> str:
 
 
 def _hms(seconds: float) -> str:
-    """Segundos simulados como hh:mm:ss (sin décimos)."""
+    """Simulated seconds as hh:mm:ss (no tenths)."""
     hours, rest = divmod(int(seconds), 3600)
     minutes, secs = divmod(rest, 60)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def _clock_text(t_sim: float) -> str:
-    """Reloj del video: tiempo simulado en horas, minutos y segundos."""
+    """Video clock: simulated time in hours, minutes and seconds."""
     return f"simulated {_hms(t_sim)}"
 
 
 def _free_path(path: Path) -> Path:
-    """No sobrescribe: si el archivo existe, agrega un sufijo numérico."""
+    """Do not overwrite: if the file exists, add a numeric suffix."""
     k = 2
     candidate = path
     while candidate.exists():
@@ -519,7 +520,7 @@ def _free_path(path: Path) -> Path:
 
 
 def visualize(cfg: SimConfig, seed: int, anim: AnimationOptions, out_dir: Path, run_name: str) -> list[Path]:
-    """Graba la réplica elegida en la ventana de [animation] y escribe el diagrama y el video."""
+    """Record the chosen replica in the [animation] window and write the diagram and the video."""
     start, end = anim.window(cfg)
     print(f"Movement: replica {anim.replica}, t = {start:g}–{end:g} simulated s, video ×{anim.speed:g} "
           f"at {anim.fps} frames/s (~{(end - start) / anim.speed:.0f} s of video)")  # fmt: skip
@@ -527,6 +528,6 @@ def visualize(cfg: SimConfig, seed: int, anim: AnimationOptions, out_dir: Path, 
     tag = f"{start:g}-{end:g}s"
     note = f"run {run_name} · seed {seed} · replica {anim.replica}"
     diagram = _free_path(out_dir / f"space_time_{tag}.png")
-    plot_space_time(traj, diagram, f"{note} · t = {start:g}–{end:g} s")  # su eje x está en segundos
+    plot_space_time(traj, diagram, f"{note} · t = {start:g}–{end:g} s")  # its x axis is in seconds
     video = render_video(traj, out_dir / f"movement_{tag}", anim, f"{note} · t = {_hms(start)}–{_hms(end)}")
     return [diagram, video]

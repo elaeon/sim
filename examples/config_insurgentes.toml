@@ -1,12 +1,12 @@
 # Copia de la configuración usada en la corrida 20260930-102903_insurgentes
-# (2026-09-30 10:29:03, trafico 0.2.0). Para replicarla:
-#   uv run trafico results/20260930-102903_insurgentes
+# (2026-09-30 10:29:03, traffic 0.2.0). Para replicarla:
+#   uv run traffic results/20260930-102903_insurgentes
 
-# Configuración de la simulación de flujo vehicular (trafico).
+# Configuración de la simulación de flujo vehicular (traffic).
 #
-#   uv run trafico                            # usa este archivo -> results/<ID>_run/
-#   uv run trafico regular_traffic            # usa este archivo -> results/<ID>_regular_traffic/
-#   uv run trafico results/<ID>_<nombre>   # usa el config.toml de esa carpeta (réplica)
+#   uv run traffic                            # usa este archivo -> results/<ID>_run/
+#   uv run traffic regular_traffic            # usa este archivo -> results/<ID>_regular_traffic/
+#   uv run traffic results/<ID>_<nombre>   # usa el config.toml de esa carpeta (réplica)
 #
 # Cada corrida crea results/<ID>_<nombre>/ con las gráficas, el resumen, las series y una
 # copia de esta configuración (config.toml); esa copia basta para replicar la corrida.
@@ -86,7 +86,7 @@ csv = false              # exporta las series (media y σ) a series.csv
 show = false            # abre además la ventana de matplotlib
 progress = true         # barra de progreso de réplicas
 animation = false       # genera también el diagrama espacio-tiempo y el video de movimiento
-                        # (o, sin volver a correr: uv run trafico-ver results/<ID>_<nombre>)
+                        # (o, sin volver a correr: uv run traffic-view results/<ID>_<nombre>)
 
 [animation]             # visualización del movimiento de una réplica (no cambia los resultados)
 start = 100.0           # s simulados donde empieza la ventana

@@ -1,4 +1,4 @@
-"""Muestreo de variables aleatorias de la simulación."""
+"""Sampling of the simulation's random variables."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ import math
 
 import numpy as np
 
-from trafico.config import DT, Behavior, Rate, VehicleSpec
+from traffic.config import DT, Behavior, Rate, VehicleSpec
 
 
 def sample_passengers(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np.ndarray:
-    """Pasajeros por vehículo: normal(μ, σ) redondeada y truncada a [min, max] por remuestreo.
+    """Passengers per vehicle: normal(μ, σ) rounded and truncated to [min, max] by resampling.
 
-    La truncadura desplaza la media real cuando μ está cerca de un extremo
-    (autos: μ=1.5 con mínimo 1 da una media observada de ~1.8).
+    The truncation shifts the actual mean when μ is close to a bound
+    (cars: μ=1.5 with minimum 1 gives an observed mean of ~1.8).
     """
     if spec.pax_std <= 0 or spec.pax_min == spec.pax_max:
         value = int(np.clip(round(spec.pax_mean), spec.pax_min, spec.pax_max))
@@ -30,31 +30,31 @@ def sample_passengers(rng: np.random.Generator, spec: VehicleSpec, size: int) ->
 
 
 def sample_lengths(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np.ndarray:
-    """Largo de cada vehículo (m): normal(length, length_std) truncada a [shortest, longest] por
-    remuestreo. Sin desviación, todos miden `length` y no se consume el generador."""
+    """Length of each vehicle (m): normal(length, length_std) truncated to [shortest, longest] by
+    resampling. Without a deviation, all measure `length` and the generator is not used."""
     if spec.length_std <= 0:
         return np.full(size, spec.length)
     return truncated_normal(rng, spec.length, spec.length_std, spec.shortest, spec.longest, size)
 
 
 def sample_speeds(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np.ndarray:
-    """Velocidad máxima de cada vehículo (km/h): normal(speed_kmh, speed_std) truncada a
-    [slowest_kmh, fastest_kmh] por remuestreo. Sin desviación, todos van a `speed_kmh` y no se
-    consume el generador."""
+    """Maximum speed of each vehicle (km/h): normal(speed_kmh, speed_std) truncated to
+    [slowest_kmh, fastest_kmh] by resampling. Without a deviation, all go at `speed_kmh` and the
+    generator is not used."""
     if spec.speed_std <= 0:
         return np.full(size, spec.speed_kmh)
     return truncated_normal(rng, spec.speed_kmh, spec.speed_std, spec.slowest_kmh, spec.fastest_kmh, size)
 
 
 def sample_rates(rng: np.random.Generator, rate: Rate, size: int) -> np.ndarray:
-    """Tasa de llegada (veh/min) de cada intervalo: normal(mean, std) truncada a [min, max]."""
+    """Arrival rate (veh/min) of each interval: normal(mean, std) truncated to [min, max]."""
     if not rate.variable:
         return np.full(size, rate.expected)
     return truncated_normal(rng, rate.mean, rate.std, rate.min, rate.max, size)
 
 
 def truncated_normal(rng: np.random.Generator, mean: float, std: float, lo: float, hi: float, size: int) -> np.ndarray:
-    """normal(mean, std) truncada a [lo, hi] por remuestreo."""
+    """normal(mean, std) truncated to [lo, hi] by resampling."""
     out = np.empty(size, dtype=np.float64)
     filled = 0
     while filled < size:
@@ -67,12 +67,12 @@ def truncated_normal(rng: np.random.Generator, mean: float, std: float, lo: floa
 
 
 def stop_ticks(rng: np.random.Generator, spec: VehicleSpec, size: int) -> np.ndarray:
-    """Duración de la parada en pasos: normal(μ, σ) truncada a ≥ 0 por remuestreo, cuantizada a DT."""
+    """Stop duration in steps: normal(μ, σ) truncated to ≥ 0 by resampling, quantized to DT."""
     return normal_ticks(rng, spec.stop_time_mean, spec.stop_time_std, size)
 
 
 def normal_ticks(rng: np.random.Generator, mean: float, std: float, size: int) -> np.ndarray:
-    """Duración en pasos: normal(mean, std) truncada a ≥ 0 por remuestreo, cuantizada a DT."""
+    """Duration in steps: normal(mean, std) truncated to ≥ 0 by resampling, quantized to DT."""
     if std <= 0:
         return np.full(size, round(max(mean, 0.0) / DT), dtype=np.int32)
     out = np.empty(size, dtype=np.float64)
@@ -87,9 +87,9 @@ def normal_ticks(rng: np.random.Generator, mean: float, std: float, size: int) -
 
 
 def passenger_pmf(spec: VehicleSpec) -> tuple[np.ndarray, np.ndarray]:
-    """Distribución exacta que produce `sample_passengers`: (valores pax_min..pax_max, probabilidades).
+    """Exact distribution produced by `sample_passengers`: (values pax_min..pax_max, probabilities).
 
-    Normal(μ, σ) redondeada al entero más cercano y truncada al rango: P(v) ∝ Φ(v + ½) − Φ(v − ½).
+    Normal(μ, σ) rounded to the nearest integer and truncated to the range: P(v) ∝ Φ(v + ½) − Φ(v − ½).
     """
     values = np.arange(spec.pax_min, spec.pax_max + 1)
     if spec.pax_std <= 0 or spec.pax_min == spec.pax_max:
@@ -104,9 +104,9 @@ def passenger_pmf(spec: VehicleSpec) -> tuple[np.ndarray, np.ndarray]:
 
 
 def reaction_ticks(rng: np.random.Generator, b: Behavior, size: int) -> np.ndarray:
-    """Tiempo de reacción en pasos (al menos uno). Sin `reaction_std`, uniforme en
-    [reaction_min, reaction_max]; con ella, normal(reaction_mean, reaction_std) truncada a ese
-    rango por remuestreo (media por defecto: el punto medio), cuantizada a DT."""
+    """Reaction time in steps (at least one). Without `reaction_std`, uniform in
+    [reaction_min, reaction_max]; with it, normal(reaction_mean, reaction_std) truncated to that
+    range by resampling (default mean: the midpoint), quantized to DT."""
     if b.reaction_std is None:
         ticks = uniform_ticks(rng, b.reaction_min, b.reaction_max, size)
     else:
@@ -123,9 +123,9 @@ def reaction_ticks(rng: np.random.Generator, b: Behavior, size: int) -> np.ndarr
                 out[filled : filled + take] = draw[:take]
                 filled += take
         ticks = np.rint(out / DT).astype(np.int64)
-    return np.maximum(ticks, 1)  # con 0 pasos nunca arrancaría
+    return np.maximum(ticks, 1)  # with 0 steps it would never start
 
 
 def uniform_ticks(rng: np.random.Generator, low: float, high: float, size: int | None = None):
-    """Duración uniforme en [low, high] segundos, cuantizada a pasos de DT."""
+    """Uniform duration in [low, high] seconds, quantized to DT steps."""
     return rng.integers(round(low / DT), round(high / DT), size=size, endpoint=True)

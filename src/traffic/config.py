@@ -1,11 +1,11 @@
-"""Parámetros de la simulación: especificaciones de vehículos, comportamiento y corrida."""
+"""Simulation parameters: vehicle specifications, behaviour and run."""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
 
-from trafico.emission_sets import BUS_EMISSIONS, PETROL_CAR_EMISSIONS
+from traffic.emission_sets import BUS_EMISSIONS, PETROL_CAR_EMISSIONS
 
 DT = 0.1
 """Resolución temporal: segundos simulados por paso."""
@@ -43,136 +43,136 @@ RED, GREEN, YELLOW = 0, 1, 2
 
 @dataclass(frozen=True, slots=True)
 class VehicleSpec:
-    """Características fijas de un tipo de vehículo."""
+    """Fixed characteristics of a vehicle type."""
 
-    key: str  # clave en el archivo de configuración: [vehicles.<key>] y [demand] <key>_rate
-    name: str  # etiqueta en gráficas, resumen y CSV
-    speed_kmh: float  # velocidad máxima que puede alcanzar el vehículo (media, si es variable)
+    key: str  # key in the configuration file: [vehicles.<key>] and [demand] <key>_rate
+    name: str  # label in plots, summary and CSV
+    speed_kmh: float  # maximum speed the vehicle can reach (the mean, if it varies)
     length: float  # m
-    gap_run: float  # m, distancia al líder cuando éste está en marcha
-    gap_stop: float  # m, distancia al líder detenido (compresión)
+    gap_run: float  # m, distance to the leader when it is moving
+    gap_stop: float  # m, distance to the stopped leader (compression)
     pax_min: int
     pax_max: int
     pax_mean: float
     pax_std: float
     can_change_lane: bool
-    lane: int | None = None  # carril fijo (0 = derecho) de un tipo que no cambia de carril; None = el derecho libre
-    exclusive: bool = False  # su carril fijo queda reservado: solo lo usan los tipos con ese `lane`
-    # Parada antes del semáforo (descenso y ascenso de pasajeros): posición del frente del
-    # vehículo, en m desde el inicio del tramo (None = sin parada), y duración normal(μ, σ) en s,
-    # truncada a ≥ 0.
+    lane: int | None = None  # fixed lane (0 = right) of a type that does not change lanes; None = the free right lane
+    exclusive: bool = False  # its fixed lane is reserved: only the types with that `lane` use it
+    # Stop before the traffic light (passengers getting off and on): position of the front of the
+    # vehicle, in m from the start of the segment (None = no stop), and duration normal(μ, σ) in s,
+    # truncated to ≥ 0.
     stop_position: float | None = None
     stop_time_mean: float = 20.0
     stop_time_std: float = 5.0
-    # Al detenerse, cuántos vehículos de este tipo caben lado a lado en un carril (p. ej. 2 bicis).
+    # When stopping, how many vehicles of this type fit side by side in a lane (e.g. 2 bikes).
     abreast: int = 1
-    # Rebase dentro del carril (p. ej. bicis): en marcha, quien es más rápido que el de adelante de su
-    # mismo tipo lo rebasa por un lado sin cambiar de carril. Requiere abreast ≥ 2.
+    # Overtaking within the lane (e.g. bikes): while moving, a vehicle faster than the one ahead of the
+    # same type passes it on one side without changing lanes. Requires abreast ≥ 2.
     pass_in_lane: bool = False
-    # Rebase agresivo (p. ej. motos): detecta al líder lento por su velocidad real y acepta un carril
-    # de menor límite si ahí avanza más que detrás de él.
+    # Aggressive overtaking (e.g. motorcycles): detects the slow leader by its actual speed and accepts a lane
+    # with a lower limit if it advances more there than behind it.
     overtake: bool = False
-    # Umbrales de cambio de carril propios del tipo; None = los de [behavior].
+    # The type's own lane change thresholds; None = those of [behavior].
     lookahead: float | None = None
     min_advantage: float | None = None
     lane_change_cooldown: float | None = None
-    # Aceleración y frenado graduales (m/s²). Sin ellos (None), el vehículo pasa de inmediato a su
-    # velocidad y se detiene en seco, como antes. Con `decel` además anticipa: no rebasa la velocidad a
-    # la que aún puede detenerse frenando a `decel` detrás del de adelante o antes de un alto.
+    # Gradual acceleration and braking (m/s²). Without them (None), the vehicle reaches its speed
+    # immediately and stops dead, as before. With `decel` it also anticipates: it does not exceed the speed
+    # at which it can still stop braking at `decel` behind the one ahead or before a stop.
     accel: float | None = None
     decel: float | None = None
-    # Intervalo de seguimiento (s): detrás de un líder en marcha guarda gap_stop más lo que recorre en este tiempo a su
-    # velocidad (como el s0 + v·T de IDM), en vez de gap_run. None = gap_run (como antes).
+    # Car-following headway (s): behind a moving leader it keeps gap_stop plus what it covers in this time at its
+    # speed (like IDM's s0 + v·T), instead of gap_run. None = gap_run (as before).
     time_headway: float | None = None
-    # Velocidad máxima (km/h) a la que pasa el tope de [speed_bump]; None = pasa sin frenar.
+    # Maximum speed (km/h) at which it goes over the [speed_bump] bump; None = it goes over without braking.
     speed_bump_kmh: float | None = None
-    # Probabilidad de que un vehículo que llega lleve mercancía en vez de pasajeros: ocupa la vía,
-    # pero no cuenta en las métricas de pasajeros (1 = el tipo solo lleva mercancía).
+    # Probability that an arriving vehicle carries freight instead of passengers: it takes up the road,
+    # but does not count in the passenger metrics (1 = the type only carries freight).
     cargo_prob: float = 0.0
-    # Largo variable: normal(length, length_std) truncada a [length_min, length_max] (por defecto,
-    # length ∓ 3·length_std), sorteada para cada vehículo. Con length_std = 0, todos miden `length`.
-    # En el TOML, las cuatro van en [vehicles.<clave>] length = {min, max, mean, std}.
+    # Variable length: normal(length, length_std) truncated to [length_min, length_max] (by default,
+    # length ∓ 3·length_std), drawn for each vehicle. With length_std = 0, all measure `length`.
+    # In the TOML, the four go in [vehicles.<key>] length = {min, max, mean, std}.
     length_std: float = 0.0
     length_min: float | None = None
     length_max: float | None = None
-    # Velocidad máxima variable: normal(speed_kmh, speed_std) truncada a [speed_min, speed_max] (por
-    # defecto, speed_kmh ∓ 3·speed_std), sorteada para cada vehículo. Con speed_std = 0, todos van a
-    # speed_kmh. En el TOML, las cuatro van en [vehicles.<clave>] speed_kmh = {min, max, mean, std}.
+    # Variable maximum speed: normal(speed_kmh, speed_std) truncated to [speed_min, speed_max] (by
+    # default, speed_kmh ∓ 3·speed_std), drawn for each vehicle. With speed_std = 0, all go at
+    # speed_kmh. In the TOML, the four go in [vehicles.<key>] speed_kmh = {min, max, mean, std}.
     speed_std: float = 0.0
     speed_min: float | None = None
     speed_max: float | None = None
-    # Detenciones de [bottleneck]: probabilidad de que un vehículo del tipo se detenga una vez en el
-    # tramo (0 = nunca) y duración normal(media, σ) en s, truncada a ≥ 0. Dónde ocurren (carriles y
-    # zona) se define en [bottleneck].
+    # Halts at [bottleneck]: probability that a vehicle of the type stops once in the
+    # segment (0 = never) and duration normal(mean, σ) in s, truncated to ≥ 0. Where they happen (lanes and
+    # zone) is defined in [bottleneck].
     bottleneck_prob: float = 0.0
     bottleneck_time_mean: float = 30.0
     bottleneck_time_std: float = 0.0
-    # Emisiones instantáneas (Int Panis et al., 2006): por contaminante, los coeficientes [f1..f6] de
-    # E = max(0, f1 + f2·v + f3·v² + f4·a + f5·a² + f6·v·a) en g/s (v en m/s, a en m/s²) para a ≥ −0.5 m/s² y
-    # para a < −0.5 m/s². Vacío = el tipo no emite. Solo se calculan con aceleración y frenado graduales.
+    # Instantaneous emissions (Int Panis et al., 2006): per pollutant, the coefficients [f1..f6] of
+    # E = max(0, f1 + f2·v + f3·v² + f4·a + f5·a² + f6·v·a) in g/s (v in m/s, a in m/s²) for a ≥ −0.5 m/s² and
+    # for a < −0.5 m/s². Empty = the type does not emit. Only computed with gradual acceleration and braking.
     emissions: tuple[tuple[str, tuple[float, ...], tuple[float, ...]], ...] = ()
-    # Conjunto de coeficientes del que salen (`EMISSION_SETS`); "" si se escribieron a mano.
+    # Set of coefficients they come from (`EMISSION_SETS`); "" if they were written by hand.
     emission_source: str = ""
-    # Combustible (uno de FUELS; None = no quema combustible): el consumo sale del CO2 emitido. La masa (kg)
-    # solo se usa en la curva física de referencia del rendimiento a velocidad constante.
+    # Fuel (one of FUELS; None = burns no fuel): consumption comes from the CO2 emitted. The mass (kg)
+    # is only used in the physical reference curve of the fuel economy at constant speed.
     fuel: str | None = None
     mass_kg: float | None = None
 
     @property
     def burns(self) -> bool:
-        """Se calcula su consumo: tiene combustible y emite CO2."""
+        """Its fuel consumption is computed: it has a fuel and emits CO2."""
         return self.fuel is not None and self.emits and self.emission_coefs("co2") is not None
 
     @property
     def emits(self) -> bool:
-        """El tipo tiene coeficientes de emisión y dinámica gradual (accel y decel), que el modelo necesita."""
+        """The type has emission coefficients and gradual dynamics (accel and decel), which the model needs."""
         return bool(self.emissions) and self.accel is not None and self.decel is not None
 
     def emission_coefs(self, pollutant: str) -> tuple[tuple[float, ...], tuple[float, ...]] | None:
-        """(coeficientes para a ≥ −0.5, para a < −0.5) del contaminante; None si el tipo no lo emite."""
+        """(coefficients for a ≥ −0.5, for a < −0.5) of the pollutant; None if the type does not emit it."""
         return next(((acc, dec) for name, acc, dec in self.emissions if name == pollutant), None)
 
     @property
     def speed(self) -> float:
-        """Velocidad máxima media del tipo (el parámetro `mean`) en m/s."""
+        """Mean maximum speed of the type (the `mean` parameter) in m/s."""
         return self.speed_kmh / 3.6
 
     @property
     def slowest_kmh(self) -> float:
-        """Velocidad máxima más baja que puede tener un vehículo del tipo (km/h)."""
+        """Lowest maximum speed a vehicle of the type can have (km/h)."""
         if self.speed_std <= 0:
             return self.speed_kmh
         return self.speed_min if self.speed_min is not None else self.speed_kmh - 3 * self.speed_std
 
     @property
     def fastest_kmh(self) -> float:
-        """Velocidad máxima más alta que puede tener un vehículo del tipo (km/h)."""
+        """Highest maximum speed a vehicle of the type can have (km/h)."""
         if self.speed_std <= 0:
             return self.speed_kmh
         return self.speed_max if self.speed_max is not None else self.speed_kmh + 3 * self.speed_std
 
     @property
     def shortest(self) -> float:
-        """Largo mínimo que puede tener un vehículo del tipo (m)."""
+        """Minimum length a vehicle of the type can have (m)."""
         if self.length_std <= 0:
             return self.length
         return self.length_min if self.length_min is not None else self.length - 3 * self.length_std
 
     @property
     def longest(self) -> float:
-        """Largo máximo que puede tener un vehículo del tipo (m)."""
+        """Maximum length a vehicle of the type can have (m)."""
         if self.length_std <= 0:
             return self.length
         return self.length_max if self.length_max is not None else self.length + 3 * self.length_std
 
     @property
     def carries_passengers(self) -> bool:
-        """Algún vehículo del tipo lleva pasajeros (no todos llevan mercancía)."""
+        """Some vehicle of the type carries passengers (not all of them carry freight)."""
         return self.cargo_prob < 1
 
     @property
     def expected_stop_time(self) -> float:
-        """Duración media de la parada (s): la de la normal truncada a ≥ 0; 0 sin parada."""
+        """Mean stop duration (s): that of the normal truncated to ≥ 0; 0 without a stop."""
         if self.stop_position is None:
             return 0.0
         mu, sigma = self.stop_time_mean, self.stop_time_std
@@ -184,75 +184,75 @@ class VehicleSpec:
         return mu + sigma * pdf / tail
 
 
-# Tipos incorporados: dan valores por defecto a [vehicles.car|bike|bus]. Cualquier otro tipo se
-# define completo en el archivo de configuración, sin tocar el código. El auto y el autobús traen
-# coeficientes de emisión, que solo se usan si el tipo tiene accel y decel.
+# Built-in types: they provide the defaults for [vehicles.car|bike|bus]. Any other type is
+# defined in full in the configuration file, without touching the code. The car and the bus come with
+# emission coefficients, which are only used if the type has accel and decel.
 DEFAULT_SPECS: tuple[VehicleSpec, ...] = (
     VehicleSpec("car", "auto", 50.0, 4.5, 3.0, 1.0, 1, 6, 1.5, 1.0, True, emissions=PETROL_CAR_EMISSIONS,
                 emission_source="int_panis_2006", fuel="gasolina", mass_kg=1250.0),
     VehicleSpec("bike", "bici", 15.0, 1.8, 1.0, 0.5, 1, 1, 1.0, 0.0, False),
-    # El gap en marcha del autobús no está especificado: se asume 4 m.
+    # The bus's moving gap is not specified: 4 m is assumed.
     VehicleSpec("bus", "autobús", 40.0, 12.0, 4.0, 1.5, 1, 80, 40.0, 10.0, False, emissions=BUS_EMISSIONS,
                 emission_source="int_panis_2006", fuel="diesel", mass_kg=12000.0),
 )
-DEFAULT_RATES: tuple[float, ...] = (15.0, 4.0, 1.0)  # veh/min de los tipos incorporados
-CAR, BIKE, BUS = 0, 1, 2  # índices de los tipos incorporados (siempre van primero)
+DEFAULT_RATES: tuple[float, ...] = (15.0, 4.0, 1.0)  # veh/min of the built-in types
+CAR, BIKE, BUS = 0, 1, 2  # indices of the built-in types (they always come first)
 
 
 @dataclass(frozen=True, slots=True)
 class Behavior:
-    """Parámetros de conducta comunes a todos los vehículos."""
+    """Behaviour parameters common to all vehicles."""
 
-    reaction_min: float = 1.0  # s, reacción al poder avanzar (verde o arranque del líder)
+    reaction_min: float = 1.0  # s, reaction when it can move (green or the leader starting)
     reaction_max: float = 5.0
-    # Con reaction_std, la reacción es normal(reaction_mean, reaction_std) truncada a [min, max]
-    # (media por defecto: el punto medio); sin ella, uniforme en [min, max]. En el TOML, las cuatro
-    # van en [behavior] reaction = {min, max, mean, std}.
+    # With reaction_std, the reaction is normal(reaction_mean, reaction_std) truncated to [min, max]
+    # (default mean: the midpoint); without it, uniform in [min, max]. In the TOML, the four
+    # go in [behavior] reaction = {min, max, mean, std}.
     reaction_mean: float | None = None
     reaction_std: float | None = None
-    lane_change_min: float = 1.0  # s, duración de la maniobra de cambio de carril
+    lane_change_min: float = 1.0  # s, duration of the lane change manoeuvre
     lane_change_max: float = 4.0
-    lane_change_speed_factor: float = 0.5  # fracción de la velocidad durante la maniobra
-    lane_change_cooldown: float = 3.0  # s sin volver a cambiar tras una maniobra
-    lane_change_interval: float = 0.5  # s entre decisiones de cambio de carril
-    lookahead: float = 30.0  # m, distancia a la que un líder lento motiva cambiar
-    min_advantage: float = 5.0  # m de espacio libre extra para que valga la pena cambiar
-    release_space: float = 0.5  # m, espacio que libera a un vehículo detenido
-    # Solo se cambia de carril con un líder dentro de `lookahead` que va al menos esta fracción por
-    # debajo del límite del carril (sin límite, de la velocidad máxima del vehículo).
+    lane_change_speed_factor: float = 0.5  # fraction of the speed during the manoeuvre
+    lane_change_cooldown: float = 3.0  # s without changing again after a manoeuvre
+    lane_change_interval: float = 0.5  # s between lane change decisions
+    lookahead: float = 30.0  # m, distance at which a slow leader prompts a change
+    min_advantage: float = 5.0  # m of extra free space for a change to be worth it
+    release_space: float = 0.5  # m, space that releases a stopped vehicle
+    # Lanes are only changed with a leader within `lookahead` going at least this fraction
+    # below the lane's limit (without a limit, below the vehicle's maximum speed).
     leader_slowdown: float = 0.25
-    # En amarillo, quien está a menos de `yellow_approach` m de la línea de alto (sin haberla
-    # cruzado) avanza a `yellow_speed_factor` de su velocidad.
+    # On yellow, a vehicle less than `yellow_approach` m from the stop line (without having
+    # crossed it) advances at `yellow_speed_factor` of its speed.
     yellow_approach: float = 50.0
     yellow_speed_factor: float = 0.5
-    # Cola de entrada detenida (la cola del tramo llega hasta la entrada y está detenida): cada vehículo
-    # que espera en ella arranca con su tiempo de reacción cuando se mueve el de adelante, en vez de
-    # entrar ya en marcha en cuanto hay lugar.
+    # Stopped entry queue (the segment's queue reaches the entry and is stopped): each vehicle
+    # waiting in it starts with its reaction time when the one ahead moves, instead of
+    # entering already moving as soon as there is room.
     queue_reaction: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class Bottleneck:
-    """Cuellos de botella: dónde ocurren las detenciones. Cada vehículo que entra al tramo, con la
-    probabilidad de su tipo (`bottleneck_prob`), se detendrá una vez en un punto al azar de
-    `stop_zone`, si al llegar a él va por uno de `stop_lanes`, durante la duración de su tipo.
-    Quien viene detrás lo trata como cualquier líder detenido (se comprime o se cambia de carril)."""
+    """Bottlenecks: where halts happen. Each vehicle entering the segment, with the
+    probability of its type (`bottleneck_prob`), will stop once at a random point of
+    `stop_zone`, if on reaching it it is in one of `stop_lanes`, for its type's duration.
+    Those behind treat it like any stopped leader (they compress or change lanes)."""
 
-    stop_lanes: tuple[int, ...] | None = None  # carriles (0 = derecho); None = todos
-    stop_zone: tuple[float, ...] | None = None  # (inicio, fin) en m del frente; None = todo el tramo
+    stop_lanes: tuple[int, ...] | None = None  # lanes (0 = right); None = all
+    stop_zone: tuple[float, ...] | None = None  # (start, end) in m of the front; None = the whole segment
 
 
 def per_lane(value: float | tuple[float, ...], lanes: int) -> tuple[float, ...]:
-    """Un valor por carril a partir de un número o una lista. Si hay más carriles que valores,
-    los extra usan el último; si hay menos, los sobrantes se ignoran."""
+    """One value per lane from a number or a list. If there are more lanes than values,
+    the extra ones use the last one; if there are fewer, the surplus values are ignored."""
     values = tuple(value) if isinstance(value, tuple) else (float(value),)
     return tuple(values[min(i, len(values) - 1)] for i in range(lanes))
 
 
 @dataclass(frozen=True, slots=True)
 class Rate:
-    """Tasa de llegada (veh/min) de un tipo: normal(mean, std) truncada a [min, max], que se vuelve a
-    sortear en cada intervalo de [demand] rate_interval. Con std = 0 o min = max es fija."""
+    """Arrival rate (veh/min) of a type: normal(mean, std) truncated to [min, max], drawn again
+    in each [demand] rate_interval. With std = 0 or min = max it is fixed."""
 
     min: float
     max: float
@@ -269,14 +269,14 @@ class Rate:
 
     @property
     def expected(self) -> float:
-        """Tasa media real: la media de la normal truncada a [min, max]."""
+        """Actual mean rate: the mean of the normal truncated to [min, max]."""
         if not self.variable:
             return min(max(self.mean, self.min), self.max)
         mu, sigma = self.mean, self.std
         a, b = (self.min - mu) / sigma, (self.max - mu) / sigma
-        # E[X | a ≤ Z ≤ b] = μ + σ·(φ(a) − φ(b)) / (Φ(b) − Φ(a)), con Z = (X − μ) / σ
+        # E[X | a ≤ Z ≤ b] = μ + σ·(φ(a) − φ(b)) / (Φ(b) − Φ(a)), with Z = (X − μ) / σ
         mass = 0.5 * (math.erf(b / math.sqrt(2)) - math.erf(a / math.sqrt(2)))
-        if mass <= 0:  # media muy lejos de [min, max] (la validación lo rechaza): el extremo más cercano
+        if mass <= 0:  # mean very far from [min, max] (validation rejects it): the nearest bound
             return self.min if mu < self.min else self.max
         return mu + sigma * (math.exp(-a * a / 2) - math.exp(-b * b / 2)) / math.sqrt(2 * math.pi) / mass
 
@@ -293,21 +293,21 @@ PEDESTRIAN_YIELD = 3.0
 
 @dataclass(frozen=True, slots=True)
 class SpeedBump:
-    """Un tope (reductor de velocidad) a `position` m del inicio del tramo, en los carriles `lanes`. Mientras un
-    vehículo lo pisa (del frente a la parte trasera) no rebasa el `speed_bump_kmh` de su tipo. Con `pedestrian`, el
-    tope es además un paso peatonal: aparecen peatones (`pedestrian_crossing`, peatones/min) que cruzan en
-    `pedestrian_time` s cada uno, y los vehículos se detienen del todo mientras cruza alguno. Una calle puede tener
-    varios (`SimConfig.speed_bumps`), cada uno con su configuración."""
+    """A bump (speed hump) at `position` m from the start of the segment, in the lanes `lanes`. While a
+    vehicle is on it (from the front to the rear) it does not exceed its type's `speed_bump_kmh`. With `pedestrian`,
+    the bump is also a pedestrian crossing: pedestrians appear (`pedestrian_crossing`, pedestrians/min) that cross in
+    `pedestrian_time` s each, and vehicles stop completely while someone is crossing. A street can have
+    several (`SimConfig.speed_bumps`), each with its own configuration."""
 
-    position: float  # m desde el inicio del tramo
-    lanes: tuple[int, ...] | None = None  # carriles (0 = derecho); None = todos
+    position: float  # m from the start of the segment
+    lanes: tuple[int, ...] | None = None  # lanes (0 = right); None = all
     pedestrian: bool = False
     pedestrian_crossing: Rate = PEDESTRIAN_RATE
     pedestrian_time: float = PEDESTRIAN_TIME
 
 
 def as_positions(value: float | tuple[float, ...] | list[float] | None) -> tuple[float, ...]:
-    """Posiciones (m) de una posición suelta, una lista de ellas o None, de la entrada a la salida (vacía si None)."""
+    """Positions (m) from a single position, a list of them or None, from the entry to the exit (empty if None)."""
     if value is None:
         return ()
     if isinstance(value, (tuple, list)):
@@ -316,12 +316,12 @@ def as_positions(value: float | tuple[float, ...] | list[float] | None) -> tuple
 
 
 def phase_at(red: int, green: int, yellow: int, start_phase: str, tick: int) -> int:
-    """Fase (RED, GREEN o YELLOW) en el paso `tick` de un semáforo con esas fases (en pasos): verde → amarillo →
-    rojo, empezando por el rojo o por el verde."""
+    """Phase (RED, GREEN or YELLOW) at step `tick` of a traffic light with those phases (in steps): green → yellow →
+    red, starting with red or with green."""
     cycle = red + green + yellow
     pos = tick % cycle
     if start_phase == "red":
-        pos = (pos - red) % cycle  # el ciclo empieza en el rojo
+        pos = (pos - red) % cycle  # the cycle starts at red
     if pos < green:
         return GREEN
     return YELLOW if pos < green + yellow else RED
@@ -329,35 +329,36 @@ def phase_at(red: int, green: int, yellow: int, start_phase: str, tick: int) -> 
 
 @dataclass(frozen=True, slots=True)
 class Light:
-    """Un semáforo del tramo a `position` m del inicio, con sus propias fases y fase inicial. El del final del
-    tramo (x = length) lo describen `red`, `green`, `yellow`, `start_phase`, `traffic_light` y `free_lanes` de
-    SimConfig (`SimConfig.exit_light`); los intermedios van en `SimConfig.extra_lights`."""
+    """A traffic light on the segment at `position` m from the start, with its own phases and initial phase. The one at
+    the end of the segment (x = length) is described by SimConfig's `red`, `green`, `yellow`, `start_phase`,
+    `traffic_light` and `free_lanes` (`SimConfig.exit_light`); the intermediate ones go in `SimConfig.extra_lights`."""
 
     position: float
     red: float = 30.0  # s
     green: float = 30.0  # s
-    yellow: float = 0.0  # s, entre el verde y el rojo; 0 = sin amarillo
+    yellow: float = 0.0  # s, between green and red; 0 = no yellow
     start_phase: str = "red"  # "red" | "green"
     enabled: bool = True
-    # Carriles sin este semáforo (0 = derecho): solo aplica a los tipos con carril exclusivo en ellos.
+    # Lanes without this traffic light (0 = right): only applies to the types with an exclusive lane in them.
     free_lanes: tuple[int, ...] = ()
-    # Semáforo peatonal: verde para los vehículos mientras no haya peatones esperando (aparecen a razón de
-    # `pedestrian_crossing`, peatones/min). Con alguno en la cola y pasado el verde mínimo (`green`), y cuando el
-    # semáforo de ciclo fijo anterior está en rojo, pasa a amarillo (`yellow`) y a rojo (`red`, lo que tardan en
-    # cruzar). No tiene ciclo ni `start_phase`: su calendario sale de la simulación (`pedestrians.light_schedule`).
+    # Pedestrian light: green for vehicles while no pedestrians are waiting (they appear at a rate of
+    # `pedestrian_crossing`, pedestrians/min). With someone in the queue and once the minimum green (`green`) has
+    # passed, and when the previous fixed-cycle light is red, it turns yellow (`yellow`) and red (`red`, the time they
+    # take to cross). It has no cycle or `start_phase`: its schedule comes from the simulation (`pedestrians.light_schedule`).
     pedestrian: bool = False
     pedestrian_crossing: Rate = PEDESTRIAN_RATE
-    # Desfase (s): el ciclo entero se retrasa `offset` s, p. ej. para coordinarlo con otro semáforo. 0 ≤ offset < ciclo.
+    # Offset (s): the whole cycle is delayed by `offset` s, e.g. to coordinate it with another light. 0 ≤ offset < cycle.
     offset: float = 0.0
 
     @property
     def active(self) -> bool:
-        """Hay semáforo: está activado y alguna de sus fases dura más de 0 s (el peatonal basta con que esté activado)."""
+        """There is a traffic light: it is enabled and one of its phases lasts more than 0 s (a pedestrian light only needs
+        to be enabled)."""
         return self.enabled and (self.pedestrian or self.red + self.green + self.yellow > 0)
 
     @property
     def cycle(self) -> float:
-        """Duración del ciclo (s); 0 si no hay semáforo o es peatonal (no tiene ciclo)."""
+        """Cycle duration (s); 0 if there is no traffic light or it is a pedestrian light (it has no cycle)."""
         return self.red + self.green + self.yellow if self.active and not self.pedestrian else 0.0
 
     @property
@@ -371,21 +372,21 @@ class Light:
         return label + (f", offset {self.offset:g} s" if self.offset > 0 else "")
 
     def phase(self, tick: int) -> int:
-        """Fase (RED, GREEN o YELLOW) en el paso `tick`: verde → amarillo → rojo. Sin semáforo, siempre verde; el
-        peatonal también (su fase real depende de los peatones de cada réplica: la da la simulación)."""
+        """Phase (RED, GREEN or YELLOW) at step `tick`: green → yellow → red. Without a traffic light, always green; a
+        pedestrian light too (its actual phase depends on each replica's pedestrians: the simulation provides it)."""
         if not self.active or self.pedestrian:
             return GREEN
         return phase_at(round(self.red / DT), round(self.green / DT), round(self.yellow / DT), self.start_phase,
                         tick - round(self.offset / DT))
 
     def intervals(self, offset: float, duration: float, horizon: float) -> list[tuple[float, float]]:
-        """Intervalos [inicio, fin) en s simulados, hasta `horizon`, de la fase que empieza `offset` s después del
-        inicio del verde y dura `duration` s."""
+        """[start, end) intervals in simulated s, up to `horizon`, of the phase that starts `offset` s after the
+        start of green and lasts `duration` s."""
         if duration <= 0 or not self.active or self.pedestrian:
             return []
         out = []
-        # Dos ciclos antes del primer verde (en t = red si empieza en rojo, más el desfase): cubre la fase ya en curso
-        # en t = 0.
+        # Two cycles before the first green (at t = red if it starts on red, plus the offset): covers the phase already
+        # in progress at t = 0.
         start = (self.red if self.start_phase == "red" else 0.0) + self.offset + offset - 2 * self.cycle
         while start < horizon:
             if start + duration > 0:
@@ -402,8 +403,8 @@ class Light:
 
 @dataclass(frozen=True, slots=True)
 class StopLine:
-    """Línea de alto intermedia donde los vehículos pueden tener que detenerse: un semáforo intermedio (`light`) o el
-    paso peatonal de un tope (`light` es None), a `position` m. `lanes` son los carriles donde rige (None = todos)."""
+    """Intermediate stop line where vehicles may have to stop: an intermediate traffic light (`light`) or a
+    bump's pedestrian crossing (`light` is None), at `position` m. `lanes` are the lanes where it applies (None = all)."""
 
     position: float
     light: Light | None = None
@@ -415,7 +416,7 @@ class StopLine:
 
     @property
     def pedestrian(self) -> bool:
-        """Su calendario depende de los peatones: un paso peatonal o un semáforo peatonal."""
+        """Its schedule depends on the pedestrians: a pedestrian crossing or a pedestrian light."""
         return self.light is None or self.light.pedestrian
 
     @property
@@ -425,50 +426,50 @@ class StopLine:
 
 @dataclass(frozen=True, slots=True)
 class SimConfig:
-    """Configuración completa de una corrida."""
+    """Full configuration of a run."""
 
-    length: float = 200.0  # m del tramo; el semáforo está en x = length
+    length: float = 200.0  # m of the segment; the traffic light is at x = length
     lanes: int = 2
-    lane_speed_limit: float | tuple[float, ...] | None = None  # km/h por carril (0 = derecho); None = sin límite
-    rates: tuple[float, ...] = DEFAULT_RATES  # veh/min medias, alineadas con `specs`
-    # Tasas variables, una por tipo; si se dan, `rates` se calcula de ellas (su media real). Vacía = fijas.
+    lane_speed_limit: float | tuple[float, ...] | None = None  # km/h per lane (0 = right); None = no limit
+    rates: tuple[float, ...] = DEFAULT_RATES  # mean veh/min, aligned with `specs`
+    # Variable rates, one per type; if given, `rates` is computed from them (their actual mean). Empty = fixed.
     rate_dists: tuple[Rate, ...] = ()
-    rate_interval: float = 60.0  # s simulados entre sorteos de las tasas variables
+    rate_interval: float = 60.0  # simulated s between draws of the variable rates
     red: float = 30.0  # s
     green: float = 30.0  # s
-    yellow: float = 0.0  # s, entre el verde y el rojo; 0 = sin amarillo
+    yellow: float = 0.0  # s, between green and red; 0 = no yellow
     start_phase: str = "red"  # "red" | "green"
-    # Semáforo activado. Desactivado (o con red, green y yellow en 0) no hay semáforo: la línea al final
-    # del tramo siempre está abierta.
+    # Traffic light enabled. Disabled (or with red, green and yellow at 0) there is no traffic light: the line at the end
+    # of the segment is always open.
     traffic_light: bool = True
-    # Carriles sin semáforo (0 = derecho), p. ej. una vuelta continua. Solo aplica a los tipos con carril
-    # exclusivo (`lane` y `exclusive`) en uno de ellos: cruzan la línea aunque esté en rojo y no bajan la
-    # velocidad en amarillo.
+    # Lanes without a traffic light (0 = right), e.g. a free right turn. Only applies to the types with an
+    # exclusive lane (`lane` and `exclusive`) in one of them: they cross the line even on red and do not slow
+    # down on yellow.
     free_lanes: tuple[int, ...] = ()
-    # El semáforo del final del tramo es peatonal (ver `Light.pedestrian`); en ese caso `red` es lo que dura el
-    # rojo, `green` el verde mínimo y `start_phase` no se usa.
+    # The traffic light at the end of the segment is a pedestrian light (see `Light.pedestrian`); in that case `red` is
+    # how long the red lasts, `green` the minimum green and `start_phase` is not used.
     light_pedestrian: bool = False
     light_pedestrian_crossing: Rate = PEDESTRIAN_RATE
-    light_offset: float = 0.0  # s, desfase del semáforo del final del tramo (ver `Light.offset`)
-    # Semáforos intermedios (además del del final del tramo), cada uno a su `position` m con sus propias fases.
+    light_offset: float = 0.0  # s, offset of the traffic light at the end of the segment (see `Light.offset`)
+    # Intermediate traffic lights (besides the one at the end of the segment), each at its `position` m with its own phases.
     extra_lights: tuple[Light, ...] = ()
-    run: float = 10.0  # s de proceso
-    time_scale: float = 10.0  # s simulados por cada s de proceso
-    sample: float = 1.0  # s simulados entre muestras
-    # Condición inicial: fracción de cada carril ya ocupada al empezar por vehículos en marcha,
-    # (largo + gap_run) / length; un número para todos o uno por carril. 0 = tramo vacío.
+    run: float = 10.0  # process s
+    time_scale: float = 10.0  # simulated s per process s
+    sample: float = 1.0  # simulated s between samples
+    # Initial condition: fraction of each lane already occupied at the start by moving vehicles,
+    # (length + gap_run) / length; one number for all or one per lane. 0 = empty segment.
     initial_occupancy: float | tuple[float, ...] = 0.0
-    # Cola de salida después del semáforo, por carril (un número para todos o uno por carril): cuántos
-    # vehículos por minuto acepta (0 = sin cola de salida) y cuántos m mide (cada vehículo ocupa su largo +
-    # gap detenido). Quien no cabe no puede cruzar la línea aunque esté en verde.
+    # Exit queue after the traffic light, per lane (one number for all or one per lane): how many
+    # vehicles per minute it accepts (0 = no exit queue) and how many m it measures (each vehicle takes its length +
+    # stopped gap). A vehicle that does not fit cannot cross the line even on green.
     exit_capacity: float | tuple[float, ...] = 0.0
     exit_storage: float | tuple[float, ...] = 60.0
     specs: tuple[VehicleSpec, ...] = DEFAULT_SPECS
     behavior: Behavior = field(default_factory=Behavior)
     bottleneck: Bottleneck = field(default_factory=Bottleneck)
-    # Topes, cada uno con su posición, carriles y peatones (ver `bumps` para tenerlos ordenados).
+    # Bumps, each with its position, lanes and pedestrians (see `bumps` to have them sorted).
     speed_bumps: tuple[SpeedBump, ...] = ()
-    # Precio de cada combustible por litro, en `currency`; sin precio, el consumo solo se da en litros.
+    # Price of each fuel per litre, in `currency`; without a price, consumption is only given in litres.
     fuel_price: tuple[tuple[str, float], ...] = ()
     currency: str = "MXN"
 
@@ -481,11 +482,11 @@ class SimConfig:
             raise ValueError(f"expected {len(self.specs)} arrival rates, one per type; there are {len(self.rates)}")
 
     def price(self, fuel: str | None) -> float | None:
-        """Precio por litro del combustible (None si no tiene)."""
+        """Price per litre of the fuel (None if it has none)."""
         return next((p for f, p in self.fuel_price if f == fuel), None)
 
     def rate(self, k: int) -> Rate:
-        """Tasa de llegada del tipo k (fija si no hay `rate_dists`)."""
+        """Arrival rate of type k (fixed if there are no `rate_dists`)."""
         return self.rate_dists[k] if self.rate_dists else Rate.fixed(self.rates[k])
 
     @property
@@ -497,16 +498,16 @@ class SimConfig:
         return len(self.specs)
 
     def bottleneck_prob(self, k: int) -> float:
-        """Probabilidad de que un vehículo del tipo k se detenga en un cuello de botella."""
+        """Probability that a vehicle of type k stops at a bottleneck."""
         return self.specs[k].bottleneck_prob
 
     def bottleneck_time(self, k: int) -> tuple[float, float]:
-        """Duración (media, σ) en s de la detención del tipo k."""
+        """Duration (mean, σ) in s of the halt of type k."""
         return self.specs[k].bottleneck_time_mean, self.specs[k].bottleneck_time_std
 
     @property
     def bottleneck_active(self) -> bool:
-        """Algún tipo que participa puede detenerse en un cuello de botella."""
+        """Some participating type can stop at a bottleneck."""
         return any(rate > 0 and self.bottleneck_prob(k) > 0 for k, rate in enumerate(self.rates))
 
     def bottleneck_lanes(self) -> tuple[int, ...]:
@@ -515,16 +516,16 @@ class SimConfig:
 
     @property
     def bumps(self) -> tuple[SpeedBump, ...]:
-        """Los topes, de la entrada a la salida."""
+        """The bumps, from the entry to the exit."""
         return tuple(sorted(self.speed_bumps, key=lambda b: b.position))
 
     def bump_lanes(self, bump: SpeedBump) -> tuple[int, ...]:
-        """Carriles donde está el tope."""
+        """Lanes where the bump is."""
         return tuple(range(self.lanes)) if bump.lanes is None else bump.lanes
 
     @property
     def crossings(self) -> tuple[SpeedBump, ...]:
-        """Los topes que son paso peatonal (y están en algún carril), de la entrada a la salida."""
+        """The bumps that are pedestrian crossings (and are on some lane), from the entry to the exit."""
         return tuple(b for b in self.bumps if b.pedestrian and self.bump_lanes(b))
 
     def bottleneck_zone(self) -> tuple[float, float]:
@@ -537,35 +538,35 @@ class SimConfig:
 
     @property
     def lane_exit_capacity(self) -> tuple[float, ...]:
-        """veh/min que acepta la cola de salida de cada carril (0 = sin cola de salida)."""
+        """veh/min accepted by the exit queue of each lane (0 = no exit queue)."""
         return per_lane(self.exit_capacity, self.lanes)
 
     @property
     def lane_exit_storage(self) -> tuple[float, ...]:
-        """m que mide la cola de salida de cada carril (cada vehículo ocupa su largo + gap detenido)."""
+        """m measured by the exit queue of each lane (each vehicle takes its length + stopped gap)."""
         return per_lane(self.exit_storage, self.lanes)
 
     @property
     def lane_max_kmh(self) -> tuple[float, ...]:
-        """Límite de velocidad de cada carril (inf si no hay límite)."""
+        """Speed limit of each lane (inf if there is no limit)."""
         if self.lane_speed_limit is None:
             return (math.inf,) * self.lanes
         return per_lane(self.lane_speed_limit, self.lanes)
 
     @property
     def reserved_lanes(self) -> frozenset[int]:
-        """Carriles exclusivos: los de los tipos con `exclusive` y carril fijo."""
+        """Exclusive lanes: those of the types with `exclusive` and a fixed lane."""
         return frozenset(s.lane for s in self.specs if s.exclusive and s.lane is not None)
 
     def ignores_light(self, k: int, light: Light | None = None) -> bool:
-        """El tipo k no obedece el semáforo (por defecto, el del final del tramo): tiene carril exclusivo y ese
-        carril está en sus `free_lanes`."""
+        """Type k does not obey the traffic light (by default, the one at the end of the segment): it has an exclusive lane
+        and that lane is in its `free_lanes`."""
         spec = self.specs[k]
         lanes = self.free_lanes if light is None else light.free_lanes
         return spec.exclusive and spec.lane is not None and spec.lane in lanes
 
     def allowed_lanes(self, k: int) -> tuple[int, ...]:
-        """Carriles que puede usar el tipo k: su carril fijo o, si no tiene, los no reservados."""
+        """Lanes type k can use: its fixed lane or, if it has none, the non-reserved ones."""
         spec = self.specs[k]
         if spec.lane is not None:
             return (spec.lane,)
@@ -573,28 +574,28 @@ class SimConfig:
         return tuple(i for i in range(self.lanes) if i not in reserved)
 
     def entry_lanes(self, k: int) -> tuple[int, ...]:
-        """Carriles por los que entra el tipo k. Uno que no cambia de carril y no tiene `lane` va por el
-        carril libre más a la derecha (sin los exclusivos de otros tipos)."""
+        """Lanes through which type k enters. One that does not change lanes and has no `lane` goes in the
+        rightmost free lane (without the exclusive lanes of other types)."""
         allowed = self.allowed_lanes(k)
         spec = self.specs[k]
         if spec.can_change_lane or spec.lane is not None:
             return allowed
-        return allowed[:1]  # el carril libre más a la derecha
+        return allowed[:1]  # the rightmost free lane
 
     def free_flow_kmh(self, k: int) -> float:
-        """Velocidad a flujo libre del tipo k: su máxima (la media, si es variable), sin rebasar el límite
-        del mejor carril que puede usar."""
+        """Free-flow speed of type k: its maximum (the mean, if it varies), without exceeding the limit
+        of the best lane it can use."""
         return min(self.specs[k].speed_kmh, self._best_limit_kmh(k))
 
     def free_flow_time(self, k: int) -> float:
-        """Tiempo medio (s) en recorrer el tramo a flujo libre para el tipo k, sin paradas. Con velocidad
-        variable es la media de length / min(v, límite) sobre la normal truncada de v, no length entre
-        la velocidad media."""
+        """Mean time (s) to cover the segment at free flow for type k, without stops. With a variable
+        speed it is the mean of length / min(v, limit) over the truncated normal of v, not length divided by
+        the mean speed."""
         spec = self.specs[k]
         limit = self._best_limit_kmh(k)
         if spec.speed_std <= 0:
             return self.length / (min(spec.speed_kmh, limit) / 3.6)
-        # Regla del punto medio sobre [slowest, fastest] con la densidad normal (la truncadura normaliza).
+        # Midpoint rule over [slowest, fastest] with the normal density (the truncation normalizes).
         lo, hi, n = spec.slowest_kmh, spec.fastest_kmh, 2000
         step = (hi - lo) / n
         num = den = 0.0
@@ -606,7 +607,7 @@ class SimConfig:
         return num / den
 
     def _best_limit_kmh(self, k: int) -> float:
-        """Límite del carril más rápido por el que entra el tipo k (inf si no hay límites)."""
+        """Limit of the fastest lane through which type k enters (inf if there are no limits)."""
         limits = self.lane_max_kmh
         return max((limits[i] for i in self.entry_lanes(k)), default=math.inf)
 
@@ -632,24 +633,25 @@ class SimConfig:
 
     @property
     def exit_light(self) -> Light:
-        """El semáforo del final del tramo (x = length), con los campos `red`, `green`, `yellow`, `start_phase`,
-        `traffic_light` y `free_lanes`."""
+        """The traffic light at the end of the segment (x = length), with the fields `red`, `green`, `yellow`, `start_phase`,
+        `traffic_light` and `free_lanes`."""
         return Light(self.length, self.red, self.green, self.yellow, self.start_phase, self.traffic_light,
                      self.free_lanes, self.light_pedestrian, self.light_pedestrian_crossing, self.light_offset)  # fmt: skip
 
     @property
     def has_light(self) -> bool:
-        """Hay semáforo al final del tramo: está activado y alguna de sus fases dura más de 0 s."""
+        """There is a traffic light at the end of the segment: it is enabled and one of its phases lasts more than 0 s."""
         return self.exit_light.active
 
     @property
     def inner_lights(self) -> tuple[Light, ...]:
-        """Los semáforos intermedios que funcionan, de la entrada a la salida."""
+        """The working intermediate traffic lights, from the entry to the exit."""
         return tuple(sorted((lt for lt in self.extra_lights if lt.active), key=lambda lt: lt.position))
 
     @property
     def lights(self) -> tuple[Light, ...]:
-        """Todos los semáforos que funcionan (intermedios y el del final del tramo), de la entrada a la salida."""
+        """All the working traffic lights (the intermediate ones and the one at the end of the segment), from the entry to
+        the exit."""
         return self.inner_lights + ((self.exit_light,) if self.has_light else ())
 
     @property
@@ -658,32 +660,32 @@ class SimConfig:
 
     @property
     def stop_lines(self) -> tuple[StopLine, ...]:
-        """Líneas de alto intermedias, de la entrada a la salida: los semáforos intermedios y los pasos peatonales de
-        los topes (con un semáforo y un paso en el mismo punto, primero el semáforo). El motor y el video las
-        recorren en este orden."""
+        """Intermediate stop lines, from the entry to the exit: the intermediate traffic lights and the bumps' pedestrian
+        crossings (with a light and a crossing at the same point, the light first). The engine and the video
+        go through them in this order."""
         lines = [StopLine(lt.position, lt) for lt in self.inner_lights]
         lines += [StopLine(b.position, None, self.bump_lanes(b)) for b in self.crossings]
         return tuple(sorted(lines, key=lambda s: (s.position, s.light is None)))
 
     @property
     def pedestrian_spots(self) -> tuple[tuple[str, float], ...]:
-        """(«semáforo» o «tope», posición en m) de cada punto con peatones, de la entrada a la salida. Son las filas de
-        `summary["pedestrians"]`."""
+        """(«semáforo» or «tope», position in m) of each point with pedestrians, from the entry to the exit. They are the
+        rows of `summary["pedestrians"]`."""
         spots = [(s.kind, s.position) for s in self.stop_lines if s.pedestrian]
         if self.exit_light.active and self.exit_light.pedestrian:
             spots.append(("semáforo", self.length))
         return tuple(sorted(spots, key=lambda s: (s[1], s[0] == "tope")))
 
     def previous_light(self, light: Light) -> Light | None:
-        """El semáforo de ciclo fijo más cercano antes de `light` (hacia la entrada), con el que se coordina un
-        semáforo peatonal: espera a que esté en rojo. None si no hay."""
+        """The closest fixed-cycle traffic light before `light` (towards the entry), with which a pedestrian light is
+        coordinated: it waits for it to be red. None if there is none."""
         before = [lt for lt in self.lights if not lt.pedestrian and lt.position < light.position]
         return before[-1] if before else None
 
     @property
     def ref_light(self) -> Light | None:
-        """El semáforo que marca la ventana del flujo y las fases sombreadas de las gráficas: el último de ciclo fijo
-        (el del final del tramo o, si no hay, el último intermedio). Un semáforo peatonal no tiene ciclo."""
+        """The traffic light that sets the flow window and the shaded phases of the plots: the last fixed-cycle one
+        (the one at the end of the segment or, if there is none, the last intermediate one). A pedestrian light has no cycle."""
         fixed = [lt for lt in self.lights if not lt.pedestrian]
         return fixed[-1] if fixed else None
 
@@ -695,7 +697,7 @@ class SimConfig:
 
     @property
     def lights_label(self) -> str:
-        """Los semáforos de la calle: con uno solo, como `light_label`; con varios, cada uno con su posición y fases."""
+        """The street's traffic lights: with only one, like `light_label`; with several, each with its position and phases."""
         if not self.inner_lights:
             return self.light_label
         return " · ".join(f"at {lt.position:g} m: {lt.label}"
@@ -704,7 +706,7 @@ class SimConfig:
 
     @property
     def lights_short(self) -> str:
-        """Como `lights_label`, pero corto para los subtítulos de las gráficas: con varios semáforos, cuántos y dónde."""
+        """Like `lights_label`, but short for the plot subtitles: with several traffic lights, how many and where."""
         if not self.inner_lights:
             return self.light_label
         at = [f"{lt.position:g}" for lt in self.lights]
@@ -720,13 +722,13 @@ class SimConfig:
 
     @property
     def cycle(self) -> float:
-        """Duración del ciclo del semáforo de referencia (s); 0 sin semáforo."""
+        """Cycle duration of the reference traffic light (s); 0 without a traffic light."""
         ref = self.ref_light
         return ref.cycle if ref else 0.0
 
     @property
     def flow_window(self) -> float:
-        """Ventana (s) del flujo en la línea: un ciclo del semáforo de referencia o, sin él, NO_LIGHT_WINDOW."""
+        """Window (s) of the flow at the line: one cycle of the reference traffic light or, without one, NO_LIGHT_WINDOW."""
         return self.cycle if self.ref_light else NO_LIGHT_WINDOW
 
     @property
@@ -742,18 +744,18 @@ class SimConfig:
         return self.n_ticks // self.sample_ticks
 
     def with_lights(self, enabled: bool) -> SimConfig:
-        """La misma configuración con todos los semáforos (el del final del tramo y los intermedios) activados o
-        desactivados."""
+        """The same configuration with all the traffic lights (the one at the end of the segment and the intermediate ones)
+        enabled or disabled."""
         return replace(self, traffic_light=enabled,
                        extra_lights=tuple(replace(lt, enabled=enabled) for lt in self.extra_lights))  # fmt: skip
 
     def phase(self, tick: int) -> int:
-        """Fase del semáforo del final del tramo (RED, GREEN o YELLOW) en el paso `tick`: verde → amarillo → rojo.
-        Sin semáforo, siempre verde."""
+        """Phase of the traffic light at the end of the segment (RED, GREEN or YELLOW) at step `tick`: green → yellow → red.
+        Without a traffic light, always green."""
         return self.exit_light.phase(tick)
 
     def inner_phases(self, tick: int) -> tuple[int, ...]:
-        """Fase de cada semáforo intermedio (`inner_lights`) en el paso `tick`."""
+        """Phase of each intermediate traffic light (`inner_lights`) at step `tick`."""
         return tuple(lt.phase(tick) for lt in self.inner_lights)
 
     def is_green(self, tick: int) -> bool:
@@ -763,11 +765,11 @@ class SimConfig:
         return self.phase(tick) == RED
 
     def red_intervals(self) -> list[tuple[float, float]]:
-        """Intervalos [inicio, fin) en s simulados en los que el semáforo de referencia está en rojo."""
+        """[start, end) intervals in simulated s in which the reference traffic light is red."""
         ref = self.ref_light
         return ref.red_intervals(self.sim_seconds) if ref else []
 
     def yellow_intervals(self) -> list[tuple[float, float]]:
-        """Intervalos [inicio, fin) en s simulados en los que el semáforo de referencia está en amarillo."""
+        """[start, end) intervals in simulated s in which the reference traffic light is yellow."""
         ref = self.ref_light
         return ref.yellow_intervals(self.sim_seconds) if ref else []

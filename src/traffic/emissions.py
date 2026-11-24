@@ -1,9 +1,9 @@
-"""Emisiones instantáneas por velocidad y aceleración (Int Panis, Broekx y Liu, 2006).
+"""Instantaneous emissions from speed and acceleration (Int Panis, Broekx and Liu, 2006).
 
-E = max(0, f1 + f2·v + f3·v² + f4·a + f5·a² + f6·v·a) en g/s, con v en m/s y a en m/s². Cada tipo de
-vehículo y contaminante tiene dos juegos de coeficientes: uno para a ≥ −0.5 m/s² y otro para a < −0.5 m/s².
-El modelo se ajustó con una flota europea de principios de los 2000: sirve para comparar escenarios (con y
-sin tope, con y sin semáforo), no para dar valores absolutos.
+E = max(0, f1 + f2·v + f3·v² + f4·a + f5·a² + f6·v·a) in g/s, with v in m/s and a in m/s². Each vehicle
+type and pollutant has two sets of coefficients: one for a ≥ −0.5 m/s² and another for a < −0.5 m/s².
+The model was fitted to a European fleet of the early 2000s: it is for comparing scenarios (with and
+without a bump, with and without a traffic light), not for absolute values.
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from trafico.config import EMISSION_DECEL, POLLUTANT_LABELS, POLLUTANTS, SimConfig, VehicleSpec
-from trafico.emission_sets import SET_LABELS
+from traffic.config import EMISSION_DECEL, POLLUTANT_LABELS, POLLUTANTS, SimConfig, VehicleSpec
+from traffic.emission_sets import SET_LABELS
 
 EMIS_BIN = 5.0
 """m: ancho de los intervalos de posición en que se acumulan las emisiones a lo largo del tramo."""
@@ -23,8 +23,8 @@ ACCEL_STEPS = ((0.0, 20.0), (20.0, 40.0), (40.0, 60.0), (60.0, 80.0))
 
 
 def coefficient_table(specs: tuple[VehicleSpec, ...]) -> tuple[np.ndarray, np.ndarray]:
-    """(coeficientes de forma (tipos, contaminantes, 2, 6), qué tipo emite qué contaminante). Solo cuentan los
-    tipos que emiten (coeficientes y dinámica gradual); el juego 0 es para a ≥ −0.5 y el 1 para a < −0.5."""
+    """(coefficients of shape (types, pollutants, 2, 6), which type emits which pollutant). Only types that
+    emit count (coefficients and gradual dynamics); set 0 is for a ≥ −0.5 and set 1 for a < −0.5."""
     coef = np.zeros((len(specs), len(POLLUTANTS), 2, 6))
     on = np.zeros((len(specs), len(POLLUTANTS)), np.bool_)
     for k, spec in enumerate(specs):
@@ -39,20 +39,20 @@ def coefficient_table(specs: tuple[VehicleSpec, ...]) -> tuple[np.ndarray, np.nd
 
 
 def emitted(cfg: SimConfig) -> tuple[list[int], list[int]]:
-    """(índices en POLLUTANTS de los contaminantes que emite algún tipo que participa, tipos que participan y
-    emiten)."""
+    """(indices in POLLUTANTS of the pollutants emitted by some participating type, participating types that
+    emit)."""
     types = [k for k, sp in enumerate(cfg.specs) if cfg.rates[k] > 0 and sp.emits]
     pols = [p for p, pol in enumerate(POLLUTANTS) if any(cfg.specs[k].emission_coefs(pol) for k in types)]
     return pols, types
 
 
 def unit(pol: str) -> tuple[str, float]:
-    """Unidad con que se muestra el contaminante y su factor desde gramos: CO2 en g, los demás en mg."""
+    """Unit the pollutant is shown in and its factor from grams: CO2 in g, the rest in mg."""
     return ("g", 1.0) if pol == "co2" else ("mg", 1000.0)
 
 
 def emissions_label(cfg: SimConfig) -> str | None:
-    """Línea de la cabecera: qué contaminantes emite cada tipo que participa y cuáles no emiten."""
+    """Header line: which pollutants each participating type emits and which types emit nothing."""
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0]
     if not any(cfg.specs[k].emits for k in active):
         return None
@@ -70,8 +70,8 @@ def emissions_label(cfg: SimConfig) -> str | None:
 
 
 def emission_rate(coef: np.ndarray, v, a) -> np.ndarray:
-    """Tasa de emisión (g/s) con coeficientes de forma (..., 2, 6) a velocidad v (m/s) y aceleración a (m/s²),
-    que se difunden con la forma (...) de los coeficientes sin sus dos últimos ejes."""
+    """Emission rate (g/s) with coefficients of shape (..., 2, 6) at speed v (m/s) and acceleration a (m/s²),
+    broadcast to the shape (...) of the coefficients without their last two axes."""
     v = np.asarray(v, dtype=np.float64)
     a = np.asarray(a, dtype=np.float64)
     c = np.where((a >= EMISSION_DECEL)[..., None], coef[..., 0, :], coef[..., 1, :])
@@ -81,21 +81,21 @@ def emission_rate(coef: np.ndarray, v, a) -> np.ndarray:
 
 @dataclass(frozen=True, slots=True)
 class AccelStep:
-    """Un escalón de la tabla: de v1 a v2 km/h a la aceleración `accel` (m/s²) del tipo."""
+    """One step of the table: from v1 to v2 km/h at the type's acceleration `accel` (m/s²)."""
 
     v1: float
     v2: float
     accel: float
     seconds: float
     meters: float
-    grams: dict[str, float]  # emitidos al acelerar
-    cruise: dict[str, float]  # a velocidad constante (la media del escalón) en el mismo tiempo y distancia
+    grams: dict[str, float]  # emitted while accelerating
+    cruise: dict[str, float]  # at constant speed (the step's mean) over the same time and distance
 
 
 def acceleration_table(spec: VehicleSpec, steps=ACCEL_STEPS, n: int = 2000) -> list[AccelStep]:
-    """Gramos que emite un vehículo del tipo al acelerar en cada escalón a su `accel` constante (integración por
-    punto medio en `n` subpasos), y lo que emitiría recorriendo la misma distancia en el mismo tiempo a velocidad
-    constante. Vacía si el tipo no emite."""
+    """Grams a vehicle of the type emits when accelerating through each step at its constant `accel` (midpoint
+    integration over `n` substeps), and what it would emit covering the same distance in the same time at constant
+    speed. Empty if the type emits nothing."""
     if not spec.emits:
         return []
     coef = np.array([pair for pol in POLLUTANTS if (pair := spec.emission_coefs(pol)) is not None])

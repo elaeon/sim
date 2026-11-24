@@ -3,16 +3,16 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from trafico.config import (
+from traffic.config import (
     BIKE, BUS, CAR, DEFAULT_SPECS, DT, GREEN, POLLUTANTS, RED, YELLOW, Behavior, Bottleneck, Rate, Light, SimConfig,
     SpeedBump, VehicleSpec, as_positions,
 )  # fmt: skip
-from trafico.engine import Simulation
+from traffic.engine import Simulation
 
 
 def _gaps(sim: Simulation):
-    """(gap al líder, gap mínimo permitido al seguidor) para cada entrada con líder, sin contar a
-    quien está al lado de su líder o acercándose a ese lugar (filas lado a lado, que se revisan con
+    """(gap to the leader, minimum gap allowed to the follower) for each entry with a leader, not counting
+    a vehicle beside its leader or approaching that place (side-by-side rows, which are checked with
     _check_rows)."""
     occ = sim.occupancy()
     beside = sim.rows(occ)[0]
@@ -23,14 +23,14 @@ def _gaps(sim: Simulation):
     fol = occ.veh[keep]
     gap = sim.x[lead] - sim.vlen[lead] - sim.x[fol]
     min_gap = sim.gap_stop_t[sim.vtype[fol]]
-    # Entre vehículos del mismo tipo con abreast > 1 basta no traslaparse: quien iba a ponerse al lado
-    # puede quedar a menos del gap si el de adelante arranca en ese mismo paso.
+    # Between vehicles of the same type with abreast > 1 not overlapping is enough: one that was going to move alongside
+    # may be closer than the gap if the one ahead starts in that same step.
     same_row_type = (sim.vtype[lead] == sim.vtype[fol]) & (sim.abreast[sim.vtype[fol]] > 1)
     return gap, np.where(same_row_type, 0.0, min_gap), fol
 
 
 def _check_rows(sim: Simulation):
-    """Filas lado a lado: solo del mismo tipo con abreast > 1, detenidos, alineados y sin exceder abreast."""
+    """Side-by-side rows: only of the same type with abreast > 1, stopped, aligned and not exceeding abreast."""
     occ = sim.occupancy()
     beside, rid, _ = sim.rows(occ)
     if not beside.any():
@@ -58,11 +58,11 @@ def _check_conservation(sim: Simulation):
     np.testing.assert_allclose(s["arrived_pax"] + s["initial_pax"], queued_pax + on_road_pax + s["crossed_pax"])
 
 
-# Vehículo de carga: solo mercancía, largo normal(10, 2) truncado a [8, 16] m.
+# Freight vehicle: freight only, length normal(10, 2) truncated to [8, 16] m.
 CARGA = VehicleSpec("carga", "carga", 40.0, 10.0, 4.0, 1.5, 1, 1, 1.0, 0.0, True,
                     cargo_prob=1.0, length_std=2.0, length_min=8.0)  # fmt: skip
 
-# Tipos que el código no conoce: uno que cambia de carril y otro que no.
+# Types the code does not know: one that changes lanes and one that does not.
 EXTRA_TYPES = (
     VehicleSpec("motorbike", "moto", 40.0, 2.0, 2.0, 1.0, 1, 2, 1.2, 0.2, True),
     VehicleSpec("tram", "tranvía", 30.0, 20.0, 6.0, 2.0, 20, 200, 120.0, 30.0, False),
@@ -85,29 +85,29 @@ def test_invariants_every_step(lanes, extra, separate, bus_stop, abreast, overta
     if extra:
         specs, rates = specs + EXTRA_TYPES, rates + (10, 1)
     limits = None
-    if overtake:  # motos que rebasan, carriles con límites distintos (hay subidas) y detenciones
+    if overtake:  # overtaking motorcycles, lanes with different limits (there are move-ups) and halts
         specs = tuple(replace(s, overtake=True, lookahead=50.0, min_advantage=1.0, lane_change_cooldown=1.0)
                       if s.key == "motorbike" else s for s in specs)  # fmt: skip
         specs = tuple(replace(s, bottleneck_prob=0.3, bottleneck_time_mean=8.0, bottleneck_time_std=3.0,
                               speed_bump_kmh=15.0)
                       if s.key == "car" else s for s in specs)  # fmt: skip
         limits = (30.0, 50.0, 40.0, 80.0)[:lanes]
-        specs, rates = specs + (CARGA,), rates + (4,)  # largo variable y solo mercancía
-    if separate:  # bicis en el carril derecho y autobuses en el siguiente
-        free = overtake and lanes == 4  # con carril sin semáforo: el de las bicis, exclusivo
+        specs, rates = specs + (CARGA,), rates + (4,)  # variable length and freight only
+    if separate:  # bikes in the right lane and buses in the next one
+        free = overtake and lanes == 4  # with a lane without a traffic light: the bikes' one, exclusive
         specs = (specs[CAR], replace(specs[BIKE], lane=0, exclusive=free), replace(specs[BUS], lane=1),
                  *specs[BUS + 1 :])
-    if abreast > 1:  # bicis lado a lado al detenerse
+    if abreast > 1:  # bikes side by side when stopping
         specs = tuple(replace(s, abreast=abreast) if k == BIKE else s for k, s in enumerate(specs))
-    if bus_stop:  # parada de autobús a 100 m (el tramo mide 150)
+    if bus_stop:  # bus stop at 100 m (the segment is 150 long)
         specs = tuple(replace(s, stop_position=100.0, stop_time_mean=8.0, stop_time_std=3.0) if k == BUS else s
                       for k, s in enumerate(specs))  # fmt: skip
     cfg = SimConfig(
         length=150, lanes=lanes, lane_speed_limit=limits, rates=rates, red=20, green=15, yellow=3.0 if overtake else 0.0,
         initial_occupancy=0.4 if overtake else 0.0,
         bottleneck=Bottleneck(stop_lanes=(1, 2)) if overtake else Bottleneck(),
-        free_lanes=(0,) if overtake and lanes == 4 else (),  # carril sin semáforo
-        speed_bumps=(SpeedBump(80.0, (1, 2)),) if overtake else (),  # tope para los autos
+        free_lanes=(0,) if overtake and lanes == 4 else (),  # lane without a traffic light
+        speed_bumps=(SpeedBump(80.0, (1, 2)),) if overtake else (),  # bump for the cars
         run=30, specs=specs,
     )  # fmt: skip
     sim = Simulation(cfg, np.random.default_rng(7))
@@ -121,8 +121,8 @@ def test_invariants_every_step(lanes, extra, separate, bus_stop, abreast, overta
         sim.step()
         n = sim.n
         gap, min_gap, fol = _gaps(sim)
-        # Al arrancar una fila lado a lado, quien estaba al lado queda un momento a menos del gap
-        # mientras el de adelante se aleja: solo es error si el seguidor avanzó para quedar así.
+        # When a side-by-side row starts, the one alongside is briefly closer than the gap
+        # while the one ahead pulls away: it is only an error if the follower advanced to end up like that.
         moved = sim.x[fol] > np.array([x_before.get(v, -np.inf) for v in sim.vid[fol].tolist()]) + 1e-12
         assert np.all((gap >= min_gap - 1e-9) | (~moved & sim.any_abreast)), "traslape o gap menor al comprimido"
         _check_rows(sim)
@@ -131,27 +131,27 @@ def test_invariants_every_step(lanes, extra, separate, bus_stop, abreast, overta
             free_in_red += sim.lane_crossed[list(cfg.free_lanes)].sum() - free_before
         slow = ~sim.can_change[sim.vtype[:n]]
         assert np.all(sim.lc_target[:n][slow] == -1)
-        # Sin lane: el carril libre más a la derecha (sin los exclusivos de otros tipos).
+        # Without lane: the rightmost free lane (without the exclusive lanes of other types).
         fixed = np.array([cfg.entry_lanes(k)[0] if cfg.allowed_lanes(k) else -1 for k in range(len(specs))])
         assert np.all(sim.lane[:n][slow] == fixed[sim.vtype[:n][slow]])
     _check_conservation(sim)
     assert sim.cum_veh.sum() > 0
     if extra:
-        assert sim.cum_veh[3] > 0 and sim.arrived_veh[4] > 0  # los tipos nuevos circulan
+        assert sim.cum_veh[3] > 0 and sim.arrived_veh[4] > 0  # the new types move
     if separate:
         assert sim.cum_veh[BUS] > 0 and sim.cum_veh[BIKE] > 0
     if bus_stop:
-        assert sim.stops[BUS] > 0 and sim.stops[BUS] >= sim.cum_veh[BUS]  # todo autobús que cruzó paró
+        assert sim.stops[BUS] > 0 and sim.stops[BUS] >= sim.cum_veh[BUS]  # every bus that crossed stopped
         assert sim.stops[[CAR, BIKE]].sum() == 0
     if lanes == 1:
         assert sim.lane_changes == 0
     else:
         assert sim.lane_changes > 0
-    assert (free_in_red > 0) == bool(cfg.free_lanes)  # por el carril sin semáforo se cruza en rojo
+    assert (free_in_red > 0) == bool(cfg.free_lanes)  # the lane without a traffic light is crossed on red
 
 
 def _empty_sim(seed: int = 0, **kw) -> Simulation:
-    """Tramo sin llegadas aleatorias; los vehículos se colocan a mano."""
+    """Segment without random arrivals; vehicles are placed by hand."""
     base = dict(length=100, lanes=1, rates=(0, 0, 0), red=10, green=30, run=5)
     base.update(kw)
     return Simulation(SimConfig(**base), np.random.default_rng(seed))
@@ -165,7 +165,7 @@ def _place(sim: Simulation, vt: int, x: float, lane: int = 0, pax: int = 1) -> i
 
 
 def _start_ticks(sim: Simulation, until: int) -> dict[int, int]:
-    """Primer paso tras el verde en que avanza cada vehículo, identificado por su nº de pasajeros."""
+    """First step after the green in which each vehicle advances, identified by its number of passengers."""
     starts: dict[int, int] = {}
     while sim.tick < until:
         before = dict(zip(sim.pax[: sim.n].tolist(), sim.x[: sim.n].tolist()))
@@ -189,7 +189,7 @@ def test_reaction_time_after_green(seed):
 
 
 def test_reaction_time_follows_the_configured_normal():
-    """Con reaction_mean = 2 s y σ pequeña, el auto detenido en la línea arranca ~2 s después del verde."""
+    """With reaction_mean = 2 s and a small σ, the car stopped at the line starts ~2 s after the green."""
     delays = []
     for seed in range(20):
         sim = _empty_sim(seed=seed, behavior=Behavior(reaction_min=1.0, reaction_max=5.0, reaction_mean=2.0,
@@ -205,7 +205,7 @@ def test_reaction_time_follows_the_configured_normal():
 def test_queue_compresses_and_stretches(seed):
     sim = _empty_sim(seed=seed, length=120)
     spec = sim.cfg.specs[CAR]
-    # Tres autos en marcha separados por el gap en marcha; al llegar al rojo se comprimen.
+    # Three moving cars separated by the moving gap; when reaching the red they compress.
     xs = [sim.L - 20, sim.L - 20 - spec.length - spec.gap_run, sim.L - 20 - 2 * (spec.length + spec.gap_run)]
     for vid, x in enumerate(xs, start=1):
         _place(sim, CAR, x, pax=vid)
@@ -213,11 +213,11 @@ def test_queue_compresses_and_stretches(seed):
         sim.step()
     assert np.all(sim.stopped[:3])
     gap, _, _ = _gaps(sim)
-    np.testing.assert_allclose(gap, spec.gap_stop, atol=1e-9)  # compresión: 1 m < 3 m
+    np.testing.assert_allclose(gap, spec.gap_stop, atol=1e-9)  # compression: 1 m < 3 m
 
     starts = _start_ticks(sim, sim.cfg.red_ticks + 200)
     assert sorted(starts) == [1, 2, 3]
-    # Estiramiento: cada auto arranca al menos un tiempo de reacción después de su líder.
+    # Stretching: each car starts at least one reaction time after its leader.
     assert starts[2] - starts[1] >= round(1.0 / DT)
     assert starts[3] - starts[2] >= round(1.0 / DT)
 
@@ -234,7 +234,7 @@ def test_lane_change_passes_bike_with_cost():
         sim.step()
         if was_changing:
             duration += 1
-            # Costo: durante la maniobra ocupa ambos carriles a velocidad reducida.
+            # Cost: during the manoeuvre it occupies both lanes at reduced speed.
             assert sim.x[car] - x0 <= 0.5 * v_car + 1e-9
             if sim.lc_target[car] < 0:
                 break
@@ -242,18 +242,18 @@ def test_lane_change_passes_bike_with_cost():
     assert round(1.0 / DT) <= duration <= round(4.0 / DT)
     for _ in range(200):
         sim.step()
-    assert sim.x[car] > sim.x[bike]  # lo rebasó por el carril izquierdo
+    assert sim.x[car] > sim.x[bike]  # it overtook it through the left lane
 
 
 def test_queue_does_not_slow_far_vehicles():
-    """Con 4 autos detenidos en rojo (cola de 4 × 5.5 m en un tramo de 100 m), un auto lejos de la cola
-    avanza a su velocidad normal, igual que en el carril sin cola: solo lo frena la cola al alcanzarla."""
+    """With 4 cars stopped at the red (a queue of 4 × 5.5 m on a 100 m segment), a car far from the queue
+    advances at its normal speed, as in the lane without a queue: only the queue slows it down when it reaches it."""
     sim = _empty_sim(length=100, lanes=2, red=30, green=30)
     spec = sim.cfg.specs[CAR]
     for k in range(4):
         _place(sim, CAR, sim.L - k * (spec.length + spec.gap_stop), pax=k + 1)
     sim.stopped[:4] = True
-    other = _place(sim, CAR, 10.0, lane=1, pax=5)  # carril sin cola: velocidad normal
+    other = _place(sim, CAR, 10.0, lane=1, pax=5)  # lane without a queue: normal speed
     follower = _place(sim, CAR, 10.0, lane=0, pax=6)
     x0 = sim.x[: sim.n].copy()
     sim.step()
@@ -262,7 +262,7 @@ def test_queue_does_not_slow_far_vehicles():
 
 
 def test_lane_saturation_is_recorded():
-    """4 autos detenidos en rojo en el carril 0 de un tramo de 100 m: saturación 0.22 y 0."""
+    """4 cars stopped at the red in lane 0 of a 100 m segment: saturation 0.22 and 0."""
     sim = _empty_sim(length=100, lanes=2, red=30, green=30)
     spec = sim.cfg.specs[CAR]
     for k in range(4):
@@ -275,7 +275,7 @@ def test_lane_saturation_is_recorded():
 
 
 def _free_lane_sim(gradual: bool = False, **kw) -> Simulation:
-    """Dos carriles; bicis con el carril 0 exclusivo y sin semáforo; autos en el carril 1."""
+    """Two lanes; bikes with exclusive lane 0 and without a traffic light; cars in lane 1."""
     car, bike, bus = DEFAULT_SPECS
     bike = replace(bike, lane=0, exclusive=True)
     specs = tuple(_gradual(s) for s in (car, bike, bus)) if gradual else (car, bike, bus)
@@ -284,8 +284,8 @@ def _free_lane_sim(gradual: bool = False, **kw) -> Simulation:
 
 @pytest.mark.parametrize("gradual", [False, True])
 def test_free_lane_ignores_red(gradual):
-    """En rojo, la bici de su carril exclusivo sin semáforo (0) cruza la línea sin detenerse; el auto del carril 1
-    se detiene."""
+    """On red, the bike in its exclusive lane without a traffic light (0) crosses the line without stopping; the car in
+    lane 1 stops."""
     sim = _free_lane_sim(gradual, red=30, green=30)
     _place(sim, BIKE, 80.0, lane=0, pax=1)
     _place(sim, CAR, 60.0, lane=1, pax=2)
@@ -299,8 +299,8 @@ def test_free_lane_ignores_red(gradual):
 
 
 def test_free_lane_ignores_yellow():
-    """En amarillo, a 40 m de la línea: la bici del carril exclusivo sin semáforo avanza a su velocidad y el auto
-    del carril 1 a yellow_speed_factor de la suya."""
+    """On yellow, 40 m from the line: the bike in the exclusive lane without a traffic light advances at its speed and the
+    car in lane 1 at yellow_speed_factor of its own."""
     sim = _free_lane_sim(red=30, green=1, yellow=5, start_phase="green")
     while sim.cfg.phase(sim.tick) != YELLOW:
         sim.step()
@@ -314,8 +314,8 @@ def test_free_lane_ignores_yellow():
 
 
 def test_free_lane_only_frees_the_exclusive_type():
-    """Un autobús con lane = 0 pero sin exclusive comparte el carril sin semáforo de las bicis: él sí se detiene en
-    rojo, y la bici que va detrás espera como detrás de cualquier líder detenido."""
+    """A bus with lane = 0 but without exclusive shares the bikes' lane without a traffic light: it does stop on
+    red, and the bike behind it waits as behind any stopped leader."""
     car, bike, bus = DEFAULT_SPECS
     specs = (car, replace(bike, lane=0, exclusive=True), replace(bus, lane=0, stop_position=None))
     sim = _empty_sim(length=100, lanes=2, red=30, green=30, free_lanes=(0,), specs=specs)
@@ -330,8 +330,8 @@ def test_free_lane_only_frees_the_exclusive_type():
 
 def _bump_run(gradual: bool, lanes: int = 1, bump_lanes=None, lane: int = 0, vt: int = CAR,
               position=60.0) -> tuple[list, Simulation]:
-    """Un vehículo solo, siempre en verde, con un tope a 60 m (o varios, `position`) en `bump_lanes` (auto a
-    10 km/h en él). Devuelve, por paso, (x antes, x después, velocidad en m/paso) y la simulación."""
+    """A single vehicle, always on green, with a bump at 60 m (or several, `position`) in `bump_lanes` (car at
+    10 km/h on it). Returns, per step, (x before, x after, speed in m/step) and the simulation."""
     car = replace(DEFAULT_SPECS[CAR], speed_bump_kmh=10.0)
     specs = (car, *DEFAULT_SPECS[1:])
     if gradual:
@@ -351,34 +351,34 @@ def _bump_run(gradual: bool, lanes: int = 1, bump_lanes=None, lane: int = 0, vt:
 
 @pytest.mark.parametrize("gradual", [False, True])
 def test_speed_bump_limits_speed_while_on_it(gradual):
-    """Mientras el auto pisa el tope (frente pasado, trasera no) avanza a lo más 10 km/h; antes y después, a su
-    velocidad. Con frenado gradual, nunca frena más que decel en un paso."""
+    """While the car is on the bump (front past it, rear not) it advances at most at 10 km/h; before and after, at its
+    speed. With gradual braking, it never brakes harder than decel in one step."""
     steps, sim = _bump_run(gradual)
     vb, vlen = 10 / 3.6 * DT, sim.cfg.specs[CAR].length
     on = [adv for x0, x1, adv in steps if x0 - vlen < 60.0 and x1 > 60.0]
     assert on and max(on) <= vb + 1e-9
-    assert len(on) >= vlen / vb - 1  # lo pasa a esa velocidad: ~1.6 s para 4.5 m
+    assert len(on) >= vlen / vb - 1  # it goes over at that speed: ~1.6 s for 4.5 m
     after = [adv for x0, x1, adv in steps if x0 - vlen > 60.0]
-    assert max(after) == pytest.approx(sim.v_step[CAR])  # después recupera su velocidad
+    assert max(after) == pytest.approx(sim.v_step[CAR])  # afterwards it recovers its speed
     if gradual:
         advs = [adv for *_, adv in steps]
         dec = sim.dec_t[CAR]
         assert all(b >= a - dec - 1e-9 for a, b in zip(advs, advs[1:])), "frenado brusco antes del tope"
-        assert min(adv for x0, x1, adv in steps if x0 < 60.0) >= vb - dec - 1e-9  # no se detiene antes
+        assert min(adv for x0, x1, adv in steps if x0 < 60.0) >= vb - dec - 1e-9  # it does not stop before
 
 
 @pytest.mark.parametrize("gradual", [False, True])
 def test_several_speed_bumps_each_slow_the_vehicle(gradual):
-    """Con dos topes (40 y 100 m) el auto pisa cada uno a lo más a 10 km/h, recupera su velocidad entre ellos y
-    tarda más que con uno solo."""
-    steps, sim = _bump_run(gradual, position=(100.0, 40.0))  # sin orden
+    """With two bumps (40 and 100 m) the car goes over each one at most at 10 km/h, recovers its speed between them and
+    takes longer than with a single one."""
+    steps, sim = _bump_run(gradual, position=(100.0, 40.0))  # unordered
     assert [b.position for b in sim.cfg.bumps] == [40.0, 100.0]
     vb, vlen = 10 / 3.6 * DT, sim.cfg.specs[CAR].length
     for at in (40.0, 100.0):
         on = [adv for x0, x1, adv in steps if x0 - vlen < at and x1 > at]
         assert on and max(on) <= vb + 1e-9
     between = [adv for x0, x1, adv in steps if 40.0 + vlen + 3 < x0 < 100.0 - 25]
-    # Recupera velocidad entre ellos (con frenado gradual, sin llegar a la máxima: ya va frenando para el segundo).
+    # It recovers speed between them (with gradual braking, without reaching the maximum: it is already braking for the second).
     assert max(between) == pytest.approx(sim.v_step[CAR]) if not gradual else max(between) > 1.5 * vb
     if gradual:
         advs = [adv for *_, adv in steps]
@@ -388,7 +388,7 @@ def test_several_speed_bumps_each_slow_the_vehicle(gradual):
 
 
 def test_speed_bump_only_in_its_lanes_and_for_types_with_speed():
-    """El tope del carril 1 no frena al auto del carril 0, ni a una bici (sin speed_bump_kmh) en el carril 1."""
+    """The bump in lane 1 does not slow down the car in lane 0, nor a bike (without speed_bump_kmh) in lane 1."""
     other_lane, sim = _bump_run(False, lanes=2, bump_lanes=(1,), lane=0)
     assert min(adv for *_, adv in other_lane) == pytest.approx(sim.v_step[CAR])
     bike, sim = _bump_run(False, lanes=2, bump_lanes=(1,), lane=1, vt=BIKE)
@@ -398,8 +398,8 @@ def test_speed_bump_only_in_its_lanes_and_for_types_with_speed():
 
 
 def test_no_traffic_light_is_the_same_with_enabled_false_or_all_phases_zero():
-    """Sin semáforo (enabled = false, o red, green y yellow en 0) la línea siempre está abierta: las dos formas dan
-    la misma corrida, igual que un verde permanente, y nadie se detiene frente a la línea."""
+    """Without a traffic light (enabled = false, or red, green and yellow at 0) the line is always open: both forms give
+    the same run, like a permanent green, and nobody stops in front of the line."""
     base = dict(length=150, lanes=2, rates=(20, 4, 1), run=20)
     configs = [
         SimConfig(red=30, green=30, yellow=3, traffic_light=False, **base),
@@ -420,20 +420,20 @@ def test_no_traffic_light_is_the_same_with_enabled_false_or_all_phases_zero():
 
 
 def _emission_run(**kw) -> dict:
-    """Un auto con aceleración y frenado graduales (emite CO2, NOx y VOC) solo en su carril de un tramo de 200 m."""
+    """A car with gradual acceleration and braking (it emits CO2, NOx and VOC) alone in its lane of a 200 m segment."""
     car = replace(DEFAULT_SPECS[CAR], accel=2.5, decel=4.5, speed_bump_kmh=10.0)
     base = dict(length=200, lanes=2, rates=(0, 0, 0), red=0, green=60, run=6, specs=(car, *DEFAULT_SPECS[1:]))
     base.update(kw)
     sim = Simulation(SimConfig(**base), np.random.default_rng(0))
-    _place(sim, BIKE, 50.0, lane=0)  # una bici en el otro carril: no emite
+    _place(sim, BIKE, 50.0, lane=0)  # a bike in the other lane: it does not emit
     sim._add(CAR, 1, 1)
     sim.run()
     return sim.summary()
 
 
 def test_emissions_excess_over_free_flow():
-    """A flujo libre el auto emite lo mismo que a velocidad constante (exceso 0); un tope y un alto en rojo lo
-    hacen emitir más. Lo emitido por posición suma el total, y la bici no emite."""
+    """At free flow the car emits the same as at constant speed (excess 0); a bump and a stop on red make it
+    emit more. What is emitted by position adds up to the total, and the bike does not emit."""
     free = _emission_run()
     co2 = POLLUTANTS.index("co2")
     assert free["emissions"][CAR, co2] > 0 and free["emissions"][BIKE].sum() == 0
@@ -444,12 +444,12 @@ def test_emissions_excess_over_free_flow():
         s = _emission_run(**kw)
         excess[name] = s["emissions"][CAR, co2] / s["emissions_free"][CAR, co2] - 1
     assert excess["tope"] > 0.3 and excess["rojo"] > 0.3
-    assert free["veh_km"][CAR] == pytest.approx(0.2 - 0.0045, abs=0.01)  # entra con la trasera en 0
+    assert free["veh_km"][CAR] == pytest.approx(0.2 - 0.0045, abs=0.01)  # enters with its rear at 0
 
 
 def test_lane_speed_series():
-    """Un auto solo en el carril 1 a flujo libre: 50 km/h; el carril 0 vacío no tiene velocidad (NaN)."""
-    from trafico.metrics import LANE_SPEED, derive_series
+    """A single car in lane 1 at free flow: 50 km/h; the empty lane 0 has no speed (NaN)."""
+    from traffic.metrics import LANE_SPEED, derive_series
 
     sim = _empty_sim(length=300, lanes=2, red=0, green=60, run=2)
     _place(sim, CAR, 10.0, lane=1)
@@ -460,8 +460,8 @@ def test_lane_speed_series():
 
 
 def test_lane_speed_limit_is_never_exceeded():
-    """Límites de 40 y 20 km/h: ningún vehículo avanza más que el límite de su carril (ni el menor
-    de sus dos carriles si está cambiando), aunque su velocidad máxima sea mayor."""
+    """Limits of 40 and 20 km/h: no vehicle advances more than its lane's limit (nor the lower
+    of its two lanes if it is changing), even if its maximum speed is higher."""
     specs = DEFAULT_SPECS + EXTRA_TYPES[:1]
     cfg = SimConfig(length=200, lanes=2, rates=(30, 6, 2, 10), red=20, green=20, run=20, specs=specs,
                     lane_speed_limit=(40.0, 20.0))  # fmt: skip
@@ -469,7 +469,7 @@ def test_lane_speed_limit_is_never_exceeded():
     limit = np.array([40.0, 20.0]) / 3.6 * DT
 
     def snapshot():
-        """Vehículos por (tick de entrada, pasajeros, tipo); las claves repetidas son ambiguas y se omiten."""
+        """Vehicles by (entry tick, passengers, type); repeated keys are ambiguous and are left out."""
         n = sim.n
         keys = list(zip(sim.entry_tick[:n].tolist(), sim.pax[:n].tolist(), sim.vtype[:n].tolist()))
         vals = zip(sim.x[:n].tolist(), sim.lane[:n].tolist(), sim.lc_target[:n].tolist())
@@ -492,14 +492,14 @@ def test_lane_speed_limit_is_never_exceeded():
 def test_free_flow_speed_respects_lane_limits():
     specs = (DEFAULT_SPECS[CAR], replace(DEFAULT_SPECS[BIKE], lane=1), DEFAULT_SPECS[BUS])
     cfg = SimConfig(lanes=3, lane_speed_limit=(30.0, 10.0, 45.0), specs=specs)
-    assert cfg.free_flow_kmh(CAR) == 45.0  # puede cambiar: el mejor carril (45 < 50)
-    assert cfg.free_flow_kmh(BIKE) == 10.0  # fijo en el carril 1
-    assert cfg.free_flow_kmh(BUS) == 30.0  # no cambia de carril y no tiene lane: carril 0
+    assert cfg.free_flow_kmh(CAR) == 45.0  # it can change: the best lane (45 < 50)
+    assert cfg.free_flow_kmh(BIKE) == 10.0  # fixed in lane 1
+    assert cfg.free_flow_kmh(BUS) == 30.0  # does not change lanes and has no lane: lane 0
 
 
 def test_exclusive_lanes_are_only_used_by_their_types():
-    """Bicis (carril 0) y autobuses (carril 1) exclusivos: autos y motos nunca los ocupan, ni al
-    entrar ni durante un cambio de carril; el tranvía sin carril fijo usa solo los libres."""
+    """Exclusive bikes (lane 0) and buses (lane 1): cars and motorcycles never occupy them, neither on
+    entering nor during a lane change; the tram without a fixed lane only uses the free ones."""
     car, bike, bus = DEFAULT_SPECS
     specs = (car, replace(bike, lane=0, exclusive=True), replace(bus, lane=1, exclusive=True), *EXTRA_TYPES)
     cfg = SimConfig(
@@ -520,7 +520,7 @@ def test_exclusive_lanes_are_only_used_by_their_types():
                 used[t, ln] = True
     assert not (used & ~sim.allowed).any()
     assert used[0, 2] and used[0, 3] and sim.lane_changes > 0
-    assert not used[4, 3]  # el tranvía entra por el carril libre más a la derecha
+    assert not used[4, 3]  # the tram enters through the rightmost free lane
 
 
 def test_non_exclusive_fixed_lane_is_shared():
@@ -535,19 +535,19 @@ MOTO_IDX = 3
 
 
 def _moto_sim(moto: VehicleSpec = MOTO, **kw) -> Simulation:
-    """Tramo vacío con autos, bicis, autobuses y motos (en ese orden), sin llegadas."""
+    """Empty segment with cars, bikes, buses and motorcycles (in that order), without arrivals."""
     return _empty_sim(specs=DEFAULT_SPECS + (moto,), rates=(0, 0, 0, 0), **kw)
 
 
 @pytest.mark.parametrize("overtake", [True, False])
 def test_overtaker_drops_to_slower_lane_behind_a_slow_leader(overtake):
-    """Un auto que en el último paso avanzó menos de lo que puede la moto la hace bajar al carril de
-    30 km/h (menor límite que el suyo de 60), porque ahí avanza más. Sin `overtake` la lentitud se
-    juzga por la velocidad nominal (la misma que la suya en ese carril) y no cambia."""
+    """A car that in the last step advanced less than the motorcycle can makes it move down to the
+    30 km/h lane (a lower limit than its own 60), because it advances more there. Without `overtake` slowness is
+    judged by the nominal speed (the same as its own in that lane) and it does not change."""
     sim = _moto_sim(replace(MOTO, overtake=overtake), length=300, lanes=2, lane_speed_limit=(30.0, 60.0))
     car = _place(sim, CAR, 100.0, lane=1)
     moto = _place(sim, MOTO_IDX, 100.0 - 4.5 - 10.0, lane=1)
-    sim.v_last[car] = 0.5 * sim.lane_vmax[0]  # p. ej. frenado por su propio líder
+    sim.v_last[car] = 0.5 * sim.lane_vmax[0]  # e.g. braked by its own leader
     sim._lane_changes()
     assert sim.lc_target[moto] == (0 if overtake else -1)
     assert sim.lane_changes_t[MOTO_IDX] == int(overtake)
@@ -555,7 +555,7 @@ def test_overtaker_drops_to_slower_lane_behind_a_slow_leader(overtake):
 
 @pytest.mark.parametrize(("vtype", "changes"), [(MOTO_IDX, True), (CAR, False)])
 def test_lookahead_per_type(vtype, changes):
-    """Con un líder detenido a 40 m, la moto (lookahead = 50 m) cambia de carril y el auto (30 m) no."""
+    """With a stopped leader at 40 m, the motorcycle (lookahead = 50 m) changes lanes and the car (30 m) does not."""
     sim = _moto_sim(length=300, lanes=2)
     leader = _place(sim, CAR, 150.0, lane=0)
     sim.stopped[leader] = True
@@ -565,7 +565,7 @@ def test_lookahead_per_type(vtype, changes):
 
 
 def test_no_lane_change_without_a_vehicle_ahead():
-    """Solo en el carril de 30 km/h, con el de 50 libre, no cambia: no tiene líder que lo frene."""
+    """Alone in the 30 km/h lane, with the 50 one free, it does not change: it has no leader slowing it down."""
     sim = _empty_sim(length=600, lanes=2, lane_speed_limit=(30.0, 50.0), red=0, green=60, run=60)
     car = _place(sim, CAR, 20.0, lane=0)
     for _ in range(100):
@@ -575,9 +575,9 @@ def test_no_lane_change_without_a_vehicle_ahead():
 
 @pytest.mark.parametrize(("ratio", "changes"), [(0.80, False), (0.70, True), (0.0, True)])
 def test_changes_lane_only_if_leader_is_25_percent_below_the_lane_limit(ratio, changes):
-    """Con un líder a menos de lookahead que va a `ratio` del límite del carril (50 km/h): cambia
-    solo si va al menos 25 % por debajo (leader_slowdown = 0.25). El carril de 50 es el más rápido,
-    así que el cambio es un rebase o una subida al de 80."""
+    """With a leader closer than lookahead going at `ratio` of the lane's limit (50 km/h): it changes
+    only if it is at least 25 % below (leader_slowdown = 0.25). The 50 lane is the fastest,
+    so the change is an overtake or a move up to the 80 one."""
     sim = _moto_sim(length=300, lanes=2, lane_speed_limit=(50.0, 80.0))
     leader = _place(sim, CAR, 100.0, lane=0)
     moto = _place(sim, MOTO_IDX, 100.0 - 4.5 - 10.0, lane=0)
@@ -587,20 +587,20 @@ def test_changes_lane_only_if_leader_is_25_percent_below_the_lane_limit(ratio, c
 
 
 def test_does_not_rise_without_room_or_speed_gain():
-    # Seguidor en el carril rápido a menos de su gap en marcha: no sube.
+    # Follower in the fast lane closer than its moving gap: it does not move up.
     sim = _empty_sim(length=300, lanes=2, lane_speed_limit=(30.0, 50.0))
     car = _place(sim, CAR, 100.0, lane=0)
     _place(sim, CAR, 100.0 - 4.5 - 1.0, lane=1)
     sim._lane_changes()
     assert sim.lc_target[car] == -1
-    # Líder detenido cerca en el carril rápido: no sube.
+    # Stopped leader close by in the fast lane: it does not move up.
     sim = _empty_sim(length=300, lanes=2, lane_speed_limit=(30.0, 50.0))
     car = _place(sim, CAR, 100.0, lane=0)
     leader = _place(sim, CAR, 100.0 + 4.5 + 15.0, lane=1)
     sim.stopped[leader] = True
     sim._lane_changes()
     assert sim.lc_target[car] == -1
-    # Sin límites distintos no hay a qué subir.
+    # Without different limits there is nothing to move up to.
     sim = _empty_sim(length=600, lanes=2, red=0, green=60, run=60)
     _place(sim, CAR, 20.0, lane=0)
     for _ in range(100):
@@ -609,9 +609,9 @@ def test_does_not_rise_without_room_or_speed_gain():
 
 
 def test_motorbikes_change_lanes_more_than_cars():
-    """Escenario de config.toml: bicis y autobuses en carriles exclusivos; autos y motos en los de
-    30 y 50 km/h. Las motos que rebasan cambian de carril más por vehículo que los autos, y más
-    que las mismas motos sin `overtake`."""
+    """config.toml scenario: bikes and buses in exclusive lanes; cars and motorcycles in the
+    30 and 50 km/h ones. Overtaking motorcycles change lanes more per vehicle than cars, and more
+    than the same motorcycles without `overtake`."""
     car, bike, bus = DEFAULT_SPECS
     base = dict(
         length=300, lanes=4, lane_speed_limit=(20.0, 30.0, 50.0, 80.0), rates=(18, 8, 0.25, 8), red=25,
@@ -648,10 +648,10 @@ def test_bus_stops_at_its_stop_for_the_dwell_time():
         if sim.n and sim.stopped[0]:
             stopped_ticks += 1
             stopped_at.append(float(sim.x[0]))
-    assert stopped_ticks == 120  # 12 s de descenso y ascenso, sin reacción extra
-    assert np.allclose(stopped_at, 60.0)  # detenido con el frente en la parada
+    assert stopped_ticks == 120  # 12 s of passengers getting off and on, without extra reaction
+    assert np.allclose(stopped_at, 60.0)  # stopped with its front at the stop
     assert sim.stops[BUS] == 1 and sim.summary()["stop_time"][BUS] == pytest.approx(12.0)
-    assert sim.cum_veh[BUS] == 1  # después siguió hasta cruzar
+    assert sim.cum_veh[BUS] == 1  # afterwards it continued until crossing
     assert bus == 0
 
 
@@ -659,25 +659,25 @@ def test_followers_wait_behind_the_stopped_bus():
     sim = _bus_with_stop(mean=10.0)
     _place(sim, BUS, 58.0, pax=40)
     car = _place(sim, CAR, 58.0 - 12.0 - 6.0, pax=2)
-    for _ in range(60):  # el autobús llega y lleva unos segundos en la parada
+    for _ in range(60):  # the bus arrives and has been at the stop for a few seconds
         sim.step()
     assert sim.stopped[0] and sim.stopped[1]
     gap = sim.x[0] - sim.vlen[0] - sim.x[1]
-    assert DEFAULT_SPECS[CAR].gap_stop - 1e-9 <= gap < DEFAULT_SPECS[CAR].gap_run  # comprimido detrás
+    assert DEFAULT_SPECS[CAR].gap_stop - 1e-9 <= gap < DEFAULT_SPECS[CAR].gap_run  # compressed behind
     assert car == 1
 
 
 def test_stop_time_distribution():
-    from trafico.distributions import stop_ticks
+    from traffic.distributions import stop_ticks
 
     rng = np.random.default_rng(3)
     spec = replace(DEFAULT_SPECS[BUS], stop_position=60.0, stop_time_mean=4.0, stop_time_std=4.0)
     ticks = stop_ticks(rng, spec, 100_000)
     assert ticks.min() >= 0
-    assert ticks.mean() * DT == pytest.approx(spec.expected_stop_time, abs=0.03)  # truncada: ~5.2 s, no 4
+    assert ticks.mean() * DT == pytest.approx(spec.expected_stop_time, abs=0.03)  # truncated: ~5.2 s, not 4
     assert spec.expected_stop_time > 5.0
     assert replace(spec, stop_time_std=0.0).expected_stop_time == 4.0
-    assert DEFAULT_SPECS[BUS].expected_stop_time == 0.0  # sin parada
+    assert DEFAULT_SPECS[BUS].expected_stop_time == 0.0  # no stop
 
 
 def _run(cfg: SimConfig, seed: int = 11) -> Simulation:
@@ -687,8 +687,8 @@ def _run(cfg: SimConfig, seed: int = 11) -> Simulation:
 
 
 def test_bus_stop_changes_only_the_bus():
-    """Generadores por proceso y por tipo: con el autobús en su carril exclusivo, activar su parada
-    deja idénticos a los demás tipos (llegadas, pasajeros, reacciones y cambios de carril)."""
+    """Generators per process and per type: with the bus in its exclusive lane, enabling its stop
+    leaves the other types identical (arrivals, passengers, reactions and lane changes)."""
     car, bike, bus = DEFAULT_SPECS
     specs = (car, replace(bike, lane=0, exclusive=True), replace(bus, lane=2, exclusive=True))
     base = dict(length=200, lanes=3, rates=(25, 6, 3), red=20, green=25, run=30, specs=specs)
@@ -698,16 +698,16 @@ def test_bus_stop_changes_only_the_bus():
     for field in ("arrived_veh", "cum_veh", "cum_pax", "travel_ticks", "pax_m"):
         np.testing.assert_array_equal(getattr(a, field)[others], getattr(b, field)[others], err_msg=field)
     assert a.lane_changes == b.lane_changes
-    np.testing.assert_array_equal(a.arrived_veh[BUS], b.arrived_veh[BUS])  # mismas llegadas de autobuses
-    np.testing.assert_array_equal(a.pax_hist, b.pax_hist)  # y mismos pasajeros
+    np.testing.assert_array_equal(a.arrived_veh[BUS], b.arrived_veh[BUS])  # the same bus arrivals
+    np.testing.assert_array_equal(a.pax_hist, b.pax_hist)  # and the same passengers
     assert b.stops[BUS] > 0 and b.travel_ticks[BUS] / b.cum_veh[BUS] > a.travel_ticks[BUS] / a.cum_veh[BUS]
 
 
 def test_demand_of_one_type_does_not_shift_the_others():
     base = dict(length=200, lanes=2, red=20, green=25, run=30)
     a = _run(SimConfig(rates=(25, 6, 3), **base))
-    b = _run(SimConfig(rates=(25, 6, 0.5), **base))  # otra tasa de autobuses
-    c = _run(SimConfig(rates=(25, 6, 3, 10), specs=DEFAULT_SPECS + EXTRA_TYPES[:1], **base))  # un tipo nuevo
+    b = _run(SimConfig(rates=(25, 6, 0.5), **base))  # another bus rate
+    c = _run(SimConfig(rates=(25, 6, 3, 10), specs=DEFAULT_SPECS + EXTRA_TYPES[:1], **base))  # a new type
     for other in (b, c):
         np.testing.assert_array_equal(a.arrived_veh[[CAR, BIKE]], other.arrived_veh[[CAR, BIKE]])
         np.testing.assert_array_equal(a.pax_hist[[CAR, BIKE]], other.pax_hist[[CAR, BIKE]])
@@ -717,9 +717,9 @@ def test_demand_of_one_type_does_not_shift_the_others():
 def _bikes_at_red(abreast: int, count: int) -> Simulation:
     bike = replace(DEFAULT_SPECS[BIKE], abreast=abreast)
     sim = _empty_sim(red=60, green=30, run=15, specs=(DEFAULT_SPECS[CAR], bike, DEFAULT_SPECS[BUS]))
-    for k in range(count):  # en fila, separadas, acercándose a la línea en rojo
+    for k in range(count):  # in a row, separated, approaching the line on red
         _place(sim, BIKE, 60.0 - k * 4.0, pax=k + 1)
-    for _ in range(round(40 / DT)):  # 40 s en rojo: todas llegan y se detienen
+    for _ in range(round(40 / DT)):  # 40 s on red: they all arrive and stop
         sim.step()
     return sim
 
@@ -728,7 +728,7 @@ def test_bikes_stop_side_by_side_in_pairs():
     sim = _bikes_at_red(abreast=2, count=5)
     assert sim.stopped[: sim.n].all()
     front = np.sort(sim.x[: sim.n])[::-1]
-    # Dos filas de dos con los frentes alineados y la quinta en fila detrás de la segunda pareja.
+    # Two rows of two with aligned fronts and the fifth queued behind the second pair.
     assert front[0] == pytest.approx(sim.L) and front[1] == pytest.approx(sim.L - 0.01)
     bike = DEFAULT_SPECS[BIKE]
     second = sim.L - 0.01 - bike.length - bike.gap_stop
@@ -736,9 +736,9 @@ def test_bikes_stop_side_by_side_in_pairs():
     assert front[4] == pytest.approx(second - 0.01 - bike.length - bike.gap_stop)
     occ = sim.occupancy()
     assert sorted(np.bincount(sim.rows(occ)[1])) == [1, 2, 2]
-    # La cola ocupa 3 lugares (no 5) en la saturación del carril.
+    # The queue takes 3 places (not 5) in the lane's saturation.
     assert sim._lane_saturation(occ)[0] == pytest.approx(3 * (bike.length + bike.gap_stop) / sim.L)
-    # En verde salen todas, una tras otra.
+    # On green they all leave, one after another.
     while sim.tick < sim.cfg.n_ticks:
         sim.step()
     assert sim.cum_veh[BIKE] == 5
@@ -763,7 +763,7 @@ def test_cars_do_not_pull_beside_bikes():
 
 
 GRADUAL = {"car": (2.5, 4.5), "bike": (1.0, 3.0), "bus": (1.2, 3.5), "motorbike": (3.0, 5.0), "carga": (1.0, 3.0),
-           "tram": (1.0, 3.0)}  # (accel, decel) en m/s²
+           "tram": (1.0, 3.0)}  # (accel, decel) in m/s²
 
 
 def _gradual(spec: VehicleSpec) -> VehicleSpec:
@@ -772,8 +772,8 @@ def _gradual(spec: VehicleSpec) -> VehicleSpec:
 
 
 def test_gradual_braking_before_red_and_acceleration_after_green():
-    """Un auto a 50 km/h frena ante el rojo sin pasar de su decel y se detiene justo en la línea; en
-    verde, tras su reacción, acelera a lo más a su accel hasta su velocidad."""
+    """A car at 50 km/h brakes for the red without exceeding its decel and stops right at the line; on
+    green, after its reaction, it accelerates at most at its accel up to its speed."""
     car, bike, bus = DEFAULT_SPECS
     car = _gradual(car)
     b = Behavior(reaction_min=1.0, reaction_max=1.0, reaction_mean=1.0, reaction_std=0.0)
@@ -782,22 +782,22 @@ def test_gradual_braking_before_red_and_acceleration_after_green():
     sim = Simulation(cfg, np.random.default_rng(0))
     _place(sim, CAR, 200.0)
     v = []
-    while sim.n:  # hasta que sale del tramo
+    while sim.n:  # until it leaves the segment
         sim.step()
         if sim.n:
             v.append(sim.v_last[0] / DT)
         if sim.tick == round(30 / DT):
-            assert sim.stopped[0] and sim.x[0] == pytest.approx(cfg.length)  # detenido en la línea
+            assert sim.stopped[0] and sim.x[0] == pytest.approx(cfg.length)  # stopped at the line
     a = np.diff(np.array(v)) / DT
     assert -a.min() <= car.decel + 1e-6 and a.max() <= car.accel + 1e-6
-    assert max(v) == pytest.approx(car.speed)  # iba a su velocidad antes de frenar
-    assert np.count_nonzero(a < -1e-9) > 20  # frenó durante varios segundos, no de golpe
-    assert np.count_nonzero(a > 1e-9) > 10  # y arrancó acelerando, no de golpe
+    assert max(v) == pytest.approx(car.speed)  # it was going at its speed before braking
+    assert np.count_nonzero(a < -1e-9) > 20  # it braked over several seconds, not all at once
+    assert np.count_nonzero(a > 1e-9) > 10  # and it started accelerating, not all at once
 
 
 def test_gradual_dynamics_lengthen_queue_discharge():
-    """Seis autos detenidos en el rojo: con aceleración gradual cruzan más espaciados (el primero además
-    pierde tiempo al arrancar) que con cambios de velocidad instantáneos."""
+    """Six cars stopped at the red: with gradual acceleration they cross more spaced out (the first also
+    loses time when starting) than with instantaneous speed changes."""
     b = Behavior(reaction_min=1.0, reaction_max=1.0, reaction_mean=1.0, reaction_std=0.0)
 
     def headways(car: VehicleSpec) -> np.ndarray:
@@ -815,14 +815,14 @@ def test_gradual_dynamics_lengthen_queue_discharge():
 
     instant, gradual = headways(DEFAULT_SPECS[CAR]), headways(_gradual(DEFAULT_SPECS[CAR]))
     assert gradual.mean() > instant.mean() + 0.2
-    assert gradual[0] > gradual[-1]  # el primero pierde más tiempo al arrancar desde 0
+    assert gradual[0] > gradual[-1]  # the first loses more time when starting from 0
 
 
 def test_invariants_with_gradual_dynamics():
-    """Todos los tipos con aceleración y frenado graduales, con rebase en el carril, motos que rebasan,
-    parada de autobús, cuellos de botella, amarillo, congestión, cola de entrada con reacción y cola de
-    salida limitada en dos carriles: sin
-    traslapes, sin cruzar en rojo y conservando vehículos."""
+    """All types with gradual acceleration and braking, with in-lane overtaking, overtaking motorcycles,
+    a bus stop, bottlenecks, yellow, congestion, an entry queue with reaction and a limited exit
+    queue in two lanes: no
+    overlaps, no crossing on red and vehicles are conserved."""
     car, bike, bus = DEFAULT_SPECS
     specs = [car, bike, bus, *EXTRA_TYPES, CARGA]
     specs[CAR] = replace(car, bottleneck_prob=0.3, bottleneck_time_mean=8.0, bottleneck_time_std=3.0,
@@ -853,12 +853,12 @@ def test_invariants_with_gradual_dynamics():
     assert sim.cum_veh.sum() > 50 and sim.lane_changes > 0 and sim.in_lane_passes[BIKE] > 0
 
 
-CAR_EXIT_M = 5.5  # lo que ocupa un auto en la cola de salida: largo 4.5 + gap detenido 1
+CAR_EXIT_M = 5.5  # what a car takes in the exit queue: length 4.5 + stopped gap 1
 
 
 def _exit_run(capacity: float, storage: float = 3 * CAR_EXIT_M, **kw) -> Simulation:
-    """Un carril en verde casi todo el tiempo, 30 autos/min (más de lo que acepta la salida); en la cola de
-    salida caben 3 autos."""
+    """One lane on green almost all the time, 30 cars/min (more than the exit accepts); the exit queue
+    holds 3 cars."""
     base = dict(length=150, lanes=1, rates=(30, 0, 0), red=2, green=120, start_phase="green", run=30,
                 exit_capacity=capacity, exit_storage=storage)  # fmt: skip
     base.update(kw)
@@ -869,30 +869,30 @@ def _exit_run(capacity: float, storage: float = 3 * CAR_EXIT_M, **kw) -> Simulat
         sim.step()
         now = sim.lane_crossed[0] - before
         if now and capacity > 0:
-            # Solo se cruza si en la cola de salida, ya descontado lo que salió en el paso, cabía el auto (o
-            # estaba vacía).
+            # A car only crosses if it fitted in the exit queue, after subtracting what left in the step (or
+            # the queue was empty).
             before_m = sim.exit_q[0] - now * CAR_EXIT_M
             assert before_m < 1e-9 or before_m + CAR_EXIT_M <= sim.exit_storage[0] + 1e-9
-        # A lo más un auto de más si dos cruzan en el mismo paso.
+        # At most one extra car if two cross in the same step.
         assert sim.exit_q[0] <= sim.exit_storage[0] + CAR_EXIT_M + 1e-9
     return sim
 
 
 def test_exit_queue_limits_what_crosses_and_saturates_the_lane():
-    """Con una salida que acepta 10 veh/min, por la línea cruzan ~10 veh/min aunque lleguen 30 (sin ella,
-    más de 20): la línea se cierra con la salida llena y el carril se satura."""
+    """With an exit that accepts 10 veh/min, ~10 veh/min cross the line even if 30 arrive (without it,
+    more than 20): the line closes with the exit full and the lane saturates."""
     free, limited = _exit_run(0.0), _exit_run(10.0)
     minutes = free.cfg.sim_seconds / 60
     assert free.lane_crossed[0] / minutes > 20
     assert limited.lane_crossed[0] / minutes == pytest.approx(10.0, abs=0.5)
-    assert limited.exit_blocked_ticks[0] > 0.3 * limited.tick  # la línea estuvo cerrada buena parte del tiempo
+    assert limited.exit_blocked_ticks[0] > 0.3 * limited.tick  # the line was closed a good part of the time
     assert free.exit_blocked_ticks[0] == 0
     sat_free = free.recorder.lane_sat[: free.recorder.count, 0].mean()
     sat_limited = limited.recorder.lane_sat[: limited.recorder.count, 0].mean()
     assert sat_limited > sat_free + 0.3
     summary = limited.summary()
     assert summary["exit_blocked"][0] == pytest.approx(limited.exit_blocked_ticks[0] / limited.tick)
-    # La saturación se propaga hacia atrás: la cola de entrada registrada crece y termina como la real.
+    # Saturation propagates backwards: the recorded entry queue grows and ends up as the actual one.
     entry = limited.recorder.entry_q[: limited.recorder.count, 0]
     assert entry[-1] == len(limited.queues[0]) and entry[-1] > free.recorder.entry_q[free.recorder.count - 1, 0]
     assert limited.recorder.exit_q[: limited.recorder.count, 0].max() == pytest.approx(3 * CAR_EXIT_M)
@@ -900,8 +900,8 @@ def test_exit_queue_limits_what_crosses_and_saturates_the_lane():
 
 
 def test_exit_queue_storage_is_in_meters():
-    """La cola de salida mide m: un autobús (12 m + 1.5) no cabe donde ya hay un auto en 16.5 m, y espera hasta
-    que la cola se vacía; una cola vacía acepta a cualquiera aunque mida menos que él."""
+    """The exit queue measures m: a bus (12 m + 1.5) does not fit where there is already a car in 16.5 m, and waits until
+    the queue empties; an empty queue accepts anyone even if it is shorter than the vehicle."""
     sim = _empty_sim(length=100, lanes=1, red=2, green=200, start_phase="green", run=20, exit_capacity=6.0,
                      exit_storage=3 * CAR_EXIT_M)  # fmt: skip
     sim._queue_exit(0, CAR_EXIT_M)
@@ -910,11 +910,11 @@ def test_exit_queue_storage_is_in_meters():
     while not sim.lane_crossed[0] and sim.tick < 400:
         sim.step()
         if sim.exit_items[0] and left_at is None:
-            assert sim.x[bus] <= sim.L + 1e-9 and sim.exit_closed[0]  # el auto sigue: el autobús no cabe
+            assert sim.x[bus] <= sim.L + 1e-9 and sim.exit_closed[0]  # the car continues: the bus does not fit
         elif left_at is None:
             left_at = sim.tick
-    assert left_at == pytest.approx(10 / DT, abs=1)  # a 6 veh/min el auto sale a los 10 s
-    assert sim.lane_crossed[0] == 1 and sim.exit_q[0] == pytest.approx(12.0 + 1.5)  # entra el autobús solo
+    assert left_at == pytest.approx(10 / DT, abs=1)  # at 6 veh/min the car leaves after 10 s
+    assert sim.lane_crossed[0] == 1 and sim.exit_q[0] == pytest.approx(12.0 + 1.5)  # the bus enters alone
     tiny = _empty_sim(length=100, lanes=1, red=2, green=200, start_phase="green", run=20, exit_capacity=6.0,
                       exit_storage=2.0)  # fmt: skip
     _place(tiny, CAR, 95.0, pax=1)
@@ -924,14 +924,14 @@ def test_exit_queue_storage_is_in_meters():
 
 
 def test_exit_queue_with_gradual_braking_stops_at_the_line():
-    """Con frenado gradual, la línea cerrada por la salida llena se respeta igual que el rojo."""
+    """With gradual braking, the line closed by a full exit is respected just like the red."""
     car = _gradual(DEFAULT_SPECS[CAR])
     sim = _exit_run(10.0, specs=(car, *DEFAULT_SPECS[1:]))
     assert sim.lane_crossed[0] / (sim.cfg.sim_seconds / 60) == pytest.approx(10.0, abs=0.5)
 
 
 def _two_bikes(pass_in_lane: bool) -> tuple[Simulation, int, int]:
-    """Una bici lenta (10 km/h) 10 m delante de una rápida (20 km/h), en verde y en el mismo carril."""
+    """A slow bike (10 km/h) 10 m ahead of a fast one (20 km/h), on green and in the same lane."""
     bike = replace(DEFAULT_SPECS[BIKE], abreast=2, pass_in_lane=pass_in_lane)
     sim = _empty_sim(length=200, red=10, green=200, start_phase="green", run=20,
                      specs=(DEFAULT_SPECS[CAR], bike, DEFAULT_SPECS[BUS]))  # fmt: skip
@@ -942,8 +942,8 @@ def _two_bikes(pass_in_lane: bool) -> tuple[Simulation, int, int]:
 
 
 def _queue_entries(queue_reaction: bool) -> tuple[Simulation, list[int]]:
-    """Autos en un tramo de 50 m, un carril, con más demanda de la que cabe: la cola llega a la entrada.
-    Reacción fija de 2 s. Devuelve la simulación y los pasos en que entró un auto en el primer verde."""
+    """Cars on a 50 m single-lane segment, with more demand than fits: the queue reaches the entry.
+    Fixed reaction of 2 s. Returns the simulation and the steps in which a car entered during the first green."""
     b = Behavior(reaction_min=2.0, reaction_max=2.0, reaction_mean=2.0, reaction_std=0.0, queue_reaction=queue_reaction)
     cfg = SimConfig(length=50, lanes=1, rates=(40, 0, 0), red=40, green=30, run=7, behavior=b)
     sim = Simulation(cfg, np.random.default_rng(5))
@@ -958,8 +958,8 @@ def _queue_entries(queue_reaction: bool) -> tuple[Simulation, list[int]]:
 
 
 def test_stopped_entry_queue_starts_with_reaction_time():
-    """Con queue_reaction, la cola de entrada detenida arranca como el resto de la cola: cada auto entra
-    al menos su reacción (2 s) después del anterior; sin la opción entran en cuanto hay lugar."""
+    """With queue_reaction, the stopped entry queue starts like the rest of the queue: each car enters
+    at least its reaction (2 s) after the previous one; without the option they enter as soon as there is room."""
     on, entries_on = _queue_entries(True)
     off, entries_off = _queue_entries(False)
     assert len(entries_on) >= 3 and np.diff(entries_on).min() >= round(2.0 / DT)
@@ -969,10 +969,10 @@ def test_stopped_entry_queue_starts_with_reaction_time():
 
 def test_faster_bike_passes_a_slower_one_within_the_lane():
     sim, slow, fast = _two_bikes(pass_in_lane=True)
-    for _ in range(round(20 / DT)):  # en 20 s la rápida avanza 111 m y la lenta 56 m
+    for _ in range(round(20 / DT)):  # in 20 s the fast one advances 111 m and the slow one 56 m
         sim.step()
         assert (sim.lane[: sim.n] == 0).all() and sim.lane_changes == 0
-    # Ninguna frenó: cada una avanzó a su velocidad y la rápida quedó adelante.
+    # Neither braked: each advanced at its speed and the fast one ended up ahead.
     assert sim.x[fast] == pytest.approx(20.0 + 20 / 3.6 * 20, rel=1e-6)
     assert sim.x[slow] == pytest.approx(30.0 + 10 / 3.6 * 20, rel=1e-6)
     assert sim.in_lane_passes[BIKE] == 1 and sim.summary()["in_lane_passes"][BIKE] == 1
@@ -982,15 +982,15 @@ def test_without_pass_in_lane_the_faster_bike_follows():
     sim, slow, fast = _two_bikes(pass_in_lane=False)
     for _ in range(round(20 / DT)):
         sim.step()
-    # La sigue a gap_run del lugar donde estaba la lenta un paso antes (actualización en paralelo).
+    # It follows at gap_run from where the slow one was one step before (parallel update).
     gap_run = DEFAULT_SPECS[BIKE].gap_run
     assert sim.x[fast] == pytest.approx(sim.x[slow] - 10 / 3.6 * DT - DEFAULT_SPECS[BIKE].length - gap_run)
     assert sim.in_lane_passes.sum() == 0
 
 
 def test_in_lane_passing_invariants_every_step():
-    """Muchas bicis con velocidades distintas en su carril exclusivo: sin traslapes salvo lado a lado
-    del mismo tipo, a lo más dos a la vez, sin cruzar en rojo, y sí hay rebases."""
+    """Many bikes with different speeds in their exclusive lane: no overlaps except side by side
+    of the same type, at most two at a time, no crossing on red, and there are overtakes."""
     car, bike, bus = DEFAULT_SPECS
     bike = replace(bike, lane=0, exclusive=True, abreast=2, pass_in_lane=True,
                    speed_kmh=15.0, speed_std=5.0, speed_min=6.0, speed_max=25.0)  # fmt: skip
@@ -1016,7 +1016,7 @@ def test_in_lane_passing_invariants_every_step():
 def test_light_cycle_is_green_yellow_red(start):
     cfg = SimConfig(red=10, green=20, yellow=3, start_phase=start, run=20)
     phases = [cfg.phase(t) for t in range(cfg.n_ticks)]
-    # Fases consecutivas sin repetir: siempre verde → amarillo → rojo.
+    # Consecutive phases without repeating: always green → yellow → red.
     order = [p for k, p in enumerate(phases) if k == 0 or p != phases[k - 1]]
     first = order.index(GREEN)
     assert order[first:first + 4] == [GREEN, YELLOW, RED, GREEN]
@@ -1026,13 +1026,13 @@ def test_light_cycle_is_green_yellow_red(start):
 
 
 def test_yellow_slows_vehicles_approaching_the_light():
-    """En amarillo, quien está a menos de yellow_approach (50 m) de la línea va a la mitad de su
-    velocidad y puede cruzar; quien está más lejos no cambia. Al llegar el rojo, se detiene."""
+    """On yellow, a vehicle closer than yellow_approach (50 m) to the line goes at half its
+    speed and can cross; one farther away does not change. When the red comes, it stops."""
     sim = _empty_sim(length=300, lanes=2, red=10, green=0.1, yellow=10, start_phase="green", run=30)
     near = _place(sim, CAR, sim.L - 20.0, lane=0)
     far = _place(sim, CAR, sim.L - 100.0, lane=1)
     far_vid = sim.vid[far]
-    sim.step()  # verde: velocidad completa
+    sim.step()  # green: full speed
     assert sim.x[near] == pytest.approx(sim.L - 20.0 + sim.v_step[CAR])
     assert sim.cfg.phase(sim.tick) == YELLOW
     x_near, x_far = sim.x[near], sim.x[far]
@@ -1041,9 +1041,9 @@ def test_yellow_slows_vehicles_approaching_the_light():
     assert sim.x[far] - x_far == pytest.approx(sim.v_step[CAR])
     while sim.cfg.phase(sim.tick) == YELLOW:
         sim.step()
-    assert sim.cum_veh[CAR] == 1  # el cercano cruzó en amarillo (y salió: los índices se compactan)
+    assert sim.cum_veh[CAR] == 1  # the close one crossed on yellow (and left: the indices are compacted)
     far = int(np.flatnonzero(sim.vid[: sim.n] == far_vid)[0])
-    # El lejano entra a la zona durante el amarillo, frena y no alcanza a cruzar antes del rojo.
+    # The far one enters the zone during the yellow, brakes and does not manage to cross before the red.
     assert 0 < sim.L - sim.x[far] < 50.0
     while sim.cfg.phase(sim.tick) == RED:
         sim.step()
@@ -1075,11 +1075,11 @@ def test_cargo_vehicles_occupy_the_road_but_carry_no_passengers():
     sim = _cargo_sim(0.3)
     carga = 3
     s = sim.summary()
-    # El tipo de carga circula, pero no aporta pasajeros ni aparece en el histograma.
+    # The freight type moves, but adds no passengers and does not appear in the histogram.
     assert s["crossed_veh"][carga] > 0 and s["arrived_cargo"][carga] == s["arrived_veh"][carga]
     assert s["arrived_pax"][carga] == 0 and s["crossed_pax"][carga] == 0 and sim.pax_hist[carga].sum() == 0
     assert np.isnan(s["pax_per_veh"][carga])
-    # Autos: ~30 % con mercancía; el promedio de pasajeros es solo de los que llevan pasajeros.
+    # Cars: ~30 % with freight; the passenger average is only of those carrying passengers.
     share = s["arrived_cargo"][CAR] / s["arrived_veh"][CAR]
     assert 0.2 < share < 0.4
     assert sim.pax_hist[CAR, 0] == 0 and sim.pax_hist[CAR].sum() == s["arrived_veh"][CAR] - s["arrived_cargo"][CAR]
@@ -1089,7 +1089,7 @@ def test_cargo_vehicles_occupy_the_road_but_carry_no_passengers():
 
 
 def test_cargo_does_not_change_the_other_random_draws():
-    """Las llegadas y los pasajeros de las bicis no cambian con la probabilidad de mercancía de los autos."""
+    """The bikes' arrivals and passengers do not change with the cars' freight probability."""
     a, b = _cargo_sim(0.0), _cargo_sim(0.5)
     np.testing.assert_array_equal(a.arrived_veh, b.arrived_veh)
     np.testing.assert_array_equal(a.pax_hist[BIKE], b.pax_hist[BIKE])
@@ -1108,8 +1108,8 @@ def test_each_cargo_vehicle_has_its_own_length():
 
 
 def test_each_vehicle_has_its_own_max_speed():
-    """Con velocidad variable, cada auto tiene la suya y puede avanzar a ella sin rebasar el límite
-    del carril; los tipos con velocidad fija no cambian."""
+    """With variable speed, each car has its own and can advance at it without exceeding the lane's
+    limit; types with a fixed speed do not change."""
     car, bike, bus = DEFAULT_SPECS
     fast = replace(car, speed_kmh=60.0, speed_std=10.0, speed_min=40.0, speed_max=80.0)
     cfg = SimConfig(length=300, lanes=1, lane_speed_limit=70, rates=(20, 5, 0), red=0.1, green=100,
@@ -1123,21 +1123,21 @@ def test_each_vehicle_has_its_own_max_speed():
         kmh = sim.vmax[:n] / DT * 3.6
         speeds |= set(kmh[cars].round(6).tolist())
         np.testing.assert_allclose(kmh[sim.vtype[:n] == BIKE], bike.speed_kmh)
-        # Un carril, sin congestión ni amarillo: puede avanzar a su máxima, sin rebasar el límite.
+        # One lane, without congestion or yellow: it can advance at its maximum, without exceeding the limit.
         np.testing.assert_allclose(sim.vcap_last[:n][cars], np.minimum(sim.vmax[:n][cars], 70 / 3.6 * DT))
     assert len(speeds) > 5 and 40.0 <= min(speeds) and max(speeds) <= 80.0
 
 
 def test_free_flow_time_averages_over_the_speed_distribution():
-    """Con velocidad variable, el tiempo a flujo libre es la media de length / min(v, límite), mayor que
-    length entre la velocidad media; con std = 0 es length / velocidad."""
+    """With variable speed, the free-flow time is the mean of length / min(v, limit), greater than
+    length divided by the mean speed; with std = 0 it is length / speed."""
     car, bike, bus = DEFAULT_SPECS
     cfg = SimConfig(length=300, lanes=2, lane_speed_limit=(70, 70), specs=(car, bike, bus))
     assert cfg.free_flow_time(CAR) == pytest.approx(300 / (min(car.speed_kmh, 70) / 3.6))
     varied = replace(car, speed_kmh=50.0, speed_std=10.0, speed_min=30.0, speed_max=90.0)
     cfg = replace(cfg, specs=(varied, bike, bus))
     rng = np.random.default_rng(0)
-    from trafico.distributions import sample_speeds
+    from traffic.distributions import sample_speeds
 
     v = sample_speeds(rng, varied, 400_000)
     expected = (300 / (np.minimum(v, 70) / 3.6)).mean()
@@ -1146,7 +1146,7 @@ def test_free_flow_time_averages_over_the_speed_distribution():
 
 
 def _initial_cfg(occupancy, **kw) -> SimConfig:
-    """Autos y motos; bicis en su carril exclusivo (0) y autobuses en el suyo (3)."""
+    """Cars and motorcycles; bikes in their exclusive lane (0) and buses in theirs (3)."""
     car, bike, bus = DEFAULT_SPECS
     base = dict(
         length=300, lanes=4, rates=(18, 8, 1, 8), red=20, green=20, run=10, initial_occupancy=occupancy,
@@ -1168,21 +1168,21 @@ def test_initial_occupancy_fills_each_lane():
     for lane, target in enumerate(occupancy):
         on = sim.lane[:n] == lane
         filled = fp[on].sum() / sim.L
-        assert target - 17.0 / sim.L < filled <= target + 1e-9  # a lo más un autobús de menos
-        # Solo los tipos que pueden circular por el carril.
+        assert target - 17.0 / sim.L < filled <= target + 1e-9  # at most one bus fewer
+        # Only the types that can use the lane.
         assert set(sim.vtype[:n][on].tolist()) <= {k for k in range(4) if sim.allowed[k, lane]}
     gap, _, fol = _gaps(sim)
     assert np.all(gap >= sim.gap_stop_t[sim.vtype[fol]] - 1e-9)
-    # Quien queda a menos de su gap_run empieza detenido (embotellamiento); los demás, en marcha.
+    # A vehicle closer than its gap_run starts stopped (jam); the others, moving.
     np.testing.assert_array_equal(sim.stopped[fol], gap < sim.gap_run_t[sim.vtype[fol]] - 1e-6)
-    assert set(sim.vtype[:n][sim.lane[:n] == 1].tolist()) == {CAR, MOTO_IDX}  # mezcla según las tasas
+    assert set(sim.vtype[:n][sim.lane[:n] == 1].tolist()) == {CAR, MOTO_IDX}  # mix according to the rates
     _check_conservation(sim)
 
 
 @pytest.mark.parametrize("start", ["red", "green"])
 def test_full_occupancy_is_a_compact_queue(start):
-    """Con 1, los carriles quedan como una cola compacta: cada vehículo a casi su gap_stop del de
-    adelante, todos detenidos salvo el primero, y la cola se estira sin traslapes."""
+    """With 1, the lanes are left as a compact queue: each vehicle almost at its gap_stop from the one
+    ahead, all stopped except the first, and the queue stretches without overlaps."""
     sim = Simulation(_initial_cfg(1.0, start_phase=start, run=3), np.random.default_rng(3))
     gap, min_gap, fol = _gaps(sim)
     stop_gap = sim.gap_stop_t[sim.vtype[fol]]
@@ -1196,9 +1196,9 @@ def test_full_occupancy_is_a_compact_queue(start):
 
 
 def test_initial_vehicles_have_no_travel_time():
-    """Los de la condición inicial cruzan y suman pasajeros, pero no entran en el tiempo de recorrido;
-    en 10 s nadie que entró recorre 300 m."""
-    sim = Simulation(_initial_cfg(0.5, red=0, green=20, run=1), np.random.default_rng(1))  # 10 s simulados
+    """Those of the initial condition cross and add passengers, but do not count in the travel time;
+    in 10 s nobody who entered covers 300 m."""
+    sim = Simulation(_initial_cfg(0.5, red=0, green=20, run=1), np.random.default_rng(1))  # 10 simulated s
     sim.run()
     s = sim.summary()
     assert s["crossed_veh"].sum() > 0 and s["crossed_pax"].sum() > 0
@@ -1229,8 +1229,8 @@ def _place_stopping(sim: Simulation, vt: int, x: float, lane: int, at: float) ->
 
 
 def test_bottleneck_stop_makes_followers_change_lane():
-    """Un auto se detiene 20 s en x = 100 del carril 0; el de atrás, sin código especial, lo trata
-    como un líder detenido: se cambia al carril 1 y lo rebasa. Luego el detenido sigue."""
+    """A car stops for 20 s at x = 100 in lane 0; the one behind, without special code, treats it
+    as a stopped leader: it changes to lane 1 and overtakes it. Then the stopped one continues."""
     sim = _bottleneck_sim()
     stopper = _place_stopping(sim, CAR, 60.0, 0, at=100.0)
     follower = _place(sim, CAR, 60.0 - 4.5 - 20.0, lane=0)
@@ -1248,7 +1248,7 @@ def test_bottleneck_stop_makes_followers_change_lane():
     assert sim.bn_stops[CAR] == 1 and sim.bn_ticks[CAR] == round(20 / DT)
     assert abs(stopped_ticks - round(20 / DT)) <= 1
     assert passed and sim.lane_changes >= 1
-    assert sim.x[{v: i for i, v in enumerate(sim.vid[: sim.n].tolist())}[ids[0]]] > 100.0  # siguió su camino
+    assert sim.x[{v: i for i, v in enumerate(sim.vid[: sim.n].tolist())}[ids[0]]] > 100.0  # it went on its way
 
 
 def test_bottleneck_only_in_its_lanes():
@@ -1261,8 +1261,8 @@ def test_bottleneck_only_in_its_lanes():
 
 
 def test_bottleneck_probability_and_types():
-    """Con bottleneck_prob = 0.3 para autos, ~30 % de los autos que cruzan se detuvieron; las bicis
-    (sin bottleneck_prob) no."""
+    """With bottleneck_prob = 0.3 for cars, ~30 % of the cars that cross stopped; the bikes
+    (without bottleneck_prob) did not."""
     car, bike, bus = DEFAULT_SPECS
     cfg = SimConfig(length=200, lanes=2, rates=(30, 8, 0), red=20, green=20, run=60,
                     specs=(replace(car, bottleneck_prob=0.3, bottleneck_time_mean=5.0), bike, bus),
@@ -1279,7 +1279,7 @@ def test_bottleneck_probability_and_types():
 def test_without_bottleneck_nothing_changes():
     base = dict(length=150, lanes=2, rates=(30, 8, 2), red=20, green=15, run=10)
     a = Simulation(SimConfig(**base), np.random.default_rng(1))
-    specs = tuple(replace(s, bottleneck_time_mean=60.0) for s in DEFAULT_SPECS)  # sin probabilidad no hay detenciones
+    specs = tuple(replace(s, bottleneck_time_mean=60.0) for s in DEFAULT_SPECS)  # without a probability there are no halts
     b = Simulation(SimConfig(**base, specs=specs, bottleneck=Bottleneck(stop_lanes=(0,))), np.random.default_rng(1))
     a.run()
     b.run()
@@ -1288,8 +1288,8 @@ def test_without_bottleneck_nothing_changes():
 
 
 def test_bottleneck_per_type_probability_and_duration():
-    """Cada tipo con su probabilidad y duración: la carga se detiene más seguido (0.8) y por más
-    tiempo (30 s) que los autos (0.2, 5 s); las bicis, sin bottleneck_prob, nunca."""
+    """Each type with its probability and duration: freight stops more often (0.8) and for longer
+    (30 s) than cars (0.2, 5 s); bikes, without bottleneck_prob, never."""
     car, bike, bus = DEFAULT_SPECS
     specs = (replace(car, bottleneck_prob=0.2, bottleneck_time_mean=5.0), bike, bus,
              replace(CARGA, bottleneck_prob=0.8, bottleneck_time_mean=30.0))  # fmt: skip
@@ -1307,8 +1307,8 @@ def test_bottleneck_per_type_probability_and_duration():
 
 
 def test_entry_queue_waiting_time():
-    """La espera acumulada en la cola de entrada cuadra con los vehículo·paso contados en la cola: los que
-    ya entraron más lo que llevan esperando los que siguen en ella. Con la vía saturada la espera crece."""
+    """The accumulated wait in the entry queue matches the vehicle·steps counted in the queue: those that
+    already entered plus what those still in it have been waiting. With the road saturated the wait grows."""
     cfg = SimConfig(length=150, lanes=2, rates=(90, 20, 2), red=25, green=10, run=10)
     sim = Simulation(cfg, np.random.default_rng(6))
     in_queue = np.zeros(cfg.n_types)
@@ -1335,8 +1335,8 @@ def test_no_entry_queue_wait_on_an_empty_road():
 
 
 def test_mean_speed_is_free_flow_on_an_empty_road_in_green():
-    """Sin tráfico y en verde, la velocidad media de cada tipo es la de flujo libre; un tipo que no
-    participa queda sin dato."""
+    """Without traffic and on green, the mean speed of each type is the free-flow one; a type that does not
+    take part has no value."""
     cfg = SimConfig(length=300, lanes=2, rates=(3, 0, 0), red=0.1, green=100, start_phase="green", run=9)
     sim = Simulation(cfg, np.random.default_rng(1))
     sim.run()
@@ -1346,7 +1346,7 @@ def test_mean_speed_is_free_flow_on_an_empty_road_in_green():
 
 
 def test_mean_speed_counts_stopped_time():
-    """La velocidad media es distancia / tiempo dentro del tramo, con el tiempo detenido en el rojo."""
+    """The mean speed is distance / time within the segment, including the time stopped at the red."""
     cfg = SimConfig(length=150, lanes=2, rates=(20, 0, 0), red=40, green=10, run=10)
     sim = Simulation(cfg, np.random.default_rng(2))
     sim.run()
@@ -1356,7 +1356,7 @@ def test_mean_speed_counts_stopped_time():
 
 
 def test_fixed_rate_dicts_give_the_same_run_as_plain_rates():
-    """Una tasa con std = 0 no consume sorteos: la corrida es idéntica a la de la tasa fija."""
+    """A rate with std = 0 consumes no draws: the run is identical to that of the fixed rate."""
     base = SimConfig(length=150, lanes=2, rates=(20, 5, 1), red=20, green=20, run=5)
     dists = replace(base, rate_dists=(Rate.fixed(20), Rate(3, 9, 5, 0), Rate.fixed(1)))
     assert dists.rates == base.rates
@@ -1368,7 +1368,7 @@ def test_fixed_rate_dicts_give_the_same_run_as_plain_rates():
 
 
 def test_variable_rate_is_redrawn_every_interval():
-    """Cada intervalo sortea su tasa en [min, max]; las llegadas del intervalo siguen esa tasa."""
+    """Each interval draws its rate in [min, max]; the arrivals of the interval follow that rate."""
     rate = Rate(min=10, max=110, mean=60, std=40)
     cfg = SimConfig(length=150, lanes=2, rates=(0, 0, 0), rate_dists=(rate, Rate.fixed(0), Rate.fixed(0)),
                     rate_interval=30, red=10, green=50, run=24)  # fmt: skip
@@ -1388,14 +1388,14 @@ def test_variable_rate_is_redrawn_every_interval():
 
 def test_rate_expected_is_the_truncated_mean():
     assert Rate.fixed(4).expected == 4
-    assert Rate(0, 20, 10, 5).expected == pytest.approx(10)  # simétrica
+    assert Rate(0, 20, 10, 5).expected == pytest.approx(10)  # symmetric
     draws = np.random.default_rng(0).normal(15, 5, 2_000_000)
     draws = draws[(draws >= 1) & (draws <= 20)]
     assert Rate(1, 20, 15, 5).expected == pytest.approx(draws.mean(), abs=0.01)
 
 
 def _front_stays_behind(sim: Simulation, line: float, phase_of, until: int) -> tuple[int, bool]:
-    """Corre `until` pasos; devuelve (pasos en rojo, si alguien rebasó `line` con su frente mientras estaba en rojo)."""
+    """Run `until` steps; returns (steps on red, whether someone passed `line` with its front while it was red)."""
     in_red, crossed_in_red = 0, False
     crossed_before = lambda: bool((sim.x[: sim.n] > line + 1e-9).any())  # noqa: E731
     for _ in range(until):
@@ -1410,8 +1410,8 @@ def _front_stays_behind(sim: Simulation, line: float, phase_of, until: int) -> t
 
 @pytest.mark.parametrize("gradual", [False, True])
 def test_inner_light_stops_vehicles_at_its_line_in_red_and_releases_them_in_green(gradual):
-    """Un semáforo a 60 m (rojo 20 s, verde 20 s, empieza en rojo) detiene en su línea a quien llega en rojo, y en
-    verde lo deja pasar; el del final del tramo (desactivado) no interviene."""
+    """A traffic light at 60 m (red 20 s, green 20 s, starts on red) stops at its line whoever arrives on red, and on
+    green lets them through; the one at the end of the segment (disabled) does not intervene."""
     spec = _gradual(DEFAULT_SPECS[CAR]) if gradual else DEFAULT_SPECS[CAR]
     light = Light(60.0, red=20, green=20, start_phase="red")
     sim = _empty_sim(length=150, red=10, green=30, traffic_light=False, extra_lights=(light,), run=10,
@@ -1419,14 +1419,14 @@ def test_inner_light_stops_vehicles_at_its_line_in_red_and_releases_them_in_gree
     _place(sim, CAR, 20.0)
     in_red, crossed = _front_stays_behind(sim, 60.0, light.phase, round(20 / DT))
     assert in_red == round(20 / DT) and not crossed
-    assert sim.n == 1 and sim.stopped[0] and sim.x[0] <= 60.0 + 1e-9 and sim.x[0] > 50.0  # esperando en la línea
+    assert sim.n == 1 and sim.stopped[0] and sim.x[0] <= 60.0 + 1e-9 and sim.x[0] > 50.0  # waiting at the line
     for _ in range(round(25 / DT)):
         sim.step()
-    assert sim.n == 0 or sim.x[0] > 60.0  # en verde, pasó
+    assert sim.n == 0 or sim.x[0] > 60.0  # on green, it went through
 
 
 def test_each_light_has_its_own_phases_and_initial_phase():
-    """Dos semáforos intermedios con ciclos y fase inicial distintos: cada uno detiene a un auto solo en sus rojos."""
+    """Two intermediate traffic lights with different cycles and initial phases: each one stops a single car only during its reds."""
     lights = (Light(40.0, red=10, green=30, start_phase="red"), Light(100.0, red=15, green=5, start_phase="green"))
     cfg = SimConfig(length=150, lanes=1, rates=(0, 0, 0), traffic_light=False, extra_lights=lights, run=5)
     assert [lt.phase(0) for lt in lights] == [RED, GREEN] and cfg.inner_phases(0) == (RED, GREEN)
@@ -1438,7 +1438,7 @@ def test_each_light_has_its_own_phases_and_initial_phase():
         sim.step()
         if sim.n:
             xs.append(float(sim.x[0]))
-    # Espera en el primero (rojo inicial) hasta que se abre; el segundo (verde inicial) lo deja pasar o lo frena.
+    # It waits at the first (initial red) until it opens; the second (initial green) lets it through or slows it down.
     assert max(x for x in xs[: round(9 / DT)]) <= 40.0 + 1e-9
     assert not sim.n or sim.x[0] > 100.0
 
@@ -1449,12 +1449,12 @@ def test_light_starting_in_green_lets_the_first_vehicle_through():
     _place(sim, CAR, 20.0)
     for _ in range(round(8 / DT)):
         sim.step()
-    assert sim.n == 1 and sim.x[0] > 60.0 and not sim.stopped[0]  # cruzó sin detenerse
+    assert sim.n == 1 and sim.x[0] > 60.0 and not sim.stopped[0]  # it crossed without stopping
 
 
 def test_inner_light_free_lane_ignores_red_and_yellow():
-    """Las bicis, con carril exclusivo en los free_lanes del semáforo intermedio, lo cruzan en rojo; el auto, que no
-    tiene carril exclusivo, se detiene."""
+    """The bikes, with an exclusive lane in the intermediate light's free_lanes, cross it on red; the car, which does not
+    have an exclusive lane, stops."""
     bike = replace(DEFAULT_SPECS[BIKE], lane=0, exclusive=True)
     light = Light(60.0, red=30, green=10, start_phase="red", free_lanes=(0,))
     sim = _empty_sim(length=150, lanes=2, traffic_light=False, extra_lights=(light,), run=5,
@@ -1464,44 +1464,44 @@ def test_inner_light_free_lane_ignores_red_and_yellow():
     for _ in range(round(15 / DT)):
         sim.step()
     x = {int(v): float(sim.x[j]) for j, v in enumerate(sim.vtype[: sim.n])}
-    assert BIKE not in x or x[BIKE] > 60.0  # cruzó (o ya salió)
+    assert BIKE not in x or x[BIKE] > 60.0  # it crossed (or already left)
     assert x[CAR] <= 60.0 + 1e-9
 
 
 def test_lights_properties_and_labels():
     lights = (Light(100.0, red=20, green=20, start_phase="green"), Light(40.0, red=10, green=30, yellow=3))
     cfg = SimConfig(length=150, red=25, green=35, extra_lights=lights)
-    assert [lt.position for lt in cfg.inner_lights] == [40.0, 100.0]  # de la entrada a la salida
+    assert [lt.position for lt in cfg.inner_lights] == [40.0, 100.0]  # from the entry to the exit
     assert [lt.position for lt in cfg.lights] == [40.0, 100.0, 150.0] and cfg.any_light
     assert cfg.ref_light.position == 150.0 and cfg.cycle == 60.0 and cfg.flow_window == 60.0
     assert cfg.lights_label == ("at 40 m: red 10 s / green 30 s / yellow 3 s, starts red · "
                                 "at 100 m: red 20 s / green 20 s, starts green · "
                                 "at 150 m: red 25 s / green 35 s, starts red")  # fmt: skip
-    # Sin semáforo al final, el último intermedio marca la ventana y las fases sombreadas.
+    # Without a light at the end, the last intermediate one sets the window and the shaded phases.
     cfg = SimConfig(length=150, traffic_light=False, extra_lights=lights)
     assert not cfg.has_light and cfg.ref_light.position == 100.0 and cfg.cycle == 40.0 and cfg.flow_window == 40.0
-    assert cfg.red_intervals()[0] == (0.0, 20.0) or cfg.red_intervals()[0][1] > 0  # las del de 100 m
+    assert cfg.red_intervals()[0] == (0.0, 20.0) or cfg.red_intervals()[0][1] > 0  # those of the one at 100 m
     off = cfg.with_lights(False)
     assert not off.any_light and off.flow_window == 60.0
     assert SimConfig(length=150, red=0, green=0, extra_lights=(Light(50.0, enabled=False),)).lights == ()
 
 
 def test_time_headway_spacing_and_capacity():
-    """Con time_headway, detrás de un líder en marcha cada auto guarda gap_stop + T·v: sin dinámica gradual, a 50 km/h y
-    T = 1.5 s, el intervalo entre autos a capacidad es ≈ T + (largo + gap_stop) / v (≈ 1.9 s), no el de gap_run."""
-    from trafico.calibration import measure
+    """With time_headway, behind a moving leader each car keeps gap_stop + T·v: without gradual dynamics, at 50 km/h and
+    T = 1.5 s, the headway between cars at capacity is ≈ T + (length + gap_stop) / v (≈ 1.9 s), not that of gap_run."""
+    from traffic.calibration import measure
 
     car = replace(DEFAULT_SPECS[CAR], speed_std=0.0, length_std=0.0, accel=None, decel=None, time_headway=1.5)
     cfg = SimConfig(specs=(car, *DEFAULT_SPECS[1:]), rates=(10, 0, 0), lane_speed_limit=50.0)
     m = measure(cfg, "car", queues=2, rates=(120,), flow_seconds=300.0, workers=1)
     v = 50 / 3.6
     ideal = 1.5 + (car.length + car.gap_stop) / v
-    assert ideal <= m["intervalo_marcha_s"] <= ideal + 0.2  # la entrada al tramo, por pasos, agrega a lo más un poco
+    assert ideal <= m["intervalo_marcha_s"] <= ideal + 0.2  # entering the segment, in steps, adds at most a little
 
 
 def test_time_headway_with_gradual_dynamics_keeps_order_and_gaps():
-    """Autos y autobuses con aceleración y frenado graduales y time_headway, con semáforo, condición inicial y cambios
-    de carril: nadie se traslapa con su líder y, a velocidad, quien sigue de cerca guarda más de 1 s."""
+    """Cars and buses with gradual acceleration and braking and time_headway, with a traffic light, initial condition and lane
+    changes: nobody overlaps with its leader and, at speed, a close follower keeps more than 1 s."""
     car, bike, bus = DEFAULT_SPECS
     specs = tuple(replace(_gradual(s), time_headway=1.2) for s in (car, bike, bus))
     cfg = SimConfig(length=300, lanes=2, rates=(30, 0, 3), red=20, green=25, yellow=3.0, run=30, specs=specs,
@@ -1515,12 +1515,12 @@ def test_time_headway_with_gradual_dynamics_keeps_order_and_gaps():
         assert (gap[occ.has_leader] > -1e-6).all()
         moving = occ.has_leader & ~sim.stopped[occ.leader] & (sim.v_last[occ.veh] / DT > 10.0)  # > 36 km/h
         far += (gap[moving] / (sim.v_last[occ.veh][moving] / DT)).tolist()
-    # A velocidad, quien sigue de cerca va a más de 1 s (percentil 5 ≈ 1.46 s); con gap_run fijo, ≈ 0.33 s.
+    # At speed, a close follower is more than 1 s behind (5th percentile ≈ 1.46 s); with a fixed gap_run, ≈ 0.33 s.
     assert far and np.percentile(far, 5) > 1.0
 
 
 def test_lights_short_names_a_single_intermediate_light():
-    from trafico.config import Light, SimConfig
+    from traffic.config import Light, SimConfig
 
     cfg = SimConfig(length=250, traffic_light=False, extra_lights=(Light(200.0, pedestrian=True, red=5.0),))
     assert cfg.lights_short == "1 traffic light (at 200 m)"

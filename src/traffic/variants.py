@@ -1,10 +1,10 @@
-"""Comparación de variantes: el escenario de una configuración con distintos largos de tramo y
-repartos del semáforo (`uv run traffic-variants`).
+"""Variant comparison: a configuration's scenario with different segment lengths and
+traffic light splits (`uv run traffic-variants`).
 
-Cada combinación de largo y semáforo es un escenario que corre `replicas` réplicas con las mismas
-semillas que `traffic` (SeedSequence.spawn), así que las variantes comparten los números
-aleatorios. De cada réplica se guarda la velocidad media de cada carril en toda la corrida y los
-vehículos en la cola de entrada de cada tipo en cada muestra.
+Each combination of length and light is a scenario that runs `replicas` replicas with the same
+seeds as `traffic` (SeedSequence.spawn), so the variants share the random numbers. From each
+replica it keeps the mean speed of each lane over the whole run and the vehicles of each type
+in the entry queue at each sample.
 """
 
 from __future__ import annotations
@@ -19,14 +19,14 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import DT, Rate, SimConfig
-from trafico.engine import Simulation
-from trafico.settings import ConfigError, RunOptions, validate_config
+from traffic.config import DT, Rate, SimConfig
+from traffic.engine import Simulation
+from traffic.settings import ConfigError, RunOptions, validate_config
 
 PLOT_NAME = "light_variants.png"
 DATA_NAME = "data.npz"
 META_NAME = "variants.json"
-BASE_CONFIG_NAME = "base_config.toml"  # no se llama config.toml: la carpeta no es una corrida de `traffic`
+BASE_CONFIG_NAME = "base_config.toml"  # not called config.toml: the folder is not a `traffic` run
 SPEED_CSV = "speed_per_lane.csv"
 QUEUE_CSV = "entry_queue.csv"
 SUMMARY_NAME = "summary.txt"
@@ -34,32 +34,32 @@ SUMMARY_NAME = "summary.txt"
 
 @dataclass(frozen=True, slots=True)
 class Variants:
-    """Qué se compara y cómo."""
+    """What is compared and how."""
 
-    lengths: tuple[float, ...]  # m de cada tramo
-    lights: tuple[tuple[float, float], ...]  # (rojo, verde) en s de cada semáforo
-    lanes: tuple[int, ...] | None  # carriles de la configuración base que se conservan (en orden); None = todos
-    without: tuple[str, ...]  # claves de los tipos que no participan
-    queue_types: tuple[str, ...]  # claves de los tipos que se cuentan en la cola de entrada
+    lengths: tuple[float, ...]  # m of each segment
+    lights: tuple[tuple[float, float], ...]  # (red, green) in s of each traffic light
+    lanes: tuple[int, ...] | None  # lanes of the base configuration that are kept (in order); None = all
+    without: tuple[str, ...]  # keys of the types that do not take part
+    queue_types: tuple[str, ...]  # keys of the types counted in the entry queue
     replicas: int
-    run: float  # s de proceso (× time_scale = s simulados)
+    run: float  # process s (× time_scale = simulated s)
 
 
 def light_name(red: float, green: float) -> str:
-    """Nombre de un reparto del semáforo: «rojo > verde», «rojo = verde» o «verde > rojo»."""
+    """Name of a traffic light split: «red > green», «red = green» or «green > red»."""
     if abs(red - green) < DT / 2:
         return "red = green"
     return "red > green" if red > green else "green > red"
 
 
 def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple[str, ...]) -> SimConfig:
-    """La configuración base con solo los carriles `lanes` (renumerados desde 0 en ese orden, con sus
-    límites, ocupación inicial, cola de salida, carriles sin semáforo, con tope y de cuello de botella) y
-    sin los tipos `without`.
+    """The base configuration with only the lanes `lanes` (renumbered from 0 in that order, with their
+    limits, initial occupancy, exit queue, lanes without a traffic light, with a bump and with a bottleneck) and
+    without the types `without`.
 
-    Los tipos que no participan (en `without` o con tasa 0) no pesan en la validación: pierden su
-    carril fijo, su exclusividad, su parada y sus detenciones. Un tipo que participa con carril fijo
-    fuera de `lanes` es un error."""
+    Types that do not take part (in `without` or with rate 0) do not count in the validation: they lose their
+    fixed lane, their exclusivity, their stop and their halts. A participating type with a fixed lane
+    outside `lanes` is an error."""
     keys = [s.key for s in base.specs]
     for key in without:
         if key not in keys:
@@ -89,7 +89,7 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
 
     bn_lanes = base.bottleneck.stop_lanes
     bumps = []
-    for bump in base.speed_bumps:  # cada tope conserva sus carriles; si no queda ninguno, no hay tope
+    for bump in base.speed_bumps:  # each bump keeps its lanes; if none is left, there is no bump
         if bump.lanes is None:
             bumps.append(bump)
             continue
@@ -97,14 +97,14 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
         if kept:
             bumps.append(replace(bump, lanes=kept))
     if bn_lanes is not None:
-        bn_lanes = tuple(new_of[ln] for ln in bn_lanes if ln in new_of)  # () = en ninguno
+        bn_lanes = tuple(new_of[ln] for ln in bn_lanes if ln in new_of)  # () = in none
     return replace(
         base, lanes=len(old), specs=tuple(specs), rate_dists=tuple(rates),
         lane_speed_limit=None if base.lane_speed_limit is None else tuple(base.lane_max_kmh[i] for i in old),
         initial_occupancy=tuple(base.lane_initial_occupancy[i] for i in old),
         exit_capacity=tuple(base.lane_exit_capacity[i] for i in old),
         exit_storage=tuple(base.lane_exit_storage[i] for i in old),
-        # Sin semáforo solo quedan los carriles que siguen siendo exclusivos de un tipo que participa.
+        # Without a traffic light only the lanes that are still exclusive to a participating type remain.
         free_lanes=tuple(new_of[ln] for ln in base.free_lanes
                          if ln in new_of and any(s.exclusive and s.lane == new_of[ln] for s in specs)),  # fmt: skip
         extra_lights=tuple(
@@ -118,9 +118,9 @@ def reduce_config(base: SimConfig, lanes: tuple[int, ...] | None, without: tuple
 
 
 def scenario(reduced: SimConfig, v: Variants, length: float, red: float, green: float) -> SimConfig:
-    """Un escenario validado: la configuración reducida con ese largo, semáforo y duración. El reparto `red`/`green`
-    es el del semáforo del final del tramo (de ciclo fijo, aunque en la configuración sea peatonal); los intermedios
-    conservan sus fases y su posición."""
+    """A validated scenario: the reduced configuration with that length, light and duration. The `red`/`green` split
+    is that of the light at the end of the segment (fixed-cycle, even if it is a pedestrian light in the
+    configuration); the intermediate ones keep their phases and position."""
     cfg = replace(reduced, length=length, red=red, green=green, traffic_light=True, light_pedestrian=False, run=v.run)
     try:
         validate_config(cfg, RunOptions(replicas=v.replicas))
@@ -130,8 +130,8 @@ def scenario(reduced: SimConfig, v: Variants, length: float, red: float, green: 
 
 
 def run_variant_replica(cfg: SimConfig, seed: np.random.SeedSequence) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Una réplica: (velocidad media de cada carril en km/h, incluidos los detenidos; vehículos de
-    cada tipo en la cola de entrada en cada muestra (tipos × muestras); vehículos que cruzan por tipo)."""
+    """One replica: (mean speed of each lane in km/h, including stopped vehicles; vehicles of
+    each type in the entry queue at each sample (types × samples); vehicles crossing per type)."""
     sim = Simulation(cfg, np.random.default_rng(seed))
     queue = np.zeros((cfg.n_types, cfg.n_samples), np.float32)
     for k in range(cfg.n_samples):
@@ -148,9 +148,9 @@ def run_variants(
     base: SimConfig, v: Variants, seed: int, workers: int = 0,
     progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, np.ndarray]:  # fmt: skip
-    """Corre todos los escenarios. Devuelve arreglos indexados por (largo, semáforo, réplica, …)."""
+    """Run every scenario. Returns arrays indexed by (length, light, replica, …)."""
     reduced = reduce_config(base, v.lanes, v.without)
-    configs = [[scenario(reduced, v, L, r, g) for r, g in v.lights] for L in v.lengths]  # valida todo antes
+    configs = [[scenario(reduced, v, L, r, g) for r, g in v.lights] for L in v.lengths]  # validates everything first
     seeds = np.random.SeedSequence(seed).spawn(v.replicas)
     shape = (len(v.lengths), len(v.lights), v.replicas)
     cfg0 = configs[0][0]
@@ -171,7 +171,7 @@ def run_variants(
 
 
 def metadata(base: SimConfig, v: Variants, seed: int, argv: list[str]) -> dict:
-    """Lo necesario para describir, graficar y repetir la comparación."""
+    """What is needed to describe, plot and repeat the comparison."""
     reduced = reduce_config(base, v.lanes, v.without)
     keys = [s.key for s in reduced.specs]
     limits = reduced.lane_max_kmh
@@ -199,11 +199,11 @@ def metadata(base: SimConfig, v: Variants, seed: int, argv: list[str]) -> dict:
 
 
 def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
-    """Tablas, datos crudos y parámetros; devuelve el resumen en texto."""
+    """Tables, raw data and parameters; returns the summary as text."""
     np.savez(folder / DATA_NAME, **data)
     (folder / META_NAME).write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     speed, crossed, t = data["speed"], data["crossed"], data["t"]
-    queue = data["queue"][:, :, :, meta["cola_tipos"]].sum(axis=3)  # (largo, semáforo, réplica, muestra)
+    queue = data["queue"][:, :, :, meta["cola_tipos"]].sum(axis=3)  # (length, light, replica, sample)
     queue_label = ", ".join(meta["nombres"][k] for k in meta["cola_tipos"])
     lights = meta["semaforos"]
     with open(folder / SPEED_CSV, "w", newline="", encoding="utf-8") as fh:
@@ -247,10 +247,10 @@ def summary_text(meta: dict, speed: np.ndarray, queue: np.ndarray, queue_label: 
 
 
 def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
-    """Métricas de `resultados.json`: por tramo y reparto del semáforo, la velocidad media de cada carril y la cola de
-    entrada (al final y máxima, media de las réplicas) de los tipos que se cuentan en ella."""
+    """`results.json` metrics: per segment and light split, the mean speed of each lane and the entry queue
+    (final and maximum, mean of the replicas) of the types counted in it."""
     speed, crossed = data["speed"], data["crossed"]
-    queue = data["queue"][:, :, :, meta["cola_tipos"]].sum(axis=3)  # (largo, semáforo, réplica, muestra)
+    queue = data["queue"][:, :, :, meta["cola_tipos"]].sum(axis=3)  # (length, light, replica, sample)
     scenarios = []
     for li, length in enumerate(meta["largos_m"]):
         for vi, light in enumerate(meta["semaforos"]):
@@ -266,8 +266,8 @@ def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
 
 
 def load(folder: Path) -> tuple[dict, dict[str, np.ndarray]]:
-    """Parámetros y datos de una comparación ya corrida."""
-    from trafico.results import existing
+    """Parameters and data of a comparison that has already run."""
+    from traffic.results import existing
 
     meta_path, data_path = existing(folder, META_NAME), existing(folder, DATA_NAME)
     if not (meta_path.is_file() and data_path.is_file()):

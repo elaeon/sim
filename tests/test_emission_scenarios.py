@@ -3,18 +3,18 @@ import json
 import numpy as np
 import pytest
 
-from trafico.cli import CONFIG_NAME, emissions, latest_run_dir
-from trafico.config import CAR, POLLUTANTS
-from trafico.emission_scenarios import (
+from traffic.cli import CONFIG_NAME, emissions, latest_run_dir
+from traffic.config import CAR, POLLUTANTS
+from traffic.emission_scenarios import (
     BASE_CONFIG_NAME, DATA_NAME, META_NAME, PLOT_NAME, POSITION_CSV, SUMMARY_NAME, TABLE_CSV,
 )  # fmt: skip
 
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    """Raíz de proyecto temporal: calle de 2 carriles, autos que emiten (con accel y decel) y un tope en su
-    configuración."""
-    monkeypatch.setattr("trafico.settings.project_root", lambda: tmp_path)
+    """Temporary project root: a 2-lane street, cars that emit (with accel and decel) and a bump in its
+    configuration."""
+    monkeypatch.setattr("traffic.settings.project_root", lambda: tmp_path)
     (tmp_path / CONFIG_NAME).write_text(
         "[road]\nlength = 150.0\nmax_line_speed = [50, 50]\n[traffic_light]\nenabled = false\n"
         "[speed_bump]\nposition = 80.0\n"
@@ -28,14 +28,14 @@ def root(tmp_path, monkeypatch):
 
 
 def test_command_compares_bumps(root, capsys):
-    """Por defecto compara sin tope contra el tope de la configuración, con la misma semilla: los mismos autos
-    llegan, pero con tope tardan más y emiten más CO2 por km. Escribe tablas, datos, parámetros y la gráfica, y
-    redibuja sin simular ni sobrescribir."""
+    """By default it compares no bump against the configuration's bump, with the same seed: the same cars
+    arrive, but with the bump they take longer and emit more CO2 per km. It writes tables, data, parameters and the
+    plot, and redraws without simulating or overwriting."""
     folder = emissions(["prueba"])
     assert folder.parent == root / "results" and folder.name.endswith("_prueba")
     files = {p.name for p in folder.iterdir()}
     assert {PLOT_NAME, DATA_NAME, META_NAME, TABLE_CSV, POSITION_CSV, SUMMARY_NAME, BASE_CONFIG_NAME} <= files
-    assert CONFIG_NAME not in files and latest_run_dir(folder.parent) is None  # no es una corrida de `traffic`
+    assert CONFIG_NAME not in files and latest_run_dir(folder.parent) is None  # not a `traffic` run
     meta = json.loads((folder / META_NAME).read_text())
     assert meta["escenarios"] == ["no bump", "bump at 80 m"] and meta["topes_m"] == [[], [80.0]]
     assert meta["contaminantes"] == ["co2", "nox", "voc"] and meta["semilla"] == 7
@@ -66,18 +66,18 @@ def test_command_errors(root):
     with pytest.raises(SystemExit):
         emissions(["--bumps", "none", "cien"])
     with pytest.raises(SystemExit):
-        emissions(["--bumps", "500"])  # fuera del tramo
+        emissions(["--bumps", "500"])  # outside the segment
     with pytest.raises(SystemExit):
-        emissions(["--redraw", str(root)])  # no es una comparación
+        emissions(["--redraw", str(root)])  # not a comparison
     (root / CONFIG_NAME).write_text((root / CONFIG_NAME).read_text().replace("accel = 2.5\n", ""), encoding="utf-8")
     with pytest.raises(SystemExit):
-        emissions([])  # sin accel, los autos no emiten
+        emissions([])  # without accel, cars do not emit
 
 
 def test_scenarios_with_several_bumps(root):
-    """--bumps 30,60 es un escenario con dos topes (también hay uno por cada sección [[speed_bump]])."""
-    from trafico.cli import _bumps
-    from trafico.emission_scenarios import scenario_label
+    """--bumps 30,60 is a scenario with two bumps (there is also one per [[speed_bump]] section)."""
+    from traffic.cli import _bumps
+    from traffic.emission_scenarios import scenario_label
 
     assert _bumps(["none", "30,60", "45"], None, 100.0) == ((), (30.0, 60.0), (45.0,))
     assert _bumps(None, (70.0, 20.0), 100.0) == ((), (20.0, 70.0))
@@ -95,11 +95,11 @@ def test_scenarios_with_several_bumps(root):
 
 
 def test_semaforo_option_switches_every_light(root):
-    """--light no/yes apaga o enciende todos los semáforos, también los intermedios."""
+    """--light no/yes turns all the traffic lights off or on, the intermediate ones too."""
     from dataclasses import replace
 
-    from trafico.config import Light, SimConfig
-    from trafico.emission_scenarios import Scenarios, build_configs
+    from traffic.config import Light, SimConfig
+    from traffic.emission_scenarios import Scenarios, build_configs
 
     base = SimConfig(length=150, lanes=2, rates=(10, 0, 0), run=3, traffic_light=True, extra_lights=(Light(60.0),),
                      specs=tuple(replace(s, accel=2.5, decel=4.5) if s.key == "car" else s
@@ -112,11 +112,11 @@ def test_semaforo_option_switches_every_light(root):
 
 
 def test_scenarios_keep_the_pedestrian_crossing_of_the_bump():
-    """Los escenarios con tope conservan sus peatones ([speed_bump] pedestrian); «sin tope» no los tiene."""
+    """Scenarios with a bump keep its pedestrians ([speed_bump] pedestrian); «no bump» has none."""
     from dataclasses import replace
 
-    from trafico.config import Rate, SimConfig, SpeedBump
-    from trafico.emission_scenarios import Scenarios, build_configs
+    from traffic.config import Rate, SimConfig, SpeedBump
+    from traffic.emission_scenarios import Scenarios, build_configs
 
     bump = SpeedBump(60.0, pedestrian=True, pedestrian_crossing=Rate(2, 2, 2, 0), pedestrian_time=6.0)
     base = SimConfig(length=150, lanes=2, rates=(10, 0, 0), run=3, traffic_light=False, speed_bumps=(bump,),
@@ -127,13 +127,13 @@ def test_scenarios_keep_the_pedestrian_crossing_of_the_bump():
     (_, plain), (_, one), (_, two) = build_configs(base, s)
     assert plain.pedestrian_spots == () and not plain.stop_lines
     assert one.pedestrian_spots == (("tope", 60.0),) and one.speed_bumps == (bump,)
-    # Un tope en otra posición es como el configurado (con sus peatones); --bump-lanes reemplaza sus carriles.
+    # A bump at another position is like the configured one (with its pedestrians); --bump-lanes replaces its lanes.
     assert two.pedestrian_spots == (("tope", 30.0), ("tope", 90.0)) and two.bumps[1].pedestrian_crossing.mean == 2
 
 
 def test_command_with_pedestrians_at_the_bump(root):
-    """Con peatones en el tope, los autos esperan más y emiten más que con el tope solo; sin tope no hay peatones. La
-    gráfica lo dice y los metadatos guardan la tasa."""
+    """With pedestrians at the bump, cars wait longer and emit more than with the bump alone; without a bump there are no
+    pedestrians. The plot says so and the metadata keeps the rate."""
     text = (root / CONFIG_NAME).read_text().replace(
         "[speed_bump]\nposition = 80.0\n",
         "[speed_bump]\nposition = 80.0\npedestrian = true\npedestrian_time = 8\n"
@@ -151,4 +151,4 @@ def test_command_with_pedestrians_at_the_bump(root):
     assert json.loads((folder_plain / META_NAME).read_text())["peatones_tope"] is None
     with np.load(folder_plain / DATA_NAME) as d:
         travel_plain = d["travel_time"][:, CAR]
-    assert travel[0] == pytest.approx(travel_plain[0]) and travel[1] > travel_plain[1]  # sin tope no cambia
+    assert travel[0] == pytest.approx(travel_plain[0]) and travel[1] > travel_plain[1]  # without a bump nothing changes

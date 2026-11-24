@@ -1,15 +1,15 @@
-"""Peatones que cruzan: el calendario de fases que ven los vehículos en un paso peatonal o en un semáforo peatonal.
+"""Crossing pedestrians: the phase schedule that vehicles see at a pedestrian crossing or a pedestrian light.
 
-Los peatones no dependen de los vehículos: aparecen por su cuenta (llegadas Poisson con la tasa de
-`pedestrian_crossing`, peatones/min), así que todo el calendario de una réplica se calcula antes de correrla y el
-motor solo consulta la fase de cada paso (GREEN, YELLOW o RED), igual que con un semáforo de ciclo fijo.
+Pedestrians do not depend on vehicles: they appear on their own (Poisson arrivals at the rate of
+`pedestrian_crossing`, pedestrians/min), so a replica's whole schedule is computed before running it and the
+engine only looks up the phase of each step (GREEN, YELLOW or RED), just as with a fixed-cycle traffic light.
 
-  * Paso peatonal en un tope (`bump_schedule`): cada peatón espera `PEDESTRIAN_YIELD` s en la orilla (amarillo: los
-    vehículos que aún pueden frenar se detienen) y cruza durante `pedestrian_time` s (rojo). El paso está cerrado
-    mientras cruza alguien: quien llega durante el cruce lo extiende.
-  * Semáforo peatonal (`light_schedule`): verde para los vehículos mientras nadie espere. Con peatones en la cola,
-    pasado el verde mínimo (`green`) y con el semáforo de ciclo fijo anterior en rojo (si lo hay), pasa a amarillo
-    (`yellow`) y a rojo (`red`, lo que tardan en cruzar todos los que esperan al empezar el rojo).
+  * Pedestrian crossing at a bump (`bump_schedule`): each pedestrian waits `PEDESTRIAN_YIELD` s at the kerb
+    (yellow: vehicles that can still brake stop) and crosses for `pedestrian_time` s (red). The crossing is closed
+    while someone is crossing: whoever arrives during the crossing extends it.
+  * Pedestrian light (`light_schedule`): green for vehicles while nobody is waiting. With pedestrians in the queue,
+    once the minimum green (`green`) has passed and with the previous fixed-cycle light on red (if there is one), it
+    turns yellow (`yellow`) and then red (`red`, the time it takes everyone waiting when the red starts to cross).
 """
 
 from __future__ import annotations
@@ -18,24 +18,24 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from trafico.config import DT, GREEN, RED, YELLOW, Light, Rate, SimConfig
-from trafico.distributions import sample_rates
+from traffic.config import DT, GREEN, RED, YELLOW, Light, Rate, SimConfig
+from traffic.distributions import sample_rates
 
 
 @dataclass(frozen=True, slots=True)
 class Schedule:
-    """Calendario de un punto con peatones en una réplica."""
+    """Schedule of a point with pedestrians in one replica."""
 
-    phases: np.ndarray  # (n_ticks + 1,) fase de cada paso para los vehículos (GREEN, YELLOW o RED)
-    crossed: float  # peatones que cruzaron
-    crossings: float  # veces que se cerró el paso (cruces)
-    closed_ticks: float  # pasos con el paso en rojo
-    wait_ticks: float  # espera total de los peatones que cruzaron, en pasos
+    phases: np.ndarray  # (n_ticks + 1,) phase of each step for vehicles (GREEN, YELLOW or RED)
+    crossed: float  # pedestrians that crossed
+    crossings: float  # times the crossing was closed (crossings)
+    closed_ticks: float  # steps with the crossing on red
+    wait_ticks: float  # total wait of the pedestrians that crossed, in steps
 
 
 def arrivals(rng_rate: np.random.Generator, rng_count: np.random.Generator, rate: Rate, cfg: SimConfig) -> np.ndarray:
-    """Peatones que llegan en cada uno de los `n_ticks` pasos: Poisson con la tasa (peatones/min) del intervalo, que
-    se sortea de la normal truncada de `rate` cada `rate_interval` s (como la demanda de vehículos)."""
+    """Pedestrians arriving in each of the `n_ticks` steps: Poisson with the interval's rate (pedestrians/min), which
+    is drawn from the truncated normal of `rate` every `rate_interval` s (like the vehicle demand)."""
     n = cfg.n_ticks
     intervals = -(-n // cfg.rate_ticks)
     per_tick = sample_rates(rng_rate, rate, intervals) / 60.0 * DT
@@ -43,7 +43,7 @@ def arrivals(rng_rate: np.random.Generator, rng_count: np.random.Generator, rate
 
 
 def fixed_phases(light: Light, n: int) -> np.ndarray:
-    """Fase de un semáforo de ciclo fijo en cada uno de los pasos [0, n) (la misma que `Light.phase`)."""
+    """Phase of a fixed-cycle traffic light in each of the steps [0, n) (the same as `Light.phase`)."""
     out = np.full(n, GREEN, np.int8)
     if not light.active or light.pedestrian:
         return out
@@ -58,13 +58,13 @@ def fixed_phases(light: Light, n: int) -> np.ndarray:
 
 
 def bump_schedule(counts: np.ndarray, cross_ticks: int, yield_ticks: int, n: int) -> Schedule:
-    """Calendario del paso peatonal de un tope. `counts[t]` peatones llegan a la orilla en el paso t; cada uno espera
-    `yield_ticks` y cruza `cross_ticks`. Mientras cruza alguien el paso está en rojo; el amarillo es la espera del
-    primero de cada cierre."""
+    """Schedule of a bump's pedestrian crossing. `counts[t]` pedestrians arrive at the kerb in step t; each waits
+    `yield_ticks` and crosses for `cross_ticks`. While someone is crossing the crossing is red; the yellow is the wait
+    of the first pedestrian of each closure."""
     phases = np.full(n + 1, GREEN, np.int8)
     crossed = crossings = closed = 0
     wait = 0.0
-    start = red_start = end = -1  # el cierre en curso (end = -1: ninguno)
+    start = red_start = end = -1  # the current closure (end = -1: none)
 
     def close() -> int:
         phases[start : min(red_start, n + 1)] = YELLOW
@@ -74,10 +74,10 @@ def bump_schedule(counts: np.ndarray, cross_ticks: int, yield_ticks: int, n: int
     for t in np.flatnonzero(counts).tolist():
         m = int(counts[t])
         if t < end:
-            if t >= red_start:  # ya están cruzando: se une y alarga el cruce
+            if t >= red_start:  # already crossing: joins and extends the crossing
                 end = max(end, t + cross_ticks)
                 waited = 0
-            else:  # espera en la orilla junto al primero
+            else:  # waits at the kerb along with the first one
                 waited = red_start - t
         else:
             if end >= 0:
@@ -94,14 +94,14 @@ def bump_schedule(counts: np.ndarray, cross_ticks: int, yield_ticks: int, n: int
 
 
 def light_schedule(counts: np.ndarray, light: Light, prev_red: np.ndarray | None, n: int) -> Schedule:
-    """Calendario de un semáforo peatonal. `counts[t]` peatones llegan a la cola en el paso t. `prev_red` (n pasos o
-    más) marca cuándo está en rojo el semáforo de ciclo fijo anterior; None = no hay y solo espera el amarillo."""
+    """Schedule of a pedestrian light. `counts[t]` pedestrians join the queue in step t. `prev_red` (n steps or
+    more) marks when the previous fixed-cycle light is red; None = there is none and only the yellow is waited."""
     phases = np.full(n + 1, GREEN, np.int8)
     yellow, red, green = round(light.yellow / DT), round(light.red / DT), round(light.green / DT)
     arrival = np.flatnonzero(counts).tolist()
-    j = 0  # siguiente llegada que aún no está en la cola
-    waiting: list[tuple[int, int]] = []  # (paso de llegada, peatones)
-    last_end = -green  # el primer cruce no espera verde mínimo
+    j = 0  # next arrival not yet in the queue
+    waiting: list[tuple[int, int]] = []  # (arrival step, pedestrians)
+    last_end = -green  # the first crossing does not wait for the minimum green
     t = 0
     crossed = crossings = closed = 0
     wait = 0.0
@@ -115,7 +115,7 @@ def light_schedule(counts: np.ndarray, light: Light, prev_red: np.ndarray | None
             t = arrival[j]
             continue
         ready = max(t, last_end + green)
-        if prev_red is not None:  # espera al rojo del anterior
+        if prev_red is not None:  # waits for the previous light's red
             hits = np.flatnonzero(prev_red[ready:n])
             if hits.size == 0:
                 break
@@ -123,10 +123,10 @@ def light_schedule(counts: np.ndarray, light: Light, prev_red: np.ndarray | None
         if ready >= n:
             break
         if ready > t:
-            t = ready  # llegan más peatones mientras tanto: se suman a la cola
+            t = ready  # more pedestrians arrive meanwhile: they join the queue
             continue
         red_start = t + yellow
-        while j < len(arrival) and arrival[j] <= red_start:  # los que llegan durante el amarillo también cruzan
+        while j < len(arrival) and arrival[j] <= red_start:  # those arriving during the yellow also cross
             waiting.append((arrival[j], int(counts[arrival[j]])))
             j += 1
         end = red_start + red

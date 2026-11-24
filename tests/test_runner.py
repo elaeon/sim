@@ -1,8 +1,8 @@
 import numpy as np
 
-from trafico.config import SimConfig
-from trafico.metrics import SERIES, RunningStats
-from trafico.runner import run_parallel
+from traffic.config import SimConfig
+from traffic.metrics import SERIES, RunningStats
+from traffic.runner import run_parallel
 
 
 def test_running_stats_matches_numpy_with_nan():
@@ -30,23 +30,23 @@ def test_results_do_not_depend_on_worker_count():
 
 
 def test_simulated_duration_label():
-    from trafico.plotting import _duration
+    from traffic.plotting import _duration
 
     assert _duration(1000) == "16 min 40 s"
     assert _duration(5000) == "1 h 23 min"
     assert _duration(7200) == "2 h"
-    assert _duration(3599.9) == "1 h"  # redondea antes de elegir la unidad
+    assert _duration(3599.9) == "1 h"  # rounds before choosing the unit
     assert _duration(120) == "2 min"
     assert _duration(20) == "20 s"
     assert _duration(360_000) == "100 h"
 
 
 def test_rate_label():
-    from trafico.plotting import _rate_label
+    from traffic.plotting import _rate_label
 
     assert _rate_label(20) == "20/min"
     assert _rate_label(1) == "1/min"
-    assert _rate_label(21.1482) == "21.1/min"  # media real de una tasa variable
+    assert _rate_label(21.1482) == "21.1/min"  # actual mean of a variable rate
     assert _rate_label(0.15) == "1 every 7 min"
     assert _rate_label(0.2) == "1 every 5 min"
     assert _rate_label(0.9) == "1 every 1 min"
@@ -55,8 +55,8 @@ def test_rate_label():
 def test_lane_label_shows_fixed_lanes():
     import dataclasses
 
-    from trafico.config import DEFAULT_SPECS, SimConfig
-    from trafico.plotting import _lane_assignments, _lane_label
+    from traffic.config import DEFAULT_SPECS, SimConfig
+    from traffic.plotting import _lane_assignments, _lane_label
 
     car, bike, bus = DEFAULT_SPECS
     cfg = SimConfig(lanes=3, specs=(car, dataclasses.replace(bike, lane=0), dataclasses.replace(bus, lane=1)))
@@ -65,37 +65,37 @@ def test_lane_label_shows_fixed_lanes():
     assert _lane_label(0, 3, assigned[0]) == "lane 0 (right, bici)"
     assert _lane_label(1, 3, assigned[1]) == "lane 1 (autobús)"
     assert _lane_label(2, 3, assigned[2]) == "lane 2 (left)"
-    assert _lane_assignments(cfg, [0, 2]) == [[], ["autobús"], []]  # la bici no participa
+    assert _lane_assignments(cfg, [0, 2]) == [[], ["autobús"], []]  # the bike does not take part
     cfg = dataclasses.replace(cfg, specs=(car, dataclasses.replace(bike, lane=0, exclusive=True), bus))
     assert _lane_label(0, 3, _lane_assignments(cfg, [0, 1, 2])[0]) == "lane 0 (right, only bici)"
 
 
 def test_lane_colors_are_fixed():
-    from trafico.plotting import TYPE_COLORS, _lane_colors
+    from traffic.plotting import TYPE_COLORS, _lane_colors
 
-    assert _lane_colors(4) == list(TYPE_COLORS[4:])  # rosa, verde, violeta, rojo
-    assert _lane_colors(2) == _lane_colors(4)[:2]  # el color de un carril no cambia con el total
+    assert _lane_colors(4) == list(TYPE_COLORS[4:])  # pink, green, violet, red
+    assert _lane_colors(2) == _lane_colors(4)[:2]  # a lane's colour does not change with the total
     assert len(set(_lane_colors(8))) == 8
     assert len(set(_lane_colors(12))) == 12
 
 
 def test_passenger_histogram_matches_arrivals():
-    from trafico.config import DEFAULT_SPECS
+    from traffic.config import DEFAULT_SPECS
 
     cfg = SimConfig(run=20)
     agg = run_parallel(cfg, 3, 1, 5)
     np.testing.assert_array_equal(agg.pax_hist.sum(axis=1), agg.summary["arrived_veh"].mean * 3)
-    for k, spec in enumerate(DEFAULT_SPECS):  # solo valores dentro del rango configurado
+    for k, spec in enumerate(DEFAULT_SPECS):  # only values within the configured range
         outside = np.ones(agg.pax_hist.shape[1], bool)
         outside[spec.pax_min : spec.pax_max + 1] = False
         assert agg.pax_hist[k, outside].sum() == 0
 
 
 def test_passenger_histogram_bins():
-    from trafico.plotting import MAX_PAX_BARS, _pax_bin_width, _pax_bins
+    from traffic.plotting import MAX_PAX_BARS, _pax_bin_width, _pax_bins
 
     assert _pax_bin_width(6) == 1 and _pax_bin_width(30) == 1
-    assert _pax_bin_width(120) == 5  # autobús [1, 120] → 24 intervalos de 5
+    assert _pax_bin_width(120) == 5  # bus [1, 120] → 24 bins of 5
     assert all(-(-n // _pax_bin_width(n)) <= MAX_PAX_BARS for n in range(1, 256))
     values = np.arange(1, 13)
     lo, hi, total = _pax_bins(values, np.ones(12), 5)
@@ -103,12 +103,12 @@ def test_passenger_histogram_bins():
 
 
 def test_lane_speed_histogram_counts_only_samples_with_vehicles():
-    from trafico.metrics import SPEED_BIN, Recorder, lane_speed_histogram
+    from traffic.metrics import SPEED_BIN, Recorder, lane_speed_histogram
 
     cfg = SimConfig(lanes=2)
     rec = Recorder(4, cfg.n_types, cfg.lanes)
     zeros = np.zeros(cfg.n_types)
-    # Carril 0: 10 m en 1 vehículo·s = 36 km/h, luego detenidos (0 km/h). Carril 1: vacío salvo una muestra.
+    # Lane 0: 10 m in 1 vehicle·s = 36 km/h, then stopped (0 km/h). Lane 1: empty except for one sample.
     for dist, time in (([10, 0], [1, 0]), ([0, 0], [2, 0]), ([0, 5], [0, 1]), ([0, 0], [0, 0])):
         rec.record(zeros, zeros, zeros, zeros, np.zeros(2), np.array(dist, float), np.array(time, float), np.zeros(2), np.zeros(2), np.zeros(2))
     hist = lane_speed_histogram(rec, cfg)
@@ -117,10 +117,10 @@ def test_lane_speed_histogram_counts_only_samples_with_vehicles():
 
 
 def test_outputs_without_traffic_light(tmp_path):
-    """Sin semáforo se generan la gráfica, el CSV y el diagrama espacio-tiempo, sin fases ni textos de semáforo."""
-    from trafico.cli import write_csv
-    from trafico.movement import plot_space_time, record
-    from trafico.plotting import _titles, phase_handles, plot_mobility
+    """Without a traffic light the plot, the CSV and the space-time diagram are written, without phases or traffic light texts."""
+    from traffic.cli import write_csv
+    from traffic.movement import plot_space_time, record
+    from traffic.plotting import _titles, phase_handles, plot_mobility
 
     cfg = SimConfig(length=150, lanes=2, rates=(20, 4, 1), run=10, traffic_light=False)
     agg = run_parallel(cfg, 2, 1, 5)
@@ -133,13 +133,13 @@ def test_outputs_without_traffic_light(tmp_path):
 
 
 def test_emission_outputs(tmp_path):
-    """Con autos que emiten: filas del resumen, tabla al acelerar, columnas del CSV, CSV y figura por posición, y la
-    fila de emisiones en la gráfica. Sin tipos que emitan, nada de eso."""
+    """With cars that emit: summary rows, acceleration table, CSV columns, per-position CSV and figure, and the
+    emissions row in the plot. Without types that emit, none of that."""
     from dataclasses import replace
 
-    from trafico.cli import format_summary, write_csv, write_emissions_csv
-    from trafico.config import DEFAULT_SPECS
-    from trafico.plotting import plot_emissions_by_position, plot_mobility
+    from traffic.cli import format_summary, write_csv, write_emissions_csv
+    from traffic.config import DEFAULT_SPECS
+    from traffic.plotting import plot_emissions_by_position, plot_mobility
 
     car = replace(DEFAULT_SPECS[0], accel=2.5, decel=4.5)
     cfg = SimConfig(length=150, lanes=2, rates=(10, 2, 0), run=10, specs=(car, *DEFAULT_SPECS[1:]),
@@ -148,10 +148,10 @@ def test_emission_outputs(tmp_path):
     text = format_summary(agg)
     assert "CO2 (g/km)" in text and "NOx excess vs free flow (%)" in text and "PM" not in text
     assert "0→20 km/h in 2.2 s" in text
-    # Combustible del CO2: L/100 km = g/km de CO2 ÷ g/L × 100, y su costo al precio de la gasolina.
+    # Fuel from CO2: L/100 km = g/km of CO2 ÷ g/L × 100, and its cost at the petrol price.
     assert "Fuel (L/100 km)" in text and "Cost per trip (MXN)" in text
     assert "40 km/h: 7.6 L/100 km (13.1 km/L, 1.83 MXN/km) · physical 4.8 L/100 km" in text
-    assert "60 km/h:" not in text  # el auto incorporado no pasa de 50 km/h
+    assert "60 km/h:" not in text  # the built-in car does not go above 50 km/h
     write_csv(agg, tmp_path / "series.csv")
     header = (tmp_path / "series.csv").read_text().splitlines()[0]
     assert "emis_co2_g_min_auto_mean" in header and "fuel_l_min_auto_mean" in header
@@ -167,11 +167,11 @@ def test_emission_outputs(tmp_path):
 
 
 def test_run_many_matches_separate_runs_in_any_worker_count():
-    """Un solo grupo de procesos para varias configuraciones da lo mismo que correr cada una por separado (mismas
-    semillas), en serie o en paralelo: en serie, cada configuración recibe semillas nuevas (una SeedSequence cuenta
-    los hijos que deriva y la réplica deriva los suyos)."""
-    from trafico.config import SpeedBump
-    from trafico.runner import run_many
+    """A single process pool for several configurations gives the same as running each one separately (the same
+    seeds), serially or in parallel: serially, each configuration gets new seeds (a SeedSequence counts
+    the children it derives and the replica derives its own)."""
+    from traffic.config import SpeedBump
+    from traffic.runner import run_many
 
     cfgs = [SimConfig(length=150, lanes=2, run=3), SimConfig(length=150, lanes=2, run=3, speed_bumps=(SpeedBump(60.0),))]
     alone = [run_parallel(cfg, 2, 1, 9) for cfg in cfgs]
@@ -182,4 +182,4 @@ def test_run_many_matches_separate_runs_in_any_worker_count():
         for a, b in zip(alone, together):
             for key, stats in a.summary.items():
                 np.testing.assert_array_equal(stats.mean, b.summary[key].mean)
-    assert calls[:4] == [(0, 1, 2), (0, 2, 2), (1, 1, 2), (1, 2, 2)]  # progreso en orden
+    assert calls[:4] == [(0, 1, 2), (0, 2, 2), (1, 1, 2), (1, 2, 2)]  # progress in order

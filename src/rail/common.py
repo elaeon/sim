@@ -1,6 +1,6 @@
 """Small shared helpers: results folders and video encoder choice.
 
-Copied from the traffic package (trafico/settings.py, trafico/movement.py) so that rail stays
+Copied from the traffic package (traffic/settings.py, traffic/movement.py) so that rail stays
 independent of it. The colour palette lives in rail.theme.
 """
 

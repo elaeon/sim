@@ -1,30 +1,32 @@
-"""Separación entre topes o semáforos: cuánto deben alejarse dos topes (`uv run traffic-emissions --spacing`) o dos
-semáforos (`--light-spacing`) para que la huella de emisiones del primero se diluya antes del segundo.
+"""Spacing between bumps or traffic lights: how far apart two bumps (`uv run traffic-emissions --spacing`) or two
+traffic lights (`--light-spacing`) must be for the emission footprint of the first to dilute before the second.
 
-Corre, con la misma semilla que `traffic`, la calle sin tope, con un solo tope en `P1` y con dos topes en `P1` y
-`P1 + d` para cada separación `d` (o, con `--chain N`, con una cadena de N topes en `P1`, `P1 + d`, …, `P1 + (N − 1)·d`).
-Del perfil de emisiones a lo largo de la calle (g/(m·h), todos los carriles) de cada
-escenario se calculan, por contaminante:
+With the same seed as `traffic`, it runs the street without a bump, with a single bump at `P1` and with two bumps at
+`P1` and `P1 + d` for each spacing `d` (or, with `--chain N`, with a chain of N bumps at `P1`, `P1 + d`, …,
+`P1 + (N − 1)·d`). From each scenario's emission profile along the street (g/(m·h), all lanes) it computes, per
+pollutant:
 
-  * aditividad R(d) = N(d) / (n·N1), con n los topes de la cadena (2 por omisión), N el exceso neto sobre la calle sin
-    tope (∫ (E − base) dx) y N1 el de un tope solo: 1 = la cadena emite como n topes aislados; menos de 1, las estelas se
-    solapan;
-  * costo de cada tope añadido (N − N1) / ((n − 1)·N1), en topes aislados, y por metro de separación: cuánto emite de
-    más un tope pegado a los anteriores y cuánto cuesta cada metro de zona lenta que añade;
-  * huella L_h: distancia tras un tope solo hasta que el exceso baja de `umbral` × su pico;
-  * media en el tramo [P1, Pn + L_h] contra la de la calle sin tope;
-  * exceso medio entre el primer y el segundo tope (÷ pico de un tope solo);
-  * gradiente medio |dE/dx| del perfil en todo ese tramo (sin ventanas interiores: no depende de dónde caiga su borde).
+  * additivity R(d) = N(d) / (n·N1), with n the bumps of the chain (2 by default), N the net excess over the street
+    without a bump (∫ (E − base) dx) and N1 that of a single bump: 1 = the chain emits like n isolated bumps; below 1,
+    the wakes overlap;
+  * cost of each added bump (N − N1) / ((n − 1)·N1), in isolated bumps, and per metre of spacing: how much more a bump
+    right after the previous ones emits and how much each metre of slow zone it adds costs;
+  * footprint L_h: distance after a single bump until the excess falls below `threshold` × its peak;
+  * mean over the stretch [P1, Pn + L_h] against that of the street without a bump;
+  * mean excess between the first and the second bump (÷ peak of a single bump);
+  * mean gradient |dE/dx| of the profile over that whole stretch (no inner windows: it does not depend on where
+    their edge falls).
 
-La separación mínima es la menor de la lista donde la cadena es aditiva (|R − 1| ≤ tolerancia) y el segundo tope queda
-fuera de la huella del primero (d ≥ L_h).
+The minimum spacing is the smallest in the list where the chain is additive (|R − 1| ≤ tolerance) and the second bump
+is outside the footprint of the first (d ≥ L_h).
 
-Con semáforos (`kind = "semaforo"`) la calle no tiene los semáforos ni los topes de la configuración (salvo los topes que
-se pidan fijos): cada escenario pone semáforos de ciclo fijo en P1, P1 + d, …, y con el desfase «rojo» cada uno pasa a rojo
-cuando el anterior pasa a verde, así que el pelotón que sale de uno encuentra el siguiente en rojo. La huella de un
-semáforo tiene dos lados: la cola y el frenado antes de él (L_antes) y la aceleración después (L_despues); el segundo
-queda fuera de la huella del primero si d ≥ L_antes + L_despues, y el tramo de la media y del gradiente empieza en
-P1 − L_antes. Se calcula además la demora: el tiempo de recorrido añadido por la cadena ÷ (n × el de un semáforo solo).
+With traffic lights (`kind = "semaforo"`) the street has neither the configuration's lights nor its bumps (except the
+bumps requested as fixed): each scenario places fixed-cycle lights at P1, P1 + d, …, and with the «red» offset each
+one turns red when the previous one turns green, so the platoon leaving one finds the next one red. A traffic
+light's footprint has two sides: the queue and braking before it (L_antes) and the acceleration after it
+(L_despues); the second light is outside the first one's footprint if d ≥ L_antes + L_despues, and the stretch of the
+mean and the gradient starts at P1 − L_antes. It also computes the delay: the travel time added by the chain ÷
+(n × that of a single light).
 """
 
 from __future__ import annotations
@@ -36,10 +38,10 @@ from pathlib import Path
 
 import numpy as np
 
-from trafico.config import DT, POLLUTANT_LABELS, POLLUTANTS, Light, SimConfig
-from trafico.emission_scenarios import DATA_NAME, META_NAME, scenario_bumps
-from trafico.emissions import EMIS_BIN, unit
-from trafico.settings import ConfigError, RunOptions, validate_config
+from traffic.config import DT, POLLUTANT_LABELS, POLLUTANTS, Light, SimConfig
+from traffic.emission_scenarios import DATA_NAME, META_NAME, scenario_bumps
+from traffic.emissions import EMIS_BIN, unit
+from traffic.settings import ConfigError, RunOptions, validate_config
 
 PLOT_NAME = "bump_spacing.png"
 TABLE_CSV = "bump_spacing.csv"
@@ -47,14 +49,14 @@ PROFILE_CSV = "spacing_profiles.csv"
 SUMMARY_NAME = "summary.txt"
 DEFAULT_DISTANCES = (10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 80.0, 100.0)
 MODE = "separacion"
-EDGE = 5.0  # m junto a cada tope que se dejan fuera del exceso medio entre topes
+EDGE = 5.0  # m next to each bump left out of the mean excess between bumps
 BUMP, LIGHT = "tope", "semaforo"
 LIGHT_DISTANCES = (25.0, 50.0, 75.0, 100.0, 150.0, 200.0, 250.0, 300.0)
-LIGHT_FIRST = 100.0  # m, primer semáforo por omisión: deja sitio a su cola
-LIGHT_CYCLE = Light(0.0, red=30.0, green=30.0, yellow=3.0)  # semáforo por omisión si la configuración no tiene uno de ciclo fijo
-LIGHT_ROOM = 150.0  # m tras el último semáforo al ampliar el tramo: su cola de salida y la aceleración
-# Desfase entre semáforos consecutivos: el siguiente pasa a rojo al llegar el pelotón (el peor caso), a verde al llegar
-# (onda verde) o tiene la misma fase.
+LIGHT_FIRST = 100.0  # m, default first traffic light: leaves room for its queue
+LIGHT_CYCLE = Light(0.0, red=30.0, green=30.0, yellow=3.0)  # default traffic light if the configuration has no fixed-cycle one
+LIGHT_ROOM = 150.0  # m after the last light when extending the segment: its exit queue and the acceleration
+# Offset between consecutive lights: the next one turns red when the platoon arrives (the worst case), green when
+# it arrives (green wave) or has the same phase.
 OFFSETS = ("rojo", "verde", "igual")
 
 
@@ -76,12 +78,13 @@ NOUNS = {BUMP: Nouns("bump", "bumps"), LIGHT: Nouns("traffic light", "traffic li
 
 
 def kind_of(meta: dict) -> str:
-    """Qué se separa en un barrido ya corrido: «tope» (también en las carpetas anteriores a los semáforos) o «semaforo»."""
+    """What is being spaced in a sweep that has already run: «tope» (also in the folders from before traffic lights) or
+    «semaforo»."""
     return meta.get("elemento", BUMP)
 
 
 def first_position(meta: dict) -> float:
-    """Posición (m) del primer tope o semáforo del barrido."""
+    """Position (m) of the first bump or traffic light of the sweep."""
     return meta["primer_semaforo_m"] if kind_of(meta) == LIGHT else meta["primer_tope_m"]
 
 
@@ -95,23 +98,23 @@ def table_name(meta: dict) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Spacing:
-    """Qué se compara."""
+    """What is compared."""
 
-    first: float  # m, posición del primer tope
-    distances: tuple[float, ...]  # m entre el primer y el segundo tope
-    bump_lanes: tuple[int, ...] | None  # carriles de los topes (ya renumerados); None = los de la configuración
-    light: bool | None  # semáforos activados en todos los escenarios; None = como en la configuración
-    length: float | None  # m del tramo; None = [road] length
-    tolerance: float  # |R − 1| máximo para considerar aditiva la cadena
-    threshold: float  # fracción del pico de un tope bajo la cual el exceso cuenta como diluido
+    first: float  # m, position of the first bump
+    distances: tuple[float, ...]  # m between the first and the second bump
+    bump_lanes: tuple[int, ...] | None  # lanes of the bumps (already renumbered); None = those of the configuration
+    light: bool | None  # traffic lights enabled in every scenario; None = as in the configuration
+    length: float | None  # m of the segment; None = [road] length
+    tolerance: float  # maximum |R − 1| for the chain to count as additive
+    threshold: float  # fraction of a bump's peak below which the excess counts as diluted
     replicas: int
-    run: float  # s de proceso
-    count: int = 2  # topes de la cadena (2 = una pareja)
+    run: float  # process s
+    count: int = 2  # bumps in the chain (2 = a pair)
     kind: str = BUMP  # «tope» | «semaforo»
-    cycle: Light | None = None  # con semáforos: las fases de todos (rojo, verde, amarillo); la posición no se usa
-    offset_mode: str = "rojo"  # con semáforos: desfase entre consecutivos (ver OFFSETS); uno por tramo separado por comas
-    bumps: tuple[float, ...] = ()  # con semáforos: topes fijos en todos los escenarios (m)
-    fixed_gaps: tuple[float, ...] = ()  # separaciones fijas (m) tras la que se barre: count − 2 valores; vacía = todas d
+    cycle: Light | None = None  # with lights: the phases of all (red, green, yellow); the position is not used
+    offset_mode: str = "rojo"  # with lights: offset between consecutive ones (see OFFSETS); one per gap, comma-separated
+    bumps: tuple[float, ...] = ()  # with traffic lights: bumps fixed in every scenario (m)
+    fixed_gaps: tuple[float, ...] = ()  # fixed spacings (m) after the swept one: count − 2 values; empty = all d
 
     @property
     def nouns(self) -> Nouns:
@@ -119,12 +122,12 @@ class Spacing:
 
     @property
     def offsets(self) -> tuple[str, ...]:
-        """Desfase de cada tramo de la cadena (count − 1): uno para todos o uno por tramo."""
+        """Offset of each gap of the chain (count − 1): one for all or one per gap."""
         modes = tuple(self.offset_mode.split(","))
         return modes * (self.count - 1) if len(modes) == 1 else modes
 
     def gaps(self, d: float) -> tuple[float, ...]:
-        """Separación de cada tramo de la cadena: d en el primero y, con `fixed_gaps`, esas en los siguientes."""
+        """Spacing of each gap of the chain: d in the first and, with `fixed_gaps`, those in the following ones."""
         return (d, *self.fixed_gaps) if self.fixed_gaps else (d,) * (self.count - 1)
 
     def positions(self, d: float) -> tuple[float, ...]:
@@ -132,33 +135,33 @@ class Spacing:
 
 
 def chain_span(meta: dict, d: float) -> float:
-    """m entre el primer y el último elemento de la cadena con separación d (con las separaciones fijas, si hay)."""
+    """m between the first and the last element of the chain with spacing d (with the fixed spacings, if any)."""
     fixed = meta.get("separaciones_fijas_m") or []
     return d + sum(fixed) if fixed else (int(meta.get("topes_por_cadena", 2)) - 1) * d
 
 
 def platoon_type(cfg: SimConfig) -> int:
-    """El tipo que marca la llegada del pelotón: el de mayor tasa entre los que participan."""
+    """The type that marks the platoon's arrival: the one with the highest rate among the participating types."""
     return max((k for k, rate in enumerate(cfg.rates) if rate > 0), key=lambda k: cfg.rates[k])
 
 
 def travel_time(cfg: SimConfig, d: float) -> float:
-    """s que tarda el tipo del pelotón (`platoon_type`) en recorrer d m desde detenido: acelera con su `accel` hasta su
-    velocidad a flujo libre y sigue a esa velocidad (sin `accel`, sale ya a esa velocidad)."""
+    """s the platoon type (`platoon_type`) takes to cover d m from a standstill: it accelerates with its `accel` up to
+    its free-flow speed and continues at that speed (without `accel`, it starts at that speed)."""
     k = platoon_type(cfg)
     v, a = cfg.free_flow_kmh(k) / 3.6, cfg.specs[k].accel
     if not a:
         return d / v
-    reach = v * v / (2 * a)  # m hasta alcanzar la velocidad
+    reach = v * v / (2 * a)  # m until reaching the speed
     return float(np.sqrt(2 * d / a)) if d < reach else d / v + v / (2 * a)
 
 
 def chain_lights(s: Spacing, positions: tuple[float, ...], cfg: SimConfig) -> tuple[Light, ...]:
-    """Semáforos de ciclo fijo en esas posiciones, como `s.cycle`, empezando en rojo. Cada uno se retrasa respecto del
-    anterior según el desfase de su tramo (`s.offsets`), con τ lo que tarda la cabeza del pelotón en recorrerlo desde
-    detenida (`travel_time`): «rojo», rojo + τ (pasa a rojo justo cuando llega el pelotón que salió del anterior al
-    ponerse en verde); «verde», τ (pasa a verde justo cuando llega: onda verde); «igual», 0. Módulo el ciclo, redondeado
-    al paso."""
+    """Fixed-cycle traffic lights at those positions, like `s.cycle`, starting on red. Each one is delayed with respect
+    to the previous one according to the offset of its gap (`s.offsets`), with τ the time the head of the platoon takes
+    to cover it from a standstill (`travel_time`): «rojo», red + τ (it turns red just as the platoon that left the
+    previous one on green arrives); «verde», τ (it turns green just as it arrives: green wave); «igual», 0. Modulo the
+    cycle, rounded to the step."""
     c = s.cycle or LIGHT_CYCLE
     cycle = c.red + c.green + c.yellow
     shift, out = 0.0, []
@@ -173,13 +176,13 @@ def chain_lights(s: Spacing, positions: tuple[float, ...], cfg: SimConfig) -> tu
 
 
 def build_configs(reduced: SimConfig, s: Spacing) -> tuple[list[tuple[str, SimConfig]], list[float]]:
-    """([(nombre, configuración validada)], separaciones omitidas por no caber). Orden: sin tope, un tope en `first` y un
-    escenario por separación con `count` topes. El último debe quedar al menos un intervalo de EMIS_BIN antes del final
-    del tramo."""
+    """([(name, validated configuration)], spacings left out because they do not fit). Order: no bump, one bump at
+    `first` and one scenario per spacing with `count` bumps. The last one must be at least one EMIS_BIN interval before
+    the end of the segment."""
     base = reduced if s.length is None else replace(reduced, length=s.length)
     base = base if s.light is None else base.with_lights(s.light)
     nn, flag = s.nouns, "--first-bump" if s.kind == BUMP else "--first-light"
-    if s.kind == LIGHT:  # solo los semáforos del barrido y los topes fijos que se pidan
+    if s.kind == LIGHT:  # only the sweep's traffic lights and the requested fixed bumps
         base = replace(base, traffic_light=False, extra_lights=(),
                        speed_bumps=scenario_bumps(base, tuple(sorted(s.bumps)), s.bump_lanes))  # fmt: skip
     if not 0 < s.first < base.length:
@@ -226,8 +229,8 @@ def chain_name(s: Spacing, d: float) -> str:
 
 
 def profiles(meta: dict, data: dict[str, np.ndarray]) -> np.ndarray:
-    """Perfil de emisiones a lo largo de la calle, (escenario, contaminante de meta, intervalo), en g/(m·h) sumando los
-    carriles."""
+    """Emission profile along the street, (scenario, target pollutant, bin), in g/(m·h) summing the
+    lanes."""
     pidx = [POLLUTANTS.index(p) for p in meta["contaminantes"]]
     pos = data["emissions_pos"].sum(axis=2) / EMIS_BIN / (meta["s_simulados"] / 3600.0)
     return pos[:, pidx, :]
@@ -238,8 +241,8 @@ def _first(distances: list[float], ok: np.ndarray) -> float | None:
 
 
 def travel_times(data: dict[str, np.ndarray]) -> np.ndarray | None:
-    """Tiempo de recorrido medio de cada escenario (s), ponderado por los vehículos de cada tipo que cruzan; None si los
-    datos no lo traen."""
+    """Mean travel time of each scenario (s), weighted by the crossing vehicles of each type; None if the
+    data does not include it."""
     if "travel_time" not in data or "crossed_veh" not in data:
         return None
     tt, w = np.asarray(data["travel_time"], float), np.asarray(data["crossed_veh"], float)
@@ -249,16 +252,16 @@ def travel_times(data: dict[str, np.ndarray]) -> np.ndarray | None:
 
 
 def analyze(meta: dict, data: dict[str, np.ndarray]) -> dict:
-    """Métricas de la separación entre topes o semáforos (ver el módulo). Por contaminante: arreglos con un valor por
-    separación (NaN donde no aplica), la huella, el pico y las separaciones mínimas (None si ninguna de la lista
-    cumple)."""
+    """Metrics of the spacing between bumps or traffic lights (see the module). Per pollutant: arrays with one value per
+    spacing (NaN where it does not apply), the footprint, the peak and the minimum spacings (None if none in the list
+    qualifies)."""
     prof = profiles(meta, data)
     x = (np.arange(prof.shape[2]) + 0.5) * EMIS_BIN
     first, dist = first_position(meta), list(meta["distancias_m"])
     tol, thr = meta["tolerancia"], meta["umbral"]
     n = int(meta.get("topes_por_cadena", 2))
     light = kind_of(meta) == LIGHT
-    i0 = int(np.searchsorted(x, first))  # primer intervalo con el centro en P1 o después
+    i0 = int(np.searchsorted(x, first))  # first bin with its centre at P1 or later
     out: dict = {"distancias_m": dist, "x_m": x, "pollutants": {}}
     times = travel_times(data)
     delay = np.full(len(dist), np.nan)
@@ -269,16 +272,16 @@ def analyze(meta: dict, data: dict[str, np.ndarray]) -> dict:
     crossed = np.asarray(data["crossed_veh"], float).sum(axis=1) if "crossed_veh" in data else None
     out["salen"] = (crossed[2:] / crossed[0] if crossed is not None and crossed[0] > 0
                     else np.full(len(dist), np.nan))  # fmt: skip
-    blocked = np.zeros(len(dist), bool)  # la cola de la cadena llega a la entrada del tramo (con semáforos)
+    blocked = np.zeros(len(dist), bool)  # the chain's queue reaches the segment entry (with traffic lights)
     for pi, pol in enumerate(meta["contaminantes"]):
         base, single = prof[0, pi], prof[1, pi]
         ex1 = single - base
         peak = float(ex1.max())
         n1 = float(ex1.sum() * EMIS_BIN)
         i_pk = int(np.argmax(ex1))
-        # Huella después: desde el pico (con semáforos, desde P1 si el pico es la cola) hasta que el exceso baja de
-        # umbral × pico. Antes: hasta el intervalo anterior al más lejano antes de P1 que lo supera (con las mismas
-        # semillas, aguas arriba de la cola el exceso es 0); si ese es el primero, la cola llega a la entrada.
+        # Footprint after: from the peak (with traffic lights, from P1 if the peak is the queue) until the excess falls below
+        # threshold × peak. Before: up to the bin before the farthest one before P1 that exceeds it (with the same
+        # seeds, upstream of the queue the excess is 0); if that is the first bin, the queue reaches the entry.
         start = max(i_pk, i0) if light else i_pk
         below = np.flatnonzero(ex1[start:] <= thr * peak)
         length_h = float(x[start + below[0]] - first) if below.size else float("nan")
@@ -286,7 +289,7 @@ def analyze(meta: dict, data: dict[str, np.ndarray]) -> dict:
         at_entry = bool(above.size and above[0] == 0)
         length_b = float(first) if at_entry else float(first - x[above[0] - 1]) if above.size else 0.0
         reaches_entry = light and at_entry
-        lead = length_b if light else 0.0  # el tramo de la media y del gradiente empieza en P1 − lead
+        lead = length_b if light else 0.0  # the stretch of the mean and the gradient starts at P1 − lead
         after = (x >= first) & (x <= first + (length_h if np.isfinite(length_h) else x[-1]))
         g1 = float(np.abs(np.diff(single[after])).max() / EMIS_BIN) if after.sum() > 1 else float("nan")
         cols = {k: np.full(len(dist), np.nan) for k in
@@ -311,14 +314,14 @@ def analyze(meta: dict, data: dict[str, np.ndarray]) -> dict:
             if between.any():
                 cols["exceso_entre"][j] = ex[between].mean() / peak if peak > 0 else np.nan
             blocked[j] |= light and peak > 0 and ex[0] > thr * peak
-        reach = length_h + lead  # el segundo debe quedar fuera de la estela del primero y su cola, fuera también
+        reach = length_h + lead  # the second must be outside the wake of the first, and its queue outside too
         d_wake = _first(dist, np.array(dist) >= reach) if np.isfinite(reach) else None
         stable = np.full(len(dist), np.nan)
         if light:
-            # Con el desfase «rojo» el pelotón entero se detiene en el siguiente semáforo (en uno aislado, solo los que
-            # llegan en rojo): la pareja no tiende a dos semáforos aislados sino a la pareja lejana. Se pide que la
-            # emisión ya no cambie al alejar el segundo: dentro de ±tol de la más separada en esa d y en todas las
-            # mayores, sin contar la más separada sola ni separaciones donde la cola llega a la entrada.
+            # With the «red» offset the whole platoon stops at the next light (at an isolated one, only those that
+            # arrive on red): the pair does not tend to two isolated lights but to the distant pair. It requires that the
+            # emission no longer changes as the second moves away: within ±tol of the widest spacing at that d and at all
+            # larger ones, not counting the widest alone or spacings where the queue reaches the entry.
             stable = cols["aditividad"] / cols["aditividad"][-1]
             ok = (np.abs(stable - 1) <= tol) & ~blocked
             ok = np.logical_and.accumulate(ok[::-1])[::-1]
@@ -344,7 +347,7 @@ def analyze(meta: dict, data: dict[str, np.ndarray]) -> dict:
 
 def metadata(base_meta: dict, s: Spacing, kept: list[float], skipped: list[float],
              cfg: SimConfig | None = None) -> dict:
-    """`emission_scenarios.metadata` más lo propio del barrido, para describir, graficar y repetir."""
+    """`emission_scenarios.metadata` plus what belongs to the sweep, to describe, plot and repeat it."""
     meta = {
         **base_meta, "modo": MODE, "elemento": s.kind, "distancias_m": kept, "omitidas_m": skipped,
         "tolerancia": s.tolerance, "umbral": s.threshold, "topes_por_cadena": s.count,
@@ -356,14 +359,14 @@ def metadata(base_meta: dict, s: Spacing, kept: list[float], skipped: list[float
         **meta, "primer_semaforo_m": s.first, "ciclo": {"rojo_s": c.red, "verde_s": c.green, "amarillo_s": c.yellow},
         "desfase": s.offset_mode, "topes_fijos_m": sorted(s.bumps), "separaciones_fijas_m": list(s.fixed_gaps),
     }  # fmt: skip
-    if cfg is not None:  # el viaje que fija el desfase «rojo»: quién encabeza el pelotón y cuánto tarda en cada d
+    if cfg is not None:  # the trip that sets the «red» offset: who leads the platoon and how long it takes at each d
         meta["tipo_peloton"] = cfg.specs[platoon_type(cfg)].name
         meta["viaje_s"] = [round(travel_time(cfg, d), 2) for d in kept]
     return meta
 
 
 def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
-    """Datos crudos, parámetros, tablas y perfiles; devuelve el resumen en texto."""
+    """Raw data, parameters, tables and profiles; returns the summary as text."""
     np.savez(folder / DATA_NAME, **data)
     (folder / META_NAME).write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     result = analyze(meta, data)
@@ -394,7 +397,7 @@ def write_outputs(folder: Path, meta: dict, data: dict[str, np.ndarray]) -> str:
 
 
 def results_metrics(meta: dict, data: dict[str, np.ndarray]) -> dict:
-    """Métricas de `resultados.json`: las de `analyze` por contaminante (un valor por separación) y la separación mínima."""
+    """`results.json` metrics: those of `analyze` per pollutant (one value per spacing) and the minimum spacing."""
     r = analyze(meta, data)
     keep = ("aditividad", "media_tramo", "exceso_entre", "gradiente_tramo", "pendiente_max", "costo_tope", "costo_por_m",
             "estabilidad", "pico", "huella_m", "huella_antes_m", "pendiente_tope_solo", "neto_tope_solo", "d_aditiva",
@@ -421,8 +424,8 @@ def _dist(d: float | None) -> str:
 
 
 def worst_case(meta: dict) -> bool:
-    """Todos los semáforos de la cadena pasan a rojo al llegar el pelotón: tiene sentido buscar la separación mínima.
-    Con onda verde o fases iguales en algún tramo, lo que se mide es a cuántos semáforos aislados equivale la cadena."""
+    """Every light in the chain turns red when the platoon arrives: looking for the minimum spacing makes sense.
+    With a green wave or equal phases in some gap, what is measured is how many isolated lights the chain equals."""
     return set(meta.get("desfase", "rojo").split(",")) == {"rojo"}
 
 
@@ -458,7 +461,7 @@ def cycle_text(meta: dict) -> str:
 
 
 def summary_text(meta: dict, result: dict) -> str:
-    """Tabla por separación y contaminante, la huella de un tope (o semáforo) y las separaciones mínimas."""
+    """Table per spacing and pollutant, the footprint of a bump (or traffic light) and the minimum spacings."""
     dist = result["distancias_m"]
     n = int(meta.get("topes_por_cadena", 2))
     light = kind_of(meta) == LIGHT
@@ -539,7 +542,7 @@ def legend_light(dist: list[float]) -> str:
 
 def _light_rows(pol: str, r: dict, result: dict, dist: list[float], wake: str, scale: float, name: str,
                 n: int) -> list[str]:
-    """Tabla de un contaminante en el barrido de semáforos."""
+    """Table of one pollutant in the traffic light sweep."""
     delay, out_ratio, blocked = result["demora"], result["salen"], result["cola_entrada_d"]
     lines = [
         "",
