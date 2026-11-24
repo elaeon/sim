@@ -1,4 +1,4 @@
-"""Línea de comandos: `uv run trafico [nombre | carpeta]`."""
+"""Línea de comandos: `uv run traffic [nombre | carpeta]`."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ SUMMARY_NAME = "resumen.txt"
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="trafico",
+        prog="traffic",
         description=(
             "Simula el flujo vehicular en un tramo de vía con semáforo al final y grafica la "
             f"capacidad de movilidad de pasajeros. Todos los parámetros se leen de {CONFIG_NAME}; "
@@ -482,7 +482,7 @@ def _add_json(parser: argparse.ArgumentParser) -> None:
 
 
 def run_metrics(agg: Aggregate) -> dict:
-    """Métricas de `resultados.json` de una corrida de `trafico`: por tipo los mismos estadísticos de la tabla del
+    """Métricas de `resultados.json` de una corrida de `traffic`: por tipo los mismos estadísticos de la tabla del
     resumen (media entre réplicas), por carril, peatones y la ejecución."""
     cfg = agg.cfg
     rows, stats = summary_rows(agg)
@@ -573,7 +573,7 @@ def run(argv: list[str] | None = None) -> Path:
         for path in visualize(cfg, seed, settings.animation, run_dir, run_dir.name):
             print(f"  {path.name}")
     write_results(run_dir, document(
-        "corrida", run_dir, command=("uv run trafico " + " ".join(argv)).strip(), seed=seed, replicas=opts.replicas,
+        "corrida", run_dir, command=("uv run traffic " + " ".join(argv)).strip(), seed=seed, replicas=opts.replicas,
         sim_seconds=cfg.sim_seconds, metrics=run_metrics(agg)))  # fmt: skip
     print(f"\nResultados en {run_dir}")
     return run_dir
@@ -583,12 +583,12 @@ def main(argv: list[str] | None = None) -> None:
     run(argv)
 
 
-# ------------------------------------------------------------------ trafico-ver
+# ------------------------------------------------------------------ traffic-ver
 
 
 def build_viewer_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="trafico-ver",
+        prog="traffic-ver",
         description=(
             "Visualiza el movimiento de los vehículos de una corrida: vuelve a simular una réplica "
             "(idéntica, con la semilla de la copia de la configuración) y guarda en la carpeta un "
@@ -628,7 +628,7 @@ def view(argv: list[str] | None = None) -> list[Path]:
             root = load_settings(default_config_path()).run.output_dir
             folder = latest_run_dir(resolve_output_dir(root))
             if folder is None:
-                raise ConfigError(f"no hay corridas en {resolve_output_dir(root)}; corre primero `uv run trafico`")
+                raise ConfigError(f"no hay corridas en {resolve_output_dir(root)}; corre primero `uv run traffic`")
         else:
             folder = Path(args.carpeta).expanduser()
             if not (folder / CONFIG_NAME).is_file():
@@ -658,14 +658,14 @@ def view_main(argv: list[str] | None = None) -> None:
     view(argv)
 
 
-# ------------------------------------------------------------ trafico-variantes
+# ------------------------------------------------------------ traffic-variantes
 
 VARIANTS_NAME = "variantes_semaforo"
 
 
 def build_variants_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="trafico-variantes",
+        prog="traffic-variantes",
         description=(
             f"Compara variantes de un escenario: corre la configuración ({CONFIG_NAME}) con cada combinación de "
             "largo de tramo y reparto del semáforo, y grafica la velocidad media de cada carril y los vehículos en "
@@ -675,7 +675,7 @@ def build_variants_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "target", nargs="?", default=None, metavar="nombre | carpeta",
-        help=f"como en `trafico`: una carpeta de la que se lee su {CONFIG_NAME}, o el nombre de la comparación "
+        help=f"como en `traffic`: una carpeta de la que se lee su {CONFIG_NAME}, o el nombre de la comparación "
              f"(por defecto, {VARIANTS_NAME}) con {default_config_path()}",
     )  # fmt: skip
     p.add_argument("--largos", type=float, nargs="+", metavar="M",
@@ -800,7 +800,7 @@ LIGHT_SPACING_NAME = "separacion_semaforos"
 
 def build_emissions_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="trafico-emisiones",
+        prog="traffic-emisiones",
         description=(
             f"Compara las emisiones de una calle en varios escenarios: corre la configuración ({CONFIG_NAME}) sin "
             "tope y con topes en las posiciones dadas y, si se pide, con y sin semáforo, con la misma semilla. "
@@ -811,7 +811,7 @@ def build_emissions_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "target", nargs="?", default=None, metavar="nombre | carpeta",
-        help=f"como en `trafico`: una carpeta de la que se lee su {CONFIG_NAME}, o el nombre de la comparación "
+        help=f"como en `traffic`: una carpeta de la que se lee su {CONFIG_NAME}, o el nombre de la comparación "
              f"(por defecto, {EMISSIONS_NAME}) con {default_config_path()}",
     )  # fmt: skip
     p.add_argument("--topes", nargs="+", metavar="M|M,M|sin",
@@ -1002,7 +1002,7 @@ def _cycle(text: str):
 
 
 def _spacing(kind, args, argv, parser, target, settings, reduced, lanes, length) -> Path:
-    """`trafico-emisiones --separacion` (kind «tope») o `--separacion-semaforos` (kind «semaforo»): barrido de la
+    """`traffic-emisiones --separacion` (kind «tope») o `--separacion-semaforos` (kind «semaforo»): barrido de la
     distancia entre dos topes o dos semáforos (ver bump_spacing.py)."""
     from trafico.bump_spacing import (
         DEFAULT_DISTANCES, LIGHT, LIGHT_CYCLE, LIGHT_DISTANCES, LIGHT_FIRST, LIGHT_ROOM, NOUNS,
@@ -1119,14 +1119,14 @@ def emissions_main(argv: list[str] | None = None) -> None:
     emissions(argv)
 
 
-# ------------------------------------------------------------------ trafico-calibrar
+# ------------------------------------------------------------------ traffic-calibrar
 
 CALIBRATION_NAME = "calibracion"
 
 
 def build_calibration_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="trafico-calibrar",
+        prog="traffic-calibrar",
         description=(
             "Mide un tipo de vehículo de la configuración en situaciones estándar (descarga de una cola en verde, "
             "flujo continuo con demanda creciente, cola detenida) y lo compara con valores de referencia publicados "
@@ -1136,7 +1136,7 @@ def build_calibration_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "target", nargs="?", default=None, metavar="nombre | carpeta",
-        help=f"como en `trafico`: una carpeta de la que se lee su {CONFIG_NAME}, o el nombre de la calibración "
+        help=f"como en `traffic`: una carpeta de la que se lee su {CONFIG_NAME}, o el nombre de la calibración "
              f"(por defecto, {CALIBRATION_NAME}) con {default_config_path()}",
     )  # fmt: skip
     p.add_argument("--tipo", default="car", metavar="CLAVE",
@@ -1157,7 +1157,7 @@ def calibrate(argv: list[str] | None = None) -> Path:
     argv = sys.argv[1:] if argv is None else argv
     parser = build_calibration_parser()
     args = parser.parse_args(argv)
-    command = ("uv run trafico-calibrar " + " ".join(argv)).strip()
+    command = ("uv run traffic-calibrar " + " ".join(argv)).strip()
     try:
         target = resolve_target(args.target)
         settings = load_settings(target.config)

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Simulación de tren</title>
+<title>Train simulation</title>
 <style>
   :root {
     color-scheme: light;
@@ -112,224 +112,223 @@
 <div class="wrap">
 
 <header>
-  <h1>Simulación de tren (<code>rail</code>)</h1>
-  <p>Referencia de <strong>rail</strong>, una simulación sencilla de un tren a lo largo de una ruta con un video
-    horizontal (16:9), al estilo del video de tráfico. El ejemplo es el Chepe de Los Mochis a Chihuahua por las
-    Barrancas del Cobre (~653 km). El código es un paquete aparte, <code>src/rail/</code>, que no depende de
-    <code>trafico</code>. La simulación de tráfico se documenta en <a href="configuracion.html">configuracion.html</a>.</p>
+  <h1>Train simulation (<code>rail</code>)</h1>
+  <p>Reference of <strong>rail</strong>, a simple simulation of a train along a route with a landscape (16:9) video, in
+    the style of the traffic video. The example is the Chepe from Los Mochis to Chihuahua through the Copper Canyon
+    (~653 km). The code is a separate package, <code>src/rail/</code>, that does not depend on the <code>trafico</code> package.
+    The traffic simulation is documented in <a href="config.html">config.html</a>.</p>
 </header>
 
 <nav>
-  <a href="#uso">Uso</a>
-  <a href="#modelo">Modelo</a>
-  <a href="#ruta">Archivo de ruta</a>
-  <a href="#realistic">Modo realista</a>
-  <a href="#opciones">Opciones</a>
-  <a href="#salidas">Salidas</a>
+  <a href="#uso">Usage</a>
+  <a href="#modelo">Model</a>
+  <a href="#ruta">Route file</a>
+  <a href="#realistic">Realistic mode</a>
+  <a href="#opciones">Options</a>
+  <a href="#salidas">Outputs</a>
 </nav>
 
 <section id="uso">
-  <h2>Uso</h2>
+  <h2>Usage</h2>
   <pre><code>uv run rail                                   # examples/route_chepe.toml → resultados/&lt;ID&gt;_chepe/
-uv run rail --realistic                       # vía real + cámara lenta en las Barrancas → resultados/&lt;ID&gt;_chepe_realistic/
-uv run rail --route chihuahua-mochis           # el mismo viaje en sentido contrario → resultados/&lt;ID&gt;_chepe_chihuahua-mochis/
-uv run rail mi_ruta.toml --name prueba
+uv run rail --realistic                       # real track + slow motion through the canyons → resultados/&lt;ID&gt;_chepe_realistic/
+uv run rail --route chihuahua-mochis           # the same trip in the opposite direction → resultados/&lt;ID&gt;_chepe_chihuahua-mochis/
+uv run rail my_route.toml --name test
 uv run rail --duration 90 --format mp4 --depart 07:30
-uv run rail --no-video                        # solo horario, resumen y route.png</code></pre>
-  <p>La ruta no usa <code>config.toml</code>: se describe en su propio TOML, por defecto
-    <code>examples/route_chepe.toml</code>. Sin <code>--realistic</code> todo funciona sin internet y el resultado
-    es el de siempre.</p>
+uv run rail --no-video                        # timetable, summary and route.png only</code></pre>
+  <p>The route does not use <code>config.toml</code>: it is described in its own TOML file, by default
+    <code>examples/route_chepe.toml</code>. Without <code>--realistic</code> everything works offline and the result is
+    the usual one.</p>
 </section>
 
 <section id="modelo">
-  <h2>Modelo</h2>
-  <p class="lead">Cinemático en una dimensión, con paso fijo de <code>dt_s</code>.</p>
-  <p>El tren acelera con <code>accel_ms2</code> hasta el límite del tramo y frena con <code>brake_ms2</code> a tiempo
-    para el siguiente límite más bajo y para detenerse en cada estación. En cada estación espera
-    <code>dwell_min</code>. La posición en el mapa y la altitud se interpolan linealmente por km entre los puntos de
-    la ruta. No modela pendientes, potencia ni túneles: la velocidad por tramo resume todo eso. Con los límites del
-    ejemplo, Los Mochis → Creel tarda ~9 h 40 min, el tiempo publicado del Chepe Express.</p>
+  <h2>Model</h2>
+  <p class="lead">One-dimensional kinematics, with a fixed step of <code>dt_s</code>.</p>
+  <p>The train accelerates at <code>accel_ms2</code> up to the segment limit and brakes at <code>brake_ms2</code> in
+    time for the next lower limit and to stop at each station. At each station it waits <code>dwell_min</code>. The
+    position on the map and the elevation are interpolated linearly by km between the route points. It does not model
+    gradients, power or tunnels: the speed per segment sums all that up. With the limits of the example, Los Mochis →
+    Creel takes ~9 h 40 min, the published time of the Chepe Express.</p>
   <div class="warn">
-    <p><strong>Datos aproximados.</strong> Los km se derivan de los kilómetros oficiales, que se cuentan desde
-      Ojinaga (km = 921 − km oficial). Las coordenadas son las de cada localidad o, donde existe, la de la estación
-      en OpenStreetMap (Sufragio, Loreto, Pitorreal). Las altitudes del ejemplo son las del terreno según SRTM en
-      cada punto de la vía real, suavizadas (ver <a href="#realistic">Modo realista</a>). Sin
-      <code>--realistic</code>, el trazo del mapa une esos puntos con líneas rectas y el perfil se interpola entre
-      ellos.</p>
+    <p><strong>Approximate data.</strong> The km are derived from the official kilometre posts, which are counted from
+      Ojinaga (km = 921 − official km). The coordinates are those of each town or, where it exists, those of the station
+      in OpenStreetMap (Sufragio, Loreto, Pitorreal). The elevations of the example are the terrain elevations from SRTM
+      at each point of the real track, smoothed (see <a href="#realistic">Realistic mode</a>). Without
+      <code>--realistic</code>, the map line joins those points with straight lines and the profile is interpolated
+      between them.</p>
   </div>
 </section>
 
 <section id="ruta">
-  <h2>Archivo de ruta</h2>
+  <h2>Route file</h2>
   <div class="table-scroll"><table>
-    <thead><tr><th>Clave</th><th>Tipo</th><th>Defecto</th><th>Descripción</th><th>Restricción</th></tr></thead>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th><th>Constraint</th></tr></thead>
     <tbody>
-      <tr><td><code>name</code></td><td>texto</td><td class="num">"route"</td>
-        <td>Título del video y del resumen.</td><td>—</td></tr>
-      <tr><td><code>ends</code></td><td>[texto, texto]</td><td class="num">nombres de la primera y la última
-          estación</td>
-        <td>Nombres cortos de los extremos de la ruta, para <code>--route</code>: con
-          <code>["mochis", "chihuahua"]</code> se aceptan <code>mochis-chihuahua</code> (el orden del archivo) y
-          <code>chihuahua-mochis</code>. Sin esta clave se forman con los nombres de las estaciones en minúsculas
-          (<code>los_mochis-chihuahua</code>).</td>
-        <td>Dos nombres distintos, sin <code>-</code>.</td></tr>
-      <tr><td><code>author</code></td><td>texto</td><td class="num">""</td>
-        <td>Autoría que se muestra en la línea de créditos, abajo a la izquierda del video y de
-          <code>route.png</code>, antes de las fuentes de datos («Author: Cream Crimson · Track: © OpenStreetMap
-          contributors (ODbL) · Elevation: SRTM (NASA) via OpenTopoData»). Vacía, no se muestra.</td><td>—</td></tr>
-      <tr><td><code>highlight_label</code></td><td>texto</td><td class="num">"highlighted stop"</td>
-        <td>Texto de la leyenda para las estaciones con <code>highlight = true</code>. En el ejemplo,
+      <tr><td><code>name</code></td><td>text</td><td class="num">"route"</td>
+        <td>Title of the video and the summary.</td><td>—</td></tr>
+      <tr><td><code>ends</code></td><td>[text, text]</td><td class="num">names of the first and last station</td>
+        <td>Short names of the ends of the route, for <code>--route</code>: with <code>["mochis", "chihuahua"]</code>
+          both <code>mochis-chihuahua</code> (the file's order) and <code>chihuahua-mochis</code> are accepted. Without
+          this key they are built from the station names in lowercase (<code>los_mochis-chihuahua</code>).</td>
+        <td>Two different names, without <code>-</code>.</td></tr>
+      <tr><td><code>author</code></td><td>text</td><td class="num">""</td>
+        <td>Author shown in the credits line, at the bottom left of the video and of <code>route.png</code>, before the
+          data sources («Author: Cream Crimson · Track: © OpenStreetMap contributors (ODbL) · Elevation: SRTM (NASA) via
+          OpenTopoData»). Empty, it is not shown.</td><td>—</td></tr>
+      <tr><td><code>highlight_label</code></td><td>text</td><td class="num">"highlighted stop"</td>
+        <td>Legend text for the stations with <code>highlight = true</code>. In the example,
           <code>"Chepe Express stop"</code>.</td><td>—</td></tr>
-      <tr><td><code>[train] accel_ms2</code></td><td>número</td><td class="num">0.3</td>
-        <td>Aceleración al arrancar (m/s²).</td><td>&gt; 0.</td></tr>
-      <tr><td><code>[train] brake_ms2</code></td><td>número</td><td class="num">0.5</td>
-        <td>Frenado de servicio (m/s²).</td><td>&gt; 0.</td></tr>
-      <tr><td><code>[train] dt_s</code></td><td>número</td><td class="num">1.0</td>
-        <td>Paso de tiempo (s).</td><td>&gt; 0.</td></tr>
-      <tr><td><code>[[point]] name</code></td><td>texto</td><td class="num">—</td>
-        <td>Nombre de la estación, del hito o del punto de trazo.</td><td>Obligatorio.</td></tr>
-      <tr><td><code>[[point]] kind</code></td><td>texto</td><td class="num">—</td>
-        <td><code>"station"</code>: el tren se detiene. <code>"landmark"</code>: se anota en el mapa y en el perfil,
-          sin parada. <code>"waypoint"</code>: solo da forma al trazo y al perfil.</td>
-        <td>El primero y el último deben ser <code>"station"</code>.</td></tr>
-      <tr><td><code>[[point]] km</code></td><td>número</td><td class="num">—</td>
-        <td>Distancia desde el origen.</td><td>Empieza en 0 y crece estrictamente.</td></tr>
-      <tr><td><code>[[point]] lat</code>, <code>lon</code></td><td>número</td><td class="num">—</td>
-        <td>Coordenadas en grados decimales.</td><td>Obligatorio.</td></tr>
-      <tr><td><code>[[point]] elevation_m</code></td><td>número</td><td class="num">—</td>
-        <td>Altitud sobre el nivel del mar (m).</td><td>Obligatorio.</td></tr>
-      <tr><td><code>[[point]] max_speed_kmh</code></td><td>número</td><td class="num">el anterior</td>
-        <td>Límite de velocidad desde este punto hasta el siguiente que fije otro.</td>
-        <td>El primer punto debe fijarlo; &gt; 0.</td></tr>
-      <tr><td><code>[[point]] dwell_min</code></td><td>número</td><td class="num">0</td>
-        <td>Minutos de parada en la estación.</td><td>≥ 0, solo en estaciones.</td></tr>
-      <tr><td><code>[[point]] note</code></td><td>texto</td><td class="num">""</td>
-        <td>Anotación que el video muestra al pasar por el punto y que aparece en la lista de
+      <tr><td><code>[train] accel_ms2</code></td><td>number</td><td class="num">0.3</td>
+        <td>Acceleration when starting (m/s²).</td><td>&gt; 0.</td></tr>
+      <tr><td><code>[train] brake_ms2</code></td><td>number</td><td class="num">0.5</td>
+        <td>Service braking (m/s²).</td><td>&gt; 0.</td></tr>
+      <tr><td><code>[train] dt_s</code></td><td>number</td><td class="num">1.0</td>
+        <td>Time step (s).</td><td>&gt; 0.</td></tr>
+      <tr><td><code>[[point]] name</code></td><td>text</td><td class="num">—</td>
+        <td>Name of the station, landmark or shape point.</td><td>Required.</td></tr>
+      <tr><td><code>[[point]] kind</code></td><td>text</td><td class="num">—</td>
+        <td><code>"station"</code>: the train stops. <code>"landmark"</code>: annotated on the map and the profile,
+          without a stop. <code>"waypoint"</code>: only shapes the line and the profile.</td>
+        <td>The first and last ones must be <code>"station"</code>.</td></tr>
+      <tr><td><code>[[point]] km</code></td><td>number</td><td class="num">—</td>
+        <td>Distance from the origin.</td><td>Starts at 0 and strictly increases.</td></tr>
+      <tr><td><code>[[point]] lat</code>, <code>lon</code></td><td>number</td><td class="num">—</td>
+        <td>Coordinates in decimal degrees.</td><td>Required.</td></tr>
+      <tr><td><code>[[point]] elevation_m</code></td><td>number</td><td class="num">—</td>
+        <td>Elevation above sea level (m).</td><td>Required.</td></tr>
+      <tr><td><code>[[point]] max_speed_kmh</code></td><td>number</td><td class="num">the previous one</td>
+        <td>Speed limit from this point up to the next one that sets another.</td>
+        <td>The first point must set it; &gt; 0.</td></tr>
+      <tr><td><code>[[point]] dwell_min</code></td><td>number</td><td class="num">0</td>
+        <td>Minutes stopped at the station.</td><td>≥ 0, stations only.</td></tr>
+      <tr><td><code>[[point]] note</code></td><td>text</td><td class="num">""</td>
+        <td>Note the video shows when passing the point and that appears in the list of
           <code>route.png</code>.</td><td>—</td></tr>
       <tr><td><code>[[point]] label_offset</code></td><td>[dx, dy]</td><td class="num">[8, 0]</td>
-        <td>Desplazamiento de la etiqueta en el mapa, en puntos tipográficos. Si dx &lt; 0, la etiqueta va a la
-          izquierda.</td><td>—</td></tr>
-      <tr><td><code>[[point]] highlight</code></td><td>booleano</td><td class="num">false</td>
-        <td>Dibuja la estación en otro color (verde relleno, con la etiqueta en negritas) en el mapa, el
-          acercamiento, el perfil y la lista de <code>route.png</code>, y agrega una leyenda al mapa. En el ejemplo
-          marca las paradas del Chepe Express: Los Mochis, El Fuerte, Bahuichivo, Divisadero y Creel. El tren de la
-          simulación sigue parando en todas las estaciones.</td>
-        <td>Solo en estaciones.</td></tr>
-      <tr><td><code>[realistic] track_file</code></td><td>texto</td><td class="num">—</td>
-        <td>CSV con el trazo real (<code>lat,lon</code>), relativo al archivo de ruta.</td>
-        <td>Obligatorio si existe <code>[realistic]</code>.</td></tr>
-      <tr><td><code>[realistic] osm_relation</code></td><td>entero</td><td class="num">—</td>
-        <td>Relación de OpenStreetMap que se descarga cuando <code>track_file</code> no existe. Sin ella, el CSV
-          debe existir.</td><td>—</td></tr>
-      <tr><td><code>[realistic] slow_from</code>, <code>slow_to</code></td><td>texto</td><td class="num">—</td>
-        <td>Nombres de los puntos donde empieza y termina la cámara lenta.</td>
-        <td>Van juntos; <code>slow_from</code> antes que <code>slow_to</code>.</td></tr>
-      <tr><td><code>[realistic] slow_factor</code></td><td>número</td><td class="num">1.0</td>
-        <td>Cuántas veces más lento se reproduce ese tramo.</td><td>≥ 1.</td></tr>
-      <tr><td><code>[realistic] elevation_file</code></td><td>texto</td><td class="num">—</td>
-        <td>CSV con la altitud del terreno a lo largo de la vía (<code>km,lat,lon,elevation_m</code>), relativo al
-          archivo de ruta. Si no existe, se descarga. Sin esta clave, las altitudes salen de
+        <td>Offset of the label on the map, in typographic points. If dx &lt; 0, the label goes to the left.</td>
+        <td>—</td></tr>
+      <tr><td><code>[[point]] highlight</code></td><td>boolean</td><td class="num">false</td>
+        <td>Draws the station in another colour (filled, with a bold label; green in the default style, crimson in
+          <code>cream_crimson</code>) on the map, the zoom, the profile and the list of <code>route.png</code>, and adds
+          a legend to the map. In the example it marks the Chepe Express stops: Los Mochis, El Fuerte, Bahuichivo,
+          Divisadero and Creel. The simulated train still stops at every station.</td>
+        <td>Stations only.</td></tr>
+      <tr><td><code>[realistic] track_file</code></td><td>text</td><td class="num">—</td>
+        <td>CSV with the real track (<code>lat,lon</code>), relative to the route file.</td>
+        <td>Required if <code>[realistic]</code> exists.</td></tr>
+      <tr><td><code>[realistic] osm_relation</code></td><td>integer</td><td class="num">—</td>
+        <td>OpenStreetMap relation downloaded when <code>track_file</code> does not exist. Without it, the CSV must
+          exist.</td><td>—</td></tr>
+      <tr><td><code>[realistic] slow_from</code>, <code>slow_to</code></td><td>text</td><td class="num">—</td>
+        <td>Names of the points where slow motion starts and ends.</td>
+        <td>They go together; <code>slow_from</code> before <code>slow_to</code>.</td></tr>
+      <tr><td><code>[realistic] slow_factor</code></td><td>number</td><td class="num">1.0</td>
+        <td>How many times slower that section plays.</td><td>≥ 1.</td></tr>
+      <tr><td><code>[realistic] elevation_file</code></td><td>text</td><td class="num">—</td>
+        <td>CSV with the terrain elevation along the track (<code>km,lat,lon,elevation_m</code>), relative to the route
+          file. If it does not exist, it is downloaded. Without this key, the elevations come from
           <code>elevation_m</code>.</td><td>—</td></tr>
-      <tr><td><code>[realistic] elevation_dataset</code></td><td>texto</td><td class="num">"srtm90m"</td>
-        <td>Conjunto de datos de OpenTopoData usado para la descarga.</td><td>—</td></tr>
-      <tr><td><code>[realistic] elevation_step_km</code></td><td>número</td><td class="num">1.0</td>
-        <td>Separación de las muestras a lo largo de la vía.</td><td>&gt; 0.</td></tr>
+      <tr><td><code>[realistic] elevation_dataset</code></td><td>text</td><td class="num">"srtm90m"</td>
+        <td>OpenTopoData dataset used for the download.</td><td>—</td></tr>
+      <tr><td><code>[realistic] elevation_step_km</code></td><td>number</td><td class="num">1.0</td>
+        <td>Spacing of the samples along the track.</td><td>&gt; 0.</td></tr>
     </tbody>
   </table></div>
-  <p>La sección <code>[realistic]</code> solo se usa con <code>--realistic</code>; sin esa opción se ignora.</p>
+  <p>The <code>[realistic]</code> section is only used with <code>--realistic</code>; without that option it is
+    ignored.</p>
 </section>
 
 <section id="realistic">
-  <h2>Modo realista: <code>--realistic</code></h2>
-  <p class="lead">Usa el trazo real de la vía, tomado de OpenStreetMap, y reproduce las Barrancas del Cobre en
-    cámara lenta.</p>
+  <h2>Realistic mode: <code>--realistic</code></h2>
+  <p class="lead">Uses the real track geometry, taken from OpenStreetMap, and plays the Copper Canyon in slow
+    motion.</p>
   <ul>
-    <li><strong>Trazo real.</strong> La primera vez se descarga la relación <code>osm_relation</code> (para el
-      Chepe, la 5977762 «Chihuahua al Pacífico») desde la API Overpass y se guarda en <code>track_file</code>
-      (<code>examples/track_chepe.csv</code>). Se reintenta en un servidor espejo si el principal está ocupado.
-      Las siguientes corridas leen el CSV y no necesitan internet. Para volver a descargarla, borra el CSV.</li>
-    <li><strong>Puntos sobre la vía.</strong> Cada estación, hito y punto de trazo se proyecta sobre la vía, y su km
-      pasa a ser la distancia real a lo largo de ella. Para el Chepe, la vía mide 653.4 km de Los Mochis a
-      Chihuahua (oficial: 653 km). Los límites de velocidad siguen saliendo del archivo de ruta.</li>
-    <li><strong>Altitud real.</strong> Con <code>elevation_file</code>, la primera vez se toma una muestra de la vía
-      cada <code>elevation_step_km</code> (655 puntos para el Chepe) y se pide su altitud a la API pública de
-      OpenTopoData (modelo de terreno SRTM de 90 m), en grupos de 100 puntos y una consulta por segundo. Se guarda en
-      <code>examples/elevation_chepe.csv</code> y las siguientes corridas no necesitan internet. SRTM mide el
-      terreno, no la vía: bajo un puente da el fondo de la barranca y sobre un túnel la cima del cerro. Por eso el
-      perfil se suaviza con una mediana móvil de 5 km, y cada estación e hito toma la altitud del perfil en su km.
-      Comparadas con valores publicados, las diferencias son de pocas decenas de metros (Divisadero 2246 m contra
-      2240 m; Creel 2349 m contra ~2340 m). Si se vuelve a descargar la vía, también hay que borrar este CSV; si no
-      coincide con la vía, el programa avisa.</li>
-    <li><strong>Acercamiento.</strong> En la esquina superior izquierda del mapa aparece un recuadro con el tramo
-      <code>slow_from</code> – <code>slow_to</code> (Témoris – Creel) y el tren moviéndose en él. Un rectángulo
-      punteado marca ese tramo en el mapa, y el perfil lo sombrea.</li>
-    <li><strong>Cámara lenta.</strong> En ese tramo el video avanza <code>slow_factor</code> veces más lento
-      (×3 para el Chepe) y muestra «slow motion ×3» arriba a la derecha. El video dura 90 s por defecto en vez de
-      60 s, para que el resto del viaje no pase demasiado rápido.</li>
+    <li><strong>Real track.</strong> The first time, the relation <code>osm_relation</code> (for the Chepe, 5977762
+      «Chihuahua al Pacífico») is downloaded from the Overpass API and saved in <code>track_file</code>
+      (<code>examples/track_chepe.csv</code>). It retries on a mirror server if the main one is busy. Later runs read
+      the CSV and need no internet. To download it again, delete the CSV.</li>
+    <li><strong>Points on the track.</strong> Each station, landmark and shape point is projected onto the track, and
+      its km becomes the real distance along it. For the Chepe, the track is 653.4 km long from Los Mochis to Chihuahua
+      (official: 653 km). The speed limits still come from the route file.</li>
+    <li><strong>Real elevation.</strong> With <code>elevation_file</code>, the first time the track is sampled every
+      <code>elevation_step_km</code> (655 points for the Chepe) and their elevation is requested from the public
+      OpenTopoData API (90 m SRTM terrain model), in batches of 100 points and one request per second. It is saved in
+      <code>examples/elevation_chepe.csv</code> and later runs need no internet. SRTM measures the terrain, not the
+      track: under a bridge it gives the bottom of the canyon and over a tunnel the top of the hill. That is why the
+      profile is smoothed with a 5 km running median, and each station and landmark takes the profile's elevation at
+      its km. Compared with published values, the differences are a few tens of metres (Divisadero 2246 m against
+      2240 m; Creel 2349 m against ~2340 m). If the track is downloaded again, this CSV must be deleted too; if it does
+      not match the track, the program warns.</li>
+    <li><strong>Zoom.</strong> In the upper-left corner of the map a box shows the section <code>slow_from</code> –
+      <code>slow_to</code> (Témoris – Creel) with the train moving through it. A dashed rectangle marks that section on
+      the map, and the profile shades it.</li>
+    <li><strong>Slow motion.</strong> In that section the video runs <code>slow_factor</code> times slower (×3 for the
+      Chepe) and shows «slow motion ×3» at the top right. The video lasts 90 s by default instead of 60 s, so that the
+      rest of the trip does not go by too fast.</li>
   </ul>
   <div class="note">
-    <p>Datos de la vía: © colaboradores de OpenStreetMap, bajo licencia ODbL. Altitud: SRTM (NASA), vía
-      OpenTopoData. El video y <code>route.png</code> llevan esa atribución.</p>
+    <p>Track data: © OpenStreetMap contributors, under the ODbL licence. Elevation: SRTM (NASA), via OpenTopoData. The
+      video and <code>route.png</code> carry this attribution.</p>
   </div>
 </section>
 
 <section id="opciones">
-  <h2>Opciones del comando</h2>
+  <h2>Command options</h2>
   <div class="table-scroll"><table>
-    <thead><tr><th>Opción</th><th>Defecto</th><th>Descripción</th></tr></thead>
+    <thead><tr><th>Option</th><th>Default</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>route</code></td><td><code>examples/route_chepe.toml</code></td><td>Archivo de ruta.</td></tr>
-      <tr><td><code>--name</code></td><td>nombre del archivo sin <code>route_</code></td>
-        <td>Sufijo de la carpeta de resultados. En sentido contrario se agrega el sentido
-          (<code>_chihuahua-mochis</code>) y con <code>--realistic</code>, <code>_realistic</code>.</td></tr>
-      <tr><td><code>--route</code></td><td><code>mochis-chihuahua</code> (el orden del archivo)</td>
-        <td>Sentido del viaje, <code>&lt;desde&gt;-&lt;hasta&gt;</code> con los nombres de <code>ends</code>. En
-          sentido contrario (<code>chihuahua-mochis</code>), los km se miden desde Chihuahua, el título y el perfil se
-          invierten, cada tramo conserva su límite de velocidad y la cámara lenta va de Creel a Témoris. La carpeta de
-          resultados lleva el sentido en el nombre. Con un valor que no corresponde a la ruta, el programa muestra
-          los dos aceptados.</td></tr>
+      <tr><td><code>route</code></td><td><code>examples/route_chepe.toml</code></td><td>Route file.</td></tr>
+      <tr><td><code>--name</code></td><td>file name without <code>route_</code></td>
+        <td>Suffix of the results folder. In the opposite direction the direction is added
+          (<code>_chihuahua-mochis</code>) and with <code>--realistic</code>, <code>_realistic</code>.</td></tr>
+      <tr><td><code>--route</code></td><td><code>mochis-chihuahua</code> (the file's order)</td>
+        <td>Direction of travel, <code>&lt;from&gt;-&lt;to&gt;</code> with the names in <code>ends</code>. In the
+          opposite direction (<code>chihuahua-mochis</code>), km are measured from Chihuahua, the title and the profile
+          are reversed, each segment keeps its speed limit and slow motion runs from Creel to Témoris. The results folder
+          carries the direction in its name. With a value that does not match the route, the program shows the two
+          accepted ones.</td></tr>
       <tr><td><code>--realistic</code></td><td>—</td>
-        <td>Trazo real de OpenStreetMap, acercamiento y cámara lenta (ver <a href="#realistic">Modo realista</a>).</td></tr>
-      <tr><td><code>--duration</code></td><td class="num">60 (90 con <code>--realistic</code>)</td>
-        <td>Segundos de video: el viaje completo se comprime a esta duración.</td></tr>
-      <tr><td><code>--fps</code></td><td class="num">25</td><td>Cuadros por segundo.</td></tr>
-      <tr><td><code>--format</code></td><td>webm</td><td><code>webm</code>, <code>mp4</code> o <code>gif</code>,
-        igual que en el video de tráfico (<a href="configuracion.html#animation"><code>[animation]</code></a>).</td></tr>
-      <tr><td><code>--depart</code></td><td>06:00</td><td>Hora de salida (HH:MM) del reloj y del horario.</td></tr>
-      <tr><td><code>--no-video</code></td><td>—</td><td>No genera el video.</td></tr>
-      <tr><td><code>--style</code></td><td>default</td><td>Estilo de color de <code>route.png</code> y del video:
-        <code>default</code> (la paleta de las gráficas de tráfico) o <code>cream_crimson</code> (carmesí
-        <code>#993138</code> sobre fondo crema <code>#FAF6EE</code>, copiado del tema <code>cream_crimson</code> de
-        <code>estilo.py</code> de multi-dashboard). En <code>cream_crimson</code> las paradas del Chepe Express van en
-        carmesí, los hitos en ocre, el tramo recorrido en azul, el tren en verde azulado y el texto en Roboto u Open Sans si están instalados. Los colores están en
-        <code>src/rail/theme.py</code>.</td></tr>
+        <td>Real track from OpenStreetMap, zoom and slow motion (see <a href="#realistic">Realistic mode</a>).</td></tr>
+      <tr><td><code>--duration</code></td><td class="num">60 (90 with <code>--realistic</code>)</td>
+        <td>Seconds of video: the whole trip is compressed to this length.</td></tr>
+      <tr><td><code>--fps</code></td><td class="num">25</td><td>Frames per second.</td></tr>
+      <tr><td><code>--format</code></td><td>webm</td><td><code>webm</code>, <code>mp4</code> or <code>gif</code>, as
+        in the traffic video (<a href="config.html#animation"><code>[animation]</code></a>).</td></tr>
+      <tr><td><code>--depart</code></td><td>06:00</td><td>Departure time (HH:MM) of the clock and the timetable.</td></tr>
+      <tr><td><code>--no-video</code></td><td>—</td><td>Does not generate the video.</td></tr>
+      <tr><td><code>--style</code></td><td>default</td><td>Colour style of <code>route.png</code> and the video:
+        <code>default</code> (the palette of the traffic plots) or <code>cream_crimson</code> (crimson
+        <code>#993138</code> on a cream background <code>#FAF6EE</code>, copied from the <code>cream_crimson</code>
+        theme of multi-dashboard's <code>estilo.py</code>). In <code>cream_crimson</code> the Chepe Express stops are
+        crimson, the landmarks ochre, the travelled section blue, the train teal and the text in Roboto or Open Sans if
+        they are installed. The colours are in <code>src/rail/theme.py</code>.</td></tr>
     </tbody>
   </table></div>
 </section>
 
 <section id="salidas">
-  <h2>Salidas</h2>
-  <p>Se guardan en <code>resultados/&lt;fecha-hora&gt;_&lt;nombre&gt;/</code>. Nunca se sobrescribe nada:</p>
+  <h2>Outputs</h2>
+  <p>They are saved in <code>resultados/&lt;date-time&gt;_&lt;name&gt;/</code>. Nothing is ever overwritten:</p>
   <ul>
-    <li><code>summary.txt</code>: distancia, horas de salida y llegada, tiempo total, tiempo de espera en paradas y
-      velocidad media. Si la ruta pasa por Los Mochis y Creel, el tiempo entre ambas (en el sentido del viaje) para compararlo con el Chepe Express. Con
-      <code>--realistic</code>, también el origen de la vía y de la altitud, y el tramo en cámara lenta.</li>
-    <li><code>timetable.csv</code>: una fila por estación con km, altitud, llegada, salida y espera. Si se llega
-      después de medianoche, la hora lleva el sufijo <code>(+1d)</code>.</li>
-    <li><code>route.png</code>: el mapa, el perfil de altitud y la lista de puntos de interés con su km, con los
-      colores de <code>--style</code> (el video también los usa).</li>
-    <li><code>journey.webm</code> (o <code>.mp4</code>/<code>.gif</code>), de 1280×720: a la izquierda, el mapa con
-      el tramo recorrido en azul y el tren en rojo; a la derecha, el reloj, el km, la velocidad, la altitud y la
-      próxima parada. El reloj es la hora del día en el viaje (salida de <code>--depart</code> más el tiempo
-      simulado, incluidas las paradas); debajo se muestra la hora de salida y el tiempo transcurrido
-      (p. ej. «departure 06:00 · 11h 35min elapsed»). Al pasar por un hito o una estación aparece su nombre y su nota, y un anillo lo resalta en el
-      mapa. Abajo a la derecha va el perfil de altitud con la posición del tren.</li>
-    <li>Una copia del archivo de ruta usado y, con <code>--realistic</code>, de los CSV de la vía y de la
-      altitud.</li>
+    <li><code>summary.txt</code>: distance, departure and arrival times, total time, time dwelling at stops and mean
+      speed. If the route goes through Los Mochis and Creel, the time between them (in the direction of travel) to
+      compare it with the Chepe Express. With <code>--realistic</code>, also the source of the track and the elevation,
+      and the slow-motion section.</li>
+    <li><code>timetable.csv</code>: one row per station with km, elevation, arrival, departure and dwell. If it arrives
+      after midnight, the time carries the suffix <code>(+1d)</code>.</li>
+    <li><code>route.png</code>: the map, the elevation profile and the list of points of interest with their km, in the
+      colours of <code>--style</code> (the video uses them too).</li>
+    <li><code>journey.webm</code> (or <code>.mp4</code>/<code>.gif</code>), 1280×720: on the left, the map with the
+      travelled section and the train (blue and red in the default style); on the right, the clock, the km, the speed,
+      the elevation and the next stop. The clock is the time of day on the trip (departure from <code>--depart</code>
+      plus the simulated time, including stops); below it the departure time and the elapsed time are shown (e.g.
+      «departure 06:00 · 11h 35min elapsed»). When passing a landmark or a station its name and note appear, and a ring
+      highlights it on the map. At the bottom right is the elevation profile with the train's position.</li>
+    <li>A copy of the route file used and, with <code>--realistic</code>, of the track and elevation CSV files.</li>
   </ul>
 </section>
 
-<footer>rail · simulación de tren</footer>
+<footer>rail · train simulation</footer>
 </div>
 </body>
 </html>

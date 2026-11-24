@@ -2,7 +2,7 @@
 
     from trafico import api
 
-    run = api.simulate()                                   # como `uv run trafico`
+    run = api.simulate()                                   # como `uv run traffic`
     run.results["metricas"]["tipos"]["car"]["tiempo_recorrido_s"]
     run = api.compare_emissions(bumps=["sin", 35, (35, 70)], replicas=4)
     run = api.bump_spacing(distances=[20, 40, 60], chain=3)
@@ -119,7 +119,7 @@ def _light(value) -> str:
 
 
 def simulate(config: str | Path | None = None, *, name: str | None = None) -> Run:
-    """Corrida completa de `trafico`: réplicas Monte Carlo con la configuración, gráficas, tablas y resumen."""
+    """Corrida completa de `traffic`: réplicas Monte Carlo con la configuración, gráficas, tablas y resumen."""
     from trafico.cli import run
 
     return _finish(run, _target(config, name), "corrida")
@@ -130,7 +130,7 @@ def compare_emissions(
     lanes: list[int] | None = None, without: list[str] = (), length: float | None = None,
     bump_lanes: list[int] | None = None, replicas: int | None = None, run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`trafico-emisiones`: emisiones, consumo y tiempo de cada escenario con la misma semilla.
+    """`traffic-emisiones`: emisiones, consumo y tiempo de cada escenario con la misma semilla.
 
     `bumps`: topes de cada escenario; cada elemento es None o "sin" (sin tope), un número (posición en m) o una lista
     de posiciones (varios topes); None = sin tope y con los de la configuración. `lights`: "config", "si", "no",
@@ -153,7 +153,7 @@ def bump_spacing(
     length: float | None = None, bump_lanes: list[int] | None = None, replicas: int | None = None,
     run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`trafico-emisiones --separacion`: separación mínima entre topes para diluir la huella de emisiones.
+    """`traffic-emisiones --separacion`: separación mínima entre topes para diluir la huella de emisiones.
 
     `distances`: separaciones en m (None = 10 15 20 25 30 40 50 60 80 100); `chain`: topes por cadena (2 = una pareja);
     `first`: posición del primer tope; `tolerance` y `threshold`: ver la documentación. Los demás argumentos, como en
@@ -176,7 +176,7 @@ def light_spacing(
     lanes: list[int] | None = None, without: list[str] = (), length: float | None = None,
     bump_lanes: list[int] | None = None, replicas: int | None = None, run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`trafico-emisiones --separacion-semaforos`: separación mínima entre semáforos de ciclo fijo para que la huella de
+    """`traffic-emisiones --separacion-semaforos`: separación mínima entre semáforos de ciclo fijo para que la huella de
     emisiones del primero no cambie al alejar el segundo.
 
     `distances`: separaciones en m (None = 25 50 75 100 150 200 250 300); `first`: posición del primer semáforo (None =
@@ -204,7 +204,7 @@ def compare_variants(
     lights: list | None = None, lanes: list[int] | None = None, without: list[str] = (),
     queue: list[str] | None = None, replicas: int | None = None, run: float | None = None,
 ) -> Run:  # fmt: skip
-    """`trafico-variantes`: velocidad por carril y cola de entrada con cada largo de tramo y reparto del semáforo.
+    """`traffic-variantes`: velocidad por carril y cola de entrada con cada largo de tramo y reparto del semáforo.
 
     `lights`: repartos como pares (rojo, verde) en s o textos "40/20" (None = tres repartos del ciclo de la
     configuración); `queue`: claves de los tipos que se cuentan en la cola de entrada."""
@@ -219,7 +219,7 @@ def compare_variants(
 def calibrate(
     config: str | Path | None = None, *, name: str | None = None, vehicle: str = "car", queues: int | None = None,
 ) -> Run:  # fmt: skip
-    """`trafico-calibrar`: mide el tipo `vehicle` (su clave) en situaciones estándar (descarga de una cola en verde, flujo
+    """`traffic-calibrar`: mide el tipo `vehicle` (su clave) en situaciones estándar (descarga de una cola en verde, flujo
     continuo, cola detenida) y compara con referencias publicadas para autos; `queues`: colas que se descargan (por
     omisión 30). En `results["metricas"]["medidas"]` va cada medida con su valor, su rango y su estado."""
     from trafico.cli import calibrate as command

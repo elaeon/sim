@@ -1,7 +1,7 @@
 """Comparación de emisiones entre escenarios de una misma calle: con y sin tope (o con topes en distintas
-posiciones) y, opcionalmente, con y sin semáforo (`uv run trafico-emisiones`).
+posiciones) y, opcionalmente, con y sin semáforo (`uv run traffic-emisiones`).
 
-Todos los escenarios corren las mismas réplicas con la misma semilla que `trafico` (SeedSequence.spawn): las
+Todos los escenarios corren las mismas réplicas con la misma semilla que `traffic` (SeedSequence.spawn): las
 llegadas, pasajeros y velocidades sorteadas son las mismas, así que las diferencias vienen del tope o del
 semáforo. De cada escenario se guardan las medias entre réplicas del flujo que sale del tramo, los vehículos,
 tiempos y velocidades por tipo, y las emisiones por tipo, por km y a lo largo del tramo.
@@ -27,7 +27,7 @@ from trafico.variants import reduce_config
 PLOT_NAME = "comparacion_emisiones.png"
 DATA_NAME = "datos.npz"
 META_NAME = "escenarios.json"
-BASE_CONFIG_NAME = "config_base.toml"  # no se llama config.toml: la carpeta no es una corrida de `trafico`
+BASE_CONFIG_NAME = "config_base.toml"  # no se llama config.toml: la carpeta no es una corrida de `traffic`
 TABLE_CSV = "comparacion_emisiones.csv"
 POSITION_CSV = "emisiones_posicion.csv"
 SUMMARY_NAME = "resumen.txt"
@@ -125,7 +125,7 @@ def metadata(base: SimConfig, s: Scenarios, configs: list[tuple[str, SimConfig]]
     active = [k for k, rate in enumerate(cfg.rates) if rate > 0]
     limits = cfg.lane_max_kmh
     return {
-        "comando": "uv run trafico-emisiones " + " ".join(argv),
+        "comando": "uv run traffic-emisiones " + " ".join(argv),
         "semilla": seed,
         "escenarios": [name for name, _ in configs],
         "topes_m": [[b.position for b in c.bumps] for _, c in configs],
@@ -272,7 +272,7 @@ def load(folder: Path) -> tuple[dict, dict[str, np.ndarray]]:
     """Parámetros y datos de una comparación ya corrida."""
     meta_path, data_path = folder / META_NAME, folder / DATA_NAME
     if not (meta_path.is_file() and data_path.is_file()):
-        raise ConfigError(f"{folder} no es una carpeta de trafico-emisiones (faltan {META_NAME} o {DATA_NAME})")
+        raise ConfigError(f"{folder} no es una carpeta de traffic-emisiones (faltan {META_NAME} o {DATA_NAME})")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     with np.load(data_path) as d:
         data = {k: d[k] for k in d.files}

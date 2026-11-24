@@ -1,7 +1,7 @@
-"""Separación entre topes o semáforos: cuánto deben alejarse dos topes (`uv run trafico-emisiones --separacion`) o dos
+"""Separación entre topes o semáforos: cuánto deben alejarse dos topes (`uv run traffic-emisiones --separacion`) o dos
 semáforos (`--separacion-semaforos`) para que la huella de emisiones del primero se diluya antes del segundo.
 
-Corre, con la misma semilla que `trafico`, la calle sin tope, con un solo tope en `P1` y con dos topes en `P1` y
+Corre, con la misma semilla que `traffic`, la calle sin tope, con un solo tope en `P1` y con dos topes en `P1` y
 `P1 + d` para cada separación `d` (o, con `--cadena N`, con una cadena de N topes en `P1`, `P1 + d`, …, `P1 + (N − 1)·d`).
 Del perfil de emisiones a lo largo de la calle (g/(m·h), todos los carriles) de cada
 escenario se calculan, por contaminante:
